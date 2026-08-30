@@ -6,6 +6,7 @@ using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -20,7 +21,8 @@ public sealed class EfCoreMcpTools(
     AssemblyLoaderService assemblyLoader,
     ConnectionRegistry connectionRegistry,
     SchemaCache schemaCache,
-    QueryExecutor queryExecutor)
+    QueryExecutor queryExecutor,
+    ILogger<EfCoreMcpTools> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -40,6 +42,9 @@ public sealed class EfCoreMcpTools(
         {
             var handle = assemblyLoader.Load(assemblyPath);
             var contexts = DbContextScanner.FindDbContextTypes(handle.Assembly);
+            logger.LogInformation(
+                "Loaded target assembly. Path={AssemblyPath} DbContextCount={DbContextCount}",
+                handle.AssemblyPath, contexts.Count);
             return JsonSerializer.Serialize(new
             {
                 loadedAssemblyPath = handle.AssemblyPath,
@@ -49,6 +54,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (AssemblyLoadFailedException ex)
         {
+            logger.LogWarning(ex, "Failed to load target assembly. Path={AssemblyPath}", assemblyPath);
             throw new McpException(ex.Message);
         }
     }
@@ -82,6 +88,8 @@ public sealed class EfCoreMcpTools(
     {
         var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
+
+        logger.LogInformation("get_schema requested. Context={ContextName} Connection={ConnectionName}", contextName, connectionName);
 
         var schema = schemaCache.GetOrBuild(contextType, () =>
         {

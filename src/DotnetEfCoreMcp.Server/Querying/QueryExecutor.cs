@@ -1,8 +1,10 @@
 using System.Collections;
+using System.Diagnostics;
 using System.Linq.Dynamic.Core;
 using System.Linq.Dynamic.Core.Exceptions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace DotnetEfCoreMcp.Server.Querying;
 
@@ -29,10 +31,12 @@ public sealed class QueryExecutor
         typeof(QueryExecutor).GetMethod(nameof(MaterializeAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
     private readonly QueryExecutionOptions _options;
+    private readonly ILogger<QueryExecutor> _logger;
 
-    public QueryExecutor(QueryExecutionOptions options)
+    public QueryExecutor(QueryExecutionOptions options, ILogger<QueryExecutor> logger)
     {
         _options = options;
+        _logger = logger;
     }
 
     public async Task<QueryResult> ExecuteAsync(DbContext context, QueryRequest request, int commandTimeoutSeconds, CancellationToken cancellationToken)
@@ -40,6 +44,35 @@ public sealed class QueryExecutor
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
 
+        var stopwatch = Stopwatch.StartNew();
+        var contextTypeName = context.GetType().Name;
+
+        try
+        {
+            var result = await ExecuteAsyncCore(context, request, commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Query executed. Context={ContextType} Entity={Entity} Skip={Skip} Take={Take} Include=[{Include}] RowCount={RowCount} DurationMs={DurationMs}",
+                contextTypeName, result.Entity, result.EffectiveSkip, result.EffectiveTake,
+                string.Join(",", result.IncludedNavigations), result.RowCount, stopwatch.ElapsedMilliseconds);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            // Never log request.Where/Parameters here: although the query DSL itself carries no
+            // connection strings, logging arbitrary caller-supplied predicate text at warning level
+            // by default is unnecessary noise/risk. Context + entity + duration is enough to
+            // correlate a failure without echoing potentially sensitive filter values.
+            _logger.LogWarning(
+                ex, "Query failed. Context={ContextType} Entity={Entity} DurationMs={DurationMs}",
+                contextTypeName, request.Entity, stopwatch.ElapsedMilliseconds);
+            throw;
+        }
+    }
+
+    private async Task<QueryResult> ExecuteAsyncCore(DbContext context, QueryRequest request, int commandTimeoutSeconds, CancellationToken cancellationToken)
+    {
         var entityType = context.Model.GetEntityTypes().FirstOrDefault(e => e.ClrType.Name == request.Entity)
             ?? throw new QueryExecutionException(
                 $"Entity '{request.Entity}' is not part of this context's model. Known entities: {string.Join(", ", context.Model.GetEntityTypes().Select(e => e.ClrType.Name))}.");

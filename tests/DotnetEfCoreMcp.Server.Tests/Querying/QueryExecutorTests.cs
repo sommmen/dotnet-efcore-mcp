@@ -3,6 +3,7 @@ using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DotnetEfCoreMcp.Server.Tests.Querying;
 
@@ -53,7 +54,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_NoFilters_ReturnsAllRowsUpToDefaultTake()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(context, new QueryRequest { Entity = "Customer" }, commandTimeoutSeconds: 30, CancellationToken.None);
 
@@ -64,7 +65,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_WhereWithPositionalParameter_FiltersCorrectly_AndHandlesQuoteCharacterSafely()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
@@ -80,7 +81,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_WhereWithComparisonAndParameter_FiltersCorrectly()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
@@ -96,7 +97,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_OrderByDescending_ReturnsRowsInDescendingOrder()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
@@ -112,7 +113,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_SkipAndTake_PagesResults()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
@@ -129,7 +130,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_TakeExceedsServerMax_IsClampedToServerMax()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions { MaxTake = 2 });
+        var executor = new QueryExecutor(new QueryExecutionOptions { MaxTake = 2 }, NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
@@ -145,7 +146,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_TakeOmitted_UsesConfiguredDefaultTake()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions { DefaultTake = 1, MaxTake = 200 });
+        var executor = new QueryExecutor(new QueryExecutionOptions { DefaultTake = 1, MaxTake = 200 }, NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
@@ -161,7 +162,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_ValidInclude_ProjectsNestedScalarOnlyNavigation()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
@@ -183,7 +184,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_InvalidInclude_ThrowsQueryExecutionException()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             context,
@@ -198,7 +199,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_UnknownEntity_ThrowsQueryExecutionException()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             context,
@@ -211,7 +212,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_InvalidWhereExpression_ThrowsQueryExecutionException()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             context,
@@ -224,7 +225,7 @@ public sealed class QueryExecutorTests : IDisposable
     public async Task ExecuteAsync_ResultRows_ContainOnlyScalarTopLevelPropertiesByDefault()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions());
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             context,
