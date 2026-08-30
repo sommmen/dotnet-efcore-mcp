@@ -20,7 +20,7 @@ Most existing EF Core + MCP integrations require the tools to be baked into the 
 
 This project aims to fill that gap. See [development.md](./development.md) for the current feature status and roadmap.
 
-## How it works (planned)
+## How it works
 
 ```
 Agent (MCP client)
@@ -41,7 +41,12 @@ Target application's database
 
 ## Status
 
-Early scaffolding stage — no code yet. See [development.md](./development.md) for the feature checklist.
+MVP implemented (`development.md` sections 0–7): assembly loading, `DbContext` discovery,
+server-side connection registry, schema discovery, safe Dynamic-LINQ query execution, and
+the MCP stdio tool surface are all in place and tested (`dotnet test`). Section 8
+(documentation) and the optional metrics/telemetry sub-item of section 7 are the remaining
+open items — see [development.md](./development.md) for the full checklist and
+implementation notes.
 
 ## Prior art / inspiration
 
@@ -53,7 +58,101 @@ Research turned up no ready-made server doing exactly this, but several related 
 
 ## Getting started
 
-Not yet available — the project has not been scaffolded with code. This section will be filled in once the initial .NET solution exists.
+### Prerequisites
+
+- .NET SDK 10 (`net10.0`).
+- A target .NET project that has an EF Core `DbContext` and has already been built (e.g.
+  `dotnet build` producing `bin/Debug/net8.0/MyApp.dll` or similar — any TFM the target
+  project builds for is fine; only the server itself targets `net10.0`).
+
+### Build & test
+
+```powershell
+dotnet build dotnet-efcore-mcp.slnx
+dotnet test dotnet-efcore-mcp.slnx
+```
+
+(Note: the solution file is `dotnet-efcore-mcp.slnx`, the newer XML-based solution
+format — not a classic `.sln`. `dotnet build`/`dotnet test` from the repo root also
+auto-discover it without naming it explicitly.)
+
+### Configure connections (server-side only)
+
+Connection strings are **never** read from the target project's own configuration and are
+**never** accepted from an MCP client — only a logical connection *name* is ever passed
+across the MCP boundary. Configure real connections on the server via `dotnet user-secrets`
+(local/dev) and/or environment variables (any environment); the two sources are additive,
+with environment variables overriding user-secrets for the same key, per the standard
+`IConfiguration` provider order.
+
+Each connection needs `Provider` (one of `Sqlite`, `SqlServer`, `Npgsql`) and
+`ConnectionString`, plus optional `AccessMode` (`ReadOnly` — the default — or `ReadWrite`;
+see the note in `development.md` section 3 about its current scope) and
+`CommandTimeoutSeconds` (defaults to 30).
+
+```powershell
+cd src/DotnetEfCoreMcp.Server
+dotnet user-secrets init
+dotnet user-secrets set "Connections:MyApp.Context:Provider" "SqlServer"
+dotnet user-secrets set "Connections:MyApp.Context:ConnectionString" "Server=...;Database=...;..."
+```
+
+Or via environment variables (useful in containers/CI, and always takes precedence over
+user-secrets for the same key):
+
+```powershell
+$env:DOTNETEFCOREMCP_Connections__MyApp.Context__Provider = "SqlServer"
+$env:DOTNETEFCOREMCP_Connections__MyApp.Context__ConnectionString = "Server=...;Database=...;..."
+```
+
+### Point the server at a target project
+
+Either set `TargetAssemblyPath` in configuration (loaded once at startup; failures are
+logged as a warning, not fatal, so the server still starts and you can retry via the
+`load_assembly` tool) — e.g. via `dotnet user-secrets set "TargetAssemblyPath" "C:\path\to\MyApp\bin\Debug\net8.0\MyApp.dll"` —
+or call the `load_assembly` MCP tool at runtime with the same path. `load_assembly` can be
+called again any time (e.g. after rebuilding the target project) to reload it.
+
+### Run the server
+
+The server communicates over **stdio** (standard input/output carries the MCP JSON-RPC
+protocol; all logging goes to standard error instead, so it never corrupts the protocol
+stream):
+
+```powershell
+dotnet run --project src/DotnetEfCoreMcp.Server
+```
+
+Configure your MCP client (e.g. an agent host) to launch this as a stdio-based MCP server
+process, or reference the same command from an `mcp.json`/equivalent client configuration.
+
+### MCP tool contract
+
+All four tools are `[McpServerTool]`-attributed methods on a single class and operate
+against exactly one currently-loaded target assembly at a time (see `load_assembly`).
+Errors are surfaced as `ModelContextProtocol.McpException` with an actionable message
+(no connection strings, no raw stack traces).
+
+| Tool | Parameters | Returns |
+|---|---|---|
+| `load_assembly` | `assemblyPath: string` | JSON: `{ loadedAssemblyPath, loadedAtUtc, discoveredDbContexts: [{ name, fullName, constructionKind }] }` |
+| `list_contexts` | *(none)* | JSON: `{ assemblyPath, isStale, contexts: [{ name, fullName, constructionKind }] }` |
+| `get_schema` | `contextName: string`, `connectionName: string` | JSON schema: entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
+| `run_query` | `contextName: string`, `connectionName: string`, `entity: string`, `where?: string`, `parameters?: object[]`, `orderBy?: string`, `skip?: int`, `take?: int`, `include?: string[]` | JSON: `{ entity, rowCount, effectiveTake, effectiveSkip, includedNavigations, rows: [{ ...scalar + one-level-deep included navigation properties }] }` |
+
+`where`/`orderBy` are [Dynamic LINQ](https://dynamic-linq.net/) expression strings (e.g.
+`"Age > 18 and Name.Contains(@0)"`); values referenced as `@0`, `@1`, ... must be supplied
+positionally via `parameters` — they are never string-concatenated into the expression, so
+caller-supplied values (including quote characters) can't break out of the predicate.
+`take` is always clamped server-side to a configurable maximum (200 rows by default) even
+if omitted or if a larger value is requested. `include` entries must be an actual
+navigation property name on `entity` (validated against the real EF Core model) or the
+call is rejected; included navigations are projected exactly one level deep into plain
+dictionaries (never a tracked entity graph), so results are cycle-safe by construction.
+
+`get_schema` and `run_query` both require `connectionName` even though `get_schema` never
+queries the database — constructing the `DbContext` object at all (even for schema-only
+purposes) requires a real connection string/provider to build its `DbContextOptions`.
 
 ## Security
 
