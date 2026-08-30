@@ -14,4 +14,10 @@ public sealed class QueryExecutionOptions
     /// timeout before the query is cancelled from the server side as a defense-in-depth measure
     /// (the primary enforcement mechanism is the provider's own command timeout).</summary>
     public TimeSpan CancellationMargin { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Maximum number of items projected from a single included collection navigation
+    /// (e.g. <c>include=["Orders"]</c>). Bounds the *width* of an included one-to-many navigation
+    /// the same way <see cref="MaxTake"/> bounds the number of top-level rows - without this, a
+    /// single row with a very large collection navigation could bypass the row cap entirely.</summary>
+    public int MaxIncludedCollectionItems { get; init; } = 200;
 }

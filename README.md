@@ -85,7 +85,7 @@ across the MCP boundary. Configure real connections on the server via `dotnet us
 with environment variables overriding user-secrets for the same key, per the standard
 `IConfiguration` provider order.
 
-Each connection needs `Provider` (one of `Sqlite`, `SqlServer`, `Npgsql`) and
+Each connection needs `Provider` (one of `Sqlite`, `SqlServer`, `PostgreSql`) and
 `ConnectionString`, plus optional `AccessMode` (`ReadOnly` — the default — or `ReadWrite`;
 see the note in `development.md` section 3 about its current scope) and
 `CommandTimeoutSeconds` (defaults to 30).
@@ -112,6 +112,31 @@ logged as a warning, not fatal, so the server still starts and you can retry via
 `load_assembly` tool) — e.g. via `dotnet user-secrets set "TargetAssemblyPath" "C:\path\to\MyApp\bin\Debug\net8.0\MyApp.dll"` —
 or call the `load_assembly` MCP tool at runtime with the same path. `load_assembly` can be
 called again any time (e.g. after rebuilding the target project) to reload it.
+
+By default, `load_assembly` accepts any absolute path (trusted local/dev usage is assumed —
+the MCP client is presumed to run at the same trust level as whoever launched the server).
+To restrict which directories may be loaded from, configure one or more allowed roots; any
+path outside them is rejected before the assembly is touched:
+
+```powershell
+dotnet user-secrets set "AssemblyLoader:AllowedRoots:0" "C:\repos\MyApp\bin"
+```
+
+### Tune query execution limits
+
+Two safety limits are configurable under `QueryExecution` (both have sane defaults, so this
+section is optional):
+
+- `MaxTake` (default `200`) — the hard cap on rows returned by a single query, regardless of
+  the client-requested `take`.
+- `MaxIncludedCollectionItems` (default `200`) — caps how many items are materialized per
+  included collection navigation (e.g. `Include: ["Orders"]`), so a customer with 100,000
+  orders can't blow up the response.
+
+```powershell
+dotnet user-secrets set "QueryExecution:MaxTake" "100"
+dotnet user-secrets set "QueryExecution:MaxIncludedCollectionItems" "50"
+```
 
 ### Run the server
 

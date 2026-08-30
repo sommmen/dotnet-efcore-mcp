@@ -4,6 +4,7 @@ using System.Linq.Dynamic.Core;
 using System.Linq.Dynamic.Core.Exceptions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Logging;
 
 namespace DotnetEfCoreMcp.Server.Querying;
@@ -28,7 +29,7 @@ public sealed class QueryExecutor
                          && m.GetParameters()[1].ParameterType == typeof(string));
 
     private static readonly MethodInfo MaterializeMethodDefinition =
-        typeof(QueryExecutor).GetMethod(nameof(MaterializeAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
+        typeof(QueryExecutor).GetMethod(nameof(MaterializeAsync), BindingFlags.NonPublic | BindingFlags.Instance)!;
 
     private readonly QueryExecutionOptions _options;
     private readonly ILogger<QueryExecutor> _logger;
@@ -151,7 +152,7 @@ public sealed class QueryExecutor
         try
         {
             var materializeMethod = MaterializeMethodDefinition.MakeGenericMethod(clrType);
-            var task = (Task<List<Dictionary<string, object?>>>)materializeMethod.Invoke(null, [queryable, includeNames, linkedCts.Token])!;
+            var task = (Task<List<Dictionary<string, object?>>>)materializeMethod.Invoke(this, [queryable, includeNames, entityType, linkedCts.Token])!;
             rows = await task.ConfigureAwait(false);
         }
         catch (OperationCanceledException ex) when (timeoutCts.IsCancellationRequested)
@@ -164,11 +165,16 @@ public sealed class QueryExecutor
         }
         catch (TargetInvocationException ex) when (ex.InnerException is not null)
         {
-            throw new QueryExecutionException($"Query against entity '{request.Entity}' failed: {ex.InnerException.Message}", ex.InnerException);
+            // Deliberately don't forward ex.InnerException.Message to the caller: provider
+            // exceptions (SQL Server/Npgsql/etc.) frequently embed the offending SQL fragment,
+            // parameter values, or other row/schema data beyond what get_schema exposes. The full
+            // detail is preserved via the inner exception for the outer ExecuteAsync's
+            // LogWarning(ex, ...) call; only a generic, entity-scoped message reaches the client.
+            throw new QueryExecutionException($"Query against entity '{request.Entity}' failed. See server logs for details.", ex.InnerException);
         }
         catch (Exception ex) when (ex is not QueryExecutionException)
         {
-            throw new QueryExecutionException($"Query against entity '{request.Entity}' failed: {ex.Message}", ex);
+            throw new QueryExecutionException($"Query against entity '{request.Entity}' failed. See server logs for details.", ex);
         }
 
         return new QueryResult(
@@ -180,13 +186,13 @@ public sealed class QueryExecutor
             Rows: rows);
     }
 
-    private static async Task<List<Dictionary<string, object?>>> MaterializeAsync<TEntity>(
-        IQueryable queryable, IReadOnlyList<string> includeNames, CancellationToken cancellationToken)
+    private async Task<List<Dictionary<string, object?>>> MaterializeAsync<TEntity>(
+        IQueryable queryable, IReadOnlyList<string> includeNames, IEntityType entityType, CancellationToken cancellationToken)
         where TEntity : class
     {
         var typed = (IQueryable<TEntity>)queryable;
         var entities = await typed.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return entities.Select(e => ProjectEntity(e!, includeNames)).ToList();
+        return entities.Select(e => ProjectEntity(e!, includeNames, entityType, _options.MaxIncludedCollectionItems)).ToList();
     }
 
     /// <summary>Projects a materialized entity into a plain dictionary of scalar values, plus (for
@@ -194,74 +200,71 @@ public sealed class QueryExecutor
     /// scalars-only one level deep. Capping expansion to exactly one level for included
     /// navigations - rather than following navigation properties transitively - makes the result
     /// shape bounded and free of reference cycles by construction, without needing a
-    /// visited-node tracker or relying solely on JSON reference handling.</summary>
-    private static Dictionary<string, object?> ProjectEntity(object entity, IReadOnlyList<string> includeNames)
+    /// visited-node tracker or relying solely on JSON reference handling.
+    ///
+    /// Only EF-mapped scalar properties (per <paramref name="entityType"/>'s model metadata) are
+    /// projected - not every public, readable CLR property - so that `[NotMapped]`/computed
+    /// properties can't be reflected over and executed as arbitrary getter code, and so unintended
+    /// data can't leak through properties that aren't part of the actual database schema.</summary>
+    private static Dictionary<string, object?> ProjectEntity(
+        object entity, IReadOnlyList<string> includeNames, IEntityType entityType, int maxCollectionItems)
     {
         var dict = new Dictionary<string, object?>();
-        var type = entity.GetType();
 
-        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var efProperty in entityType.GetProperties())
         {
-            if (!property.CanRead || property.GetIndexParameters().Length > 0)
+            var clrProperty = efProperty.PropertyInfo;
+            if (clrProperty is null || !clrProperty.CanRead)
+            {
+                // Shadow properties (no backing CLR property) aren't reflected over here; they're
+                // out of scope for a caller-driven projection surface.
+                continue;
+            }
+
+            dict[efProperty.Name] = clrProperty.GetValue(entity);
+        }
+
+        if (includeNames.Count == 0)
+        {
+            return dict;
+        }
+
+        foreach (var navigation in entityType.GetNavigations())
+        {
+            if (!includeNames.Contains(navigation.Name, StringComparer.Ordinal))
             {
                 continue;
             }
 
-            if (IsScalarClrType(property.PropertyType))
+            var clrProperty = navigation.PropertyInfo;
+            if (clrProperty is null || !clrProperty.CanRead)
             {
-                dict[property.Name] = property.GetValue(entity);
                 continue;
             }
 
-            if (includeNames.Count == 0 || !includeNames.Contains(property.Name, StringComparer.Ordinal))
-            {
-                // Not a scalar and not an explicitly-requested navigation: skip it rather than
-                // risk following an unbounded/unexpected object graph.
-                continue;
-            }
+            var value = clrProperty.GetValue(entity);
+            var targetEntityType = navigation.TargetEntityType;
 
-            var value = property.GetValue(entity);
             if (value is null)
             {
-                dict[property.Name] = null;
+                dict[navigation.Name] = null;
             }
-            else if (value is string)
-            {
-                dict[property.Name] = value;
-            }
-            else if (value is IEnumerable enumerable)
+            else if (navigation.IsCollection && value is IEnumerable enumerable)
             {
                 var items = new List<Dictionary<string, object?>>();
-                foreach (var item in enumerable)
+                foreach (var item in enumerable.Cast<object>().Take(maxCollectionItems))
                 {
-                    if (item is not null)
-                    {
-                        items.Add(ProjectEntity(item, includeNames: []));
-                    }
+                    items.Add(ProjectEntity(item, includeNames: [], targetEntityType, maxCollectionItems));
                 }
 
-                dict[property.Name] = items;
+                dict[navigation.Name] = items;
             }
             else
             {
-                dict[property.Name] = ProjectEntity(value, includeNames: []);
+                dict[navigation.Name] = ProjectEntity(value, includeNames: [], targetEntityType, maxCollectionItems);
             }
         }
 
         return dict;
-    }
-
-    private static bool IsScalarClrType(Type type)
-    {
-        var underlying = Nullable.GetUnderlyingType(type) ?? type;
-        return underlying.IsPrimitive
-               || underlying.IsEnum
-               || underlying == typeof(string)
-               || underlying == typeof(decimal)
-               || underlying == typeof(DateTime)
-               || underlying == typeof(DateTimeOffset)
-               || underlying == typeof(TimeSpan)
-               || underlying == typeof(Guid)
-               || underlying == typeof(byte[]);
     }
 }

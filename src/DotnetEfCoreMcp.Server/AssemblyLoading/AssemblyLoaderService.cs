@@ -10,8 +10,24 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 public sealed class AssemblyLoaderService
 {
     private readonly object _gate = new();
+    private readonly IReadOnlyList<string> _allowedRoots;
     private LoadedAssemblyHandle? _current;
     private DateTimeOffset _loadedFileWriteTimeUtc;
+
+    public AssemblyLoaderService() : this(new AssemblyLoaderOptions())
+    {
+    }
+
+    public AssemblyLoaderService(AssemblyLoaderOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        // Normalized once up-front (full path, trailing separator) so containment checks in
+        // Load() are simple, case-appropriate-for-the-OS prefix comparisons.
+        _allowedRoots = options.AllowedRoots
+            .Select(root => Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar)
+            .ToList();
+    }
 
     /// <summary>The currently loaded assembly, or <c>null</c> if none has been loaded yet.</summary>
     public LoadedAssemblyHandle? Current
@@ -37,6 +53,12 @@ public sealed class AssemblyLoaderService
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyPath);
 
         var fullPath = Path.GetFullPath(assemblyPath);
+
+        if (_allowedRoots.Count > 0 && !_allowedRoots.Any(root => fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new AssemblyLoadFailedException(
+                $"Target assembly path '{fullPath}' is outside the configured allowed roots. Configure `AssemblyLoader:AllowedRoots` to include this location, or point at an assembly under an already-allowed root.");
+        }
 
         if (!File.Exists(fullPath))
         {

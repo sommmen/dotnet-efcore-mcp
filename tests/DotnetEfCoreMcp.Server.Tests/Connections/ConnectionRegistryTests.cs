@@ -89,6 +89,22 @@ public sealed class ConnectionRegistryTests
         Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
     }
 
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("not-a-number")]
+    public void Constructor_InvalidCommandTimeoutSeconds_ThrowsConfigurationException(string commandTimeoutSeconds)
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Bad:Provider"] = "Sqlite",
+            ["Connections:Bad:ConnectionString"] = "Data Source=test.db",
+            ["Connections:Bad:CommandTimeoutSeconds"] = commandTimeoutSeconds,
+        });
+
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+    }
+
     [Fact]
     public void Constructor_InvalidAccessMode_ThrowsConfigurationException()
     {

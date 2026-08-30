@@ -27,10 +27,17 @@ builder.Logging.AddConsole(options =>
     options.LogToStandardErrorThreshold = LogLevel.Trace;
 });
 
+// `load_assembly` accepts an arbitrary path from the MCP client and loads it into this process, so
+// `AssemblyLoader:AllowedRoots` (unset by default, i.e. unrestricted - see AssemblyLoaderOptions)
+// is the primary control for constraining that surface in less-trusted deployments.
+builder.Services.AddSingleton(builder.Configuration.GetSection("AssemblyLoader").Get<AssemblyLoaderOptions>() ?? new AssemblyLoaderOptions());
 builder.Services.AddSingleton<AssemblyLoaderService>();
 builder.Services.AddSingleton<ConnectionRegistry>();
 builder.Services.AddSingleton<SchemaCache>();
-builder.Services.AddSingleton(new QueryExecutionOptions());
+// Query safety limits (row/width caps, timeout margin) are configurable from the "QueryExecution"
+// section (env vars, user secrets, etc., same layering as "Connections" above) so they can be
+// tightened per-deployment without a code change, while still defaulting to safe values if unset.
+builder.Services.AddSingleton(builder.Configuration.GetSection("QueryExecution").Get<QueryExecutionOptions>() ?? new QueryExecutionOptions());
 builder.Services.AddSingleton<QueryExecutor>();
 
 builder.Services

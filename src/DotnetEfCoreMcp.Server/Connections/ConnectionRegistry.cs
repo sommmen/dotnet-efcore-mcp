@@ -77,10 +77,13 @@ public sealed class ConnectionRegistry
             }
 
             var commandTimeoutSeconds = 30;
-            if (!string.IsNullOrWhiteSpace(commandTimeoutRaw) && !int.TryParse(commandTimeoutRaw, out commandTimeoutSeconds))
+            if (!string.IsNullOrWhiteSpace(commandTimeoutRaw))
             {
-                throw new ConnectionRegistryConfigurationException(
-                    $"Connection '{name}' has invalid CommandTimeoutSeconds '{commandTimeoutRaw}'.");
+                if (!int.TryParse(commandTimeoutRaw, out commandTimeoutSeconds) || commandTimeoutSeconds <= 0)
+                {
+                    throw new ConnectionRegistryConfigurationException(
+                        $"Connection '{name}' has invalid CommandTimeoutSeconds '{commandTimeoutRaw}'. Expected a positive integer.");
+                }
             }
 
             result[name] = new ConnectionRegistryEntry

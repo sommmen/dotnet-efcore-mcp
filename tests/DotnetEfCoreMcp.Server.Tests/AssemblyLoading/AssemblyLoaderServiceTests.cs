@@ -18,6 +18,28 @@ public sealed class AssemblyLoaderServiceTests
     }
 
     [Fact]
+    public void Load_PathOutsideAllowedRoots_ThrowsAssemblyLoadFailedException()
+    {
+        var restrictedRoot = Path.Combine(Path.GetTempPath(), $"allowed-root-{Guid.NewGuid():N}");
+        var service = new AssemblyLoaderService(new AssemblyLoaderOptions { AllowedRoots = [restrictedRoot] });
+
+        var ex = Assert.Throws<AssemblyLoadFailedException>(() => service.Load(FixturePaths.SampleAppDllPath));
+
+        Assert.Contains("outside the configured allowed roots", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Load_PathInsideAllowedRoots_Succeeds()
+    {
+        var allowedRoot = Path.GetDirectoryName(FixturePaths.SampleAppDllPath)!;
+        var service = new AssemblyLoaderService(new AssemblyLoaderOptions { AllowedRoots = [allowedRoot] });
+
+        var handle = service.Load(FixturePaths.SampleAppDllPath);
+
+        Assert.Equal("SampleApp", handle.Assembly.GetName().Name);
+    }
+
+    [Fact]
     public void Load_MissingFile_ThrowsAssemblyLoadFailedExceptionWithActionableMessage()
     {
         var service = new AssemblyLoaderService();

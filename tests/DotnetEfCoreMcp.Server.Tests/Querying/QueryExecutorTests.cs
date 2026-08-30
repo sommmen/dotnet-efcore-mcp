@@ -13,6 +13,7 @@ public sealed class QueryExecutorTests : IDisposable
     private readonly Type _customerType;
     private readonly Type _orderType;
     private readonly Type _contextType;
+    private readonly int _aliceId;
 
     public QueryExecutorTests()
     {
@@ -35,10 +36,10 @@ public sealed class QueryExecutorTests : IDisposable
         seedContext.Add(obrien);
         seedContext.SaveChanges();
 
-        var aliceId = (int)EntitySeeding.GetPropertyValue(alice, "Id")!;
+        _aliceId = (int)EntitySeeding.GetPropertyValue(alice, "Id")!;
         var order = EntitySeeding.CreateEntity(_orderType, new Dictionary<string, object?>
         {
-            ["CustomerId"] = aliceId,
+            ["CustomerId"] = _aliceId,
             ["Amount"] = 19.99m,
             ["CreatedAtUtc"] = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc),
         });
@@ -237,5 +238,56 @@ public sealed class QueryExecutorTests : IDisposable
         Assert.False(row.ContainsKey("Orders"));
         Assert.Equal("Alice", row["Name"]);
         Assert.Equal(30, row["Age"]);
+
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ResultRows_ExcludeNotMappedProperties()
+    {
+        using var context = NewContext();
+        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            context,
+            new QueryRequest { Entity = "Customer", Where = "Name == @0", Parameters = ["Alice"] },
+            commandTimeoutSeconds: 30,
+            CancellationToken.None);
+
+        var row = Assert.Single(result.Rows);
+        // `Customer.DisplayLabel` is a `[NotMapped]` computed property - only EF-mapped scalar
+        // properties should ever be reflected over and projected.
+        Assert.False(row.ContainsKey("DisplayLabel"));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IncludedCollectionExceedingCap_IsTruncatedToMaxIncludedCollectionItems()
+    {
+        using var seedContext = NewContext();
+
+        for (var i = 0; i < 10; i++)
+        {
+            var extraOrder = EntitySeeding.CreateEntity(_orderType, new Dictionary<string, object?>
+            {
+                ["CustomerId"] = _aliceId,
+                ["Amount"] = 1.00m,
+                ["CreatedAtUtc"] = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
+            });
+            seedContext.Add(extraOrder);
+        }
+        seedContext.SaveChanges();
+
+        using var context = NewContext();
+        var executor = new QueryExecutor(new QueryExecutionOptions { MaxIncludedCollectionItems = 3 }, NullLogger<QueryExecutor>.Instance);
+
+        var result = await executor.ExecuteAsync(
+            context,
+            new QueryRequest { Entity = "Customer", Where = "Name == @0", Parameters = ["Alice"], Include = ["Orders"] },
+            commandTimeoutSeconds: 30,
+            CancellationToken.None);
+
+        var row = Assert.Single(result.Rows);
+        var orders = Assert.IsAssignableFrom<System.Collections.IEnumerable>(row["Orders"]).Cast<object>().ToList();
+        // Alice has 11 orders total (1 seeded + 10 extra) but the cap is 3.
+        Assert.Equal(3, orders.Count);
     }
 }

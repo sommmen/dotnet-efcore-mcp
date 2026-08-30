@@ -66,7 +66,7 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
   - [x] Redact connection strings from all logs, error messages, and MCP tool output
     - `ConnectionRegistryEntry.ToString()` never includes the raw connection string.
 - [x] Validate/allowlist which providers are supported initially (e.g. SQL Server, PostgreSQL, SQLite) and reject unknown providers explicitly
-  - Supported: `Sqlite`, `SqlServer`, `Npgsql` (PostgreSQL). Unknown provider names throw
+  - Supported: `Sqlite`, `SqlServer`, `PostgreSql` (PostgreSQL). Unknown provider names throw
     `ConnectionRegistryConfigurationException` at registry construction time (fail fast,
     not on first use).
 - [x] Enforce that a given `DbContext` type can only ever be connected using connection strings from the server-side registry, never arbitrary strings supplied by the MCP client/agent
@@ -119,6 +119,12 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
     actual navigation property names (rejecting anything else), and the resulting
     projection is hard-capped to exactly one level of navigation depth regardless of what
     is requested — there is no way to request a deeper/unbounded graph.
+  - Only EF-model-mapped scalar properties are ever reflected over and projected (via
+    `IEntityType.GetProperties()`/`GetNavigations()`), never arbitrary public CLR members —
+    so `[NotMapped]` computed properties or unrelated members can't leak into results.
+  - `QueryExecutionOptions.MaxIncludedCollectionItems` (default 200) caps how many items are
+    materialized per included *collection* navigation (e.g. `include=["Orders"]`), so a
+    single row with a huge one-to-many collection can't bypass the top-level row cap.
 - [x] Serialize query results (including related/included entities) into a response format that avoids circular references
   - Cycle-safety is structural (depth-bounded dictionary projection, not tracked EF Core
     entities), with `System.Text.Json`'s `ReferenceHandler.IgnoreCycles` as a
@@ -141,10 +147,11 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
     require a `connectionName` (never a raw connection string) for `get_schema`/`run_query`.
     Rationale: `load_assembly` only grants filesystem read access already available to the
     server process itself (same trust boundary), so exposing it as a tool doesn't add a new
-    privilege — but it *is* an MVP hardening gap that there is no path allowlist (e.g.
-    restrict to a configured root directory) constraining which DLL can be loaded. Flagged
-    as a known limitation to address before any deployment beyond a trusted, single-user
-    local dev setup.
+    privilege — but it *is* a code-execution primitive (any DLL on disk can be loaded and its
+    types reflected over), so an optional `AssemblyLoader:AllowedRoots` allowlist
+    (`AssemblyLoaderOptions`) restricts `load_assembly` to a configured set of root
+    directories when set; empty (the default) remains unrestricted for trusted,
+    single-user local dev setups.
 
 ## 7. Auditing & observability
 
