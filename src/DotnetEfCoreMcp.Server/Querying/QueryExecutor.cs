@@ -1,0 +1,270 @@
+using System.Collections;
+using System.Diagnostics;
+using System.Linq.Dynamic.Core;
+using System.Linq.Dynamic.Core.Exceptions;
+using System.Reflection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.Extensions.Logging;
+
+namespace DotnetEfCoreMcp.Server.Querying;
+
+/// <summary>Executes a <see cref="QueryRequest"/> against a resolved <see cref="DbContext"/>
+/// using System.Linq.Dynamic.Core, enforcing read-only, no-tracking, row-capped, allowlisted-
+/// include, timeout-bounded execution.</summary>
+public sealed class QueryExecutor
+{
+    private static readonly MethodInfo SetMethodDefinition =
+        typeof(DbContext).GetMethod(nameof(DbContext.Set), Type.EmptyTypes)!;
+
+    private static readonly MethodInfo AsNoTrackingMethodDefinition =
+        typeof(EntityFrameworkQueryableExtensions).GetMethods()
+            .Single(m => m.Name == nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
+                         && m.GetParameters().Length == 1);
+
+    private static readonly MethodInfo IncludeStringMethodDefinition =
+        typeof(EntityFrameworkQueryableExtensions).GetMethods()
+            .Single(m => m.Name == nameof(EntityFrameworkQueryableExtensions.Include)
+                         && m.GetParameters().Length == 2
+                         && m.GetParameters()[1].ParameterType == typeof(string));
+
+    private static readonly MethodInfo MaterializeMethodDefinition =
+        typeof(QueryExecutor).GetMethod(nameof(MaterializeAsync), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    private readonly QueryExecutionOptions _options;
+    private readonly ILogger<QueryExecutor> _logger;
+
+    public QueryExecutor(QueryExecutionOptions options, ILogger<QueryExecutor> logger)
+    {
+        _options = options;
+        _logger = logger;
+    }
+
+    public async Task<QueryResult> ExecuteAsync(DbContext context, QueryRequest request, int commandTimeoutSeconds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var stopwatch = Stopwatch.StartNew();
+        var contextTypeName = context.GetType().Name;
+
+        try
+        {
+            var result = await ExecuteAsyncCore(context, request, commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Query executed. Context={ContextType} Entity={Entity} Skip={Skip} Take={Take} Include=[{Include}] RowCount={RowCount} DurationMs={DurationMs}",
+                contextTypeName, result.Entity, result.EffectiveSkip, result.EffectiveTake,
+                string.Join(",", result.IncludedNavigations), result.RowCount, stopwatch.ElapsedMilliseconds);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            // Never log request.Where/Parameters here: although the query DSL itself carries no
+            // connection strings, logging arbitrary caller-supplied predicate text at warning level
+            // by default is unnecessary noise/risk. Context + entity + duration is enough to
+            // correlate a failure without echoing potentially sensitive filter values.
+            _logger.LogWarning(
+                ex, "Query failed. Context={ContextType} Entity={Entity} DurationMs={DurationMs}",
+                contextTypeName, request.Entity, stopwatch.ElapsedMilliseconds);
+            throw;
+        }
+    }
+
+    private async Task<QueryResult> ExecuteAsyncCore(DbContext context, QueryRequest request, int commandTimeoutSeconds, CancellationToken cancellationToken)
+    {
+        var entityType = context.Model.GetEntityTypes().FirstOrDefault(e => e.ClrType.Name == request.Entity)
+            ?? throw new QueryExecutionException(
+                $"Entity '{request.Entity}' is not part of this context's model. Known entities: {string.Join(", ", context.Model.GetEntityTypes().Select(e => e.ClrType.Name))}.");
+
+        var clrType = entityType.ClrType;
+
+        var includeNames = request.Include ?? [];
+        if (includeNames.Count > 0)
+        {
+            var validNavigations = entityType.GetNavigations().Select(n => n.Name).ToHashSet(StringComparer.Ordinal);
+            var invalid = includeNames.Where(n => !validNavigations.Contains(n)).ToList();
+            if (invalid.Count > 0)
+            {
+                throw new QueryExecutionException(
+                    $"Invalid `include` value(s) for entity '{request.Entity}': {string.Join(", ", invalid)}. Valid navigation properties: {(validNavigations.Count > 0 ? string.Join(", ", validNavigations) : "(none)")}.");
+            }
+        }
+
+        // Build the strongly (but dynamically) typed query: Set<TEntity>() -> AsNoTracking() -> Include(...) for each requested navigation.
+        object dbSet;
+        try
+        {
+            dbSet = SetMethodDefinition.MakeGenericMethod(clrType).Invoke(context, null)!;
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        {
+            throw new QueryExecutionException($"Could not resolve a DbSet for entity '{request.Entity}'.", ex.InnerException);
+        }
+
+        var typedQuery = AsNoTrackingMethodDefinition.MakeGenericMethod(clrType).Invoke(null, [dbSet])!;
+
+        foreach (var navigationName in includeNames)
+        {
+            typedQuery = IncludeStringMethodDefinition.MakeGenericMethod(clrType).Invoke(null, [typedQuery, navigationName])!;
+        }
+
+        // From here on, everything is expressed against the non-generic IQueryable using Dynamic
+        // LINQ, which accepts positional parameters (@0, @1, ...) rather than ever concatenating
+        // caller-supplied values into the expression string.
+        var queryable = (IQueryable)typedQuery;
+        var parameters = request.Parameters?.ToArray() ?? [];
+
+        if (!string.IsNullOrWhiteSpace(request.Where))
+        {
+            try
+            {
+                queryable = queryable.Where(request.Where, parameters);
+            }
+            catch (Exception ex) when (ex is ParseException)
+            {
+                throw new QueryExecutionException($"Invalid `where` expression: {ex.Message}", ex);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.OrderBy))
+        {
+            try
+            {
+                queryable = queryable.OrderBy(request.OrderBy, parameters);
+            }
+            catch (Exception ex) when (ex is ParseException)
+            {
+                throw new QueryExecutionException($"Invalid `orderBy` expression: {ex.Message}", ex);
+            }
+        }
+
+        var effectiveSkip = Math.Max(0, request.Skip ?? 0);
+        var effectiveTake = Math.Clamp(request.Take ?? _options.DefaultTake, 0, _options.MaxTake);
+
+        queryable = queryable.Skip(effectiveSkip).Take(effectiveTake);
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(commandTimeoutSeconds) + _options.CancellationMargin);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        List<Dictionary<string, object?>> rows;
+        try
+        {
+            var materializeMethod = MaterializeMethodDefinition.MakeGenericMethod(clrType);
+            var task = (Task<List<Dictionary<string, object?>>>)materializeMethod.Invoke(this, [queryable, includeNames, entityType, linkedCts.Token])!;
+            rows = await task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (timeoutCts.IsCancellationRequested)
+        {
+            throw new QueryExecutionException($"Query against entity '{request.Entity}' timed out after {commandTimeoutSeconds}s.", ex);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is OperationCanceledException inner && timeoutCts.IsCancellationRequested)
+        {
+            throw new QueryExecutionException($"Query against entity '{request.Entity}' timed out after {commandTimeoutSeconds}s.", inner);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        {
+            // Deliberately don't forward ex.InnerException.Message to the caller: provider
+            // exceptions (SQL Server/Npgsql/etc.) frequently embed the offending SQL fragment,
+            // parameter values, or other row/schema data beyond what get_schema exposes. The full
+            // detail is preserved via the inner exception for the outer ExecuteAsync's
+            // LogWarning(ex, ...) call; only a generic, entity-scoped message reaches the client.
+            throw new QueryExecutionException($"Query against entity '{request.Entity}' failed. See server logs for details.", ex.InnerException);
+        }
+        catch (Exception ex) when (ex is not QueryExecutionException)
+        {
+            throw new QueryExecutionException($"Query against entity '{request.Entity}' failed. See server logs for details.", ex);
+        }
+
+        return new QueryResult(
+            Entity: request.Entity,
+            RowCount: rows.Count,
+            EffectiveTake: effectiveTake,
+            EffectiveSkip: effectiveSkip,
+            IncludedNavigations: includeNames,
+            Rows: rows);
+    }
+
+    private async Task<List<Dictionary<string, object?>>> MaterializeAsync<TEntity>(
+        IQueryable queryable, IReadOnlyList<string> includeNames, IEntityType entityType, CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        var typed = (IQueryable<TEntity>)queryable;
+        var entities = await typed.ToListAsync(cancellationToken).ConfigureAwait(false);
+        return entities.Select(e => ProjectEntity(e!, includeNames, entityType, _options.MaxIncludedCollectionItems)).ToList();
+    }
+
+    /// <summary>Projects a materialized entity into a plain dictionary of scalar values, plus (for
+    /// the top level only) any explicitly-requested included navigations, themselves projected to
+    /// scalars-only one level deep. Capping expansion to exactly one level for included
+    /// navigations - rather than following navigation properties transitively - makes the result
+    /// shape bounded and free of reference cycles by construction, without needing a
+    /// visited-node tracker or relying solely on JSON reference handling.
+    ///
+    /// Only EF-mapped scalar properties (per <paramref name="entityType"/>'s model metadata) are
+    /// projected - not every public, readable CLR property - so that `[NotMapped]`/computed
+    /// properties can't be reflected over and executed as arbitrary getter code, and so unintended
+    /// data can't leak through properties that aren't part of the actual database schema.</summary>
+    private static Dictionary<string, object?> ProjectEntity(
+        object entity, IReadOnlyList<string> includeNames, IEntityType entityType, int maxCollectionItems)
+    {
+        var dict = new Dictionary<string, object?>();
+
+        foreach (var efProperty in entityType.GetProperties())
+        {
+            var clrProperty = efProperty.PropertyInfo;
+            if (clrProperty is null || !clrProperty.CanRead)
+            {
+                // Shadow properties (no backing CLR property) aren't reflected over here; they're
+                // out of scope for a caller-driven projection surface.
+                continue;
+            }
+
+            dict[efProperty.Name] = clrProperty.GetValue(entity);
+        }
+
+        if (includeNames.Count == 0)
+        {
+            return dict;
+        }
+
+        foreach (var navigation in entityType.GetNavigations())
+        {
+            if (!includeNames.Contains(navigation.Name, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            var clrProperty = navigation.PropertyInfo;
+            if (clrProperty is null || !clrProperty.CanRead)
+            {
+                continue;
+            }
+
+            var value = clrProperty.GetValue(entity);
+            var targetEntityType = navigation.TargetEntityType;
+
+            if (value is null)
+            {
+                dict[navigation.Name] = null;
+            }
+            else if (navigation.IsCollection && value is IEnumerable enumerable)
+            {
+                var items = new List<Dictionary<string, object?>>();
+                foreach (var item in enumerable.Cast<object>().Take(maxCollectionItems))
+                {
+                    items.Add(ProjectEntity(item, includeNames: [], targetEntityType, maxCollectionItems));
+                }
+
+                dict[navigation.Name] = items;
+            }
+            else
+            {
+                dict[navigation.Name] = ProjectEntity(value, includeNames: [], targetEntityType, maxCollectionItems);
+            }
+        }
+
+        return dict;
+    }
+}
