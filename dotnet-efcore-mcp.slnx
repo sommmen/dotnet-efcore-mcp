@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DotnetEfCoreMcp.Server/DotnetEfCoreMcp.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DotnetEfCoreMcp.Server.Tests/DotnetEfCoreMcp.Server.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Fixtures/">
+    <Project Path="tests/Fixtures/SampleApp/SampleApp.csproj" />
+  </Folder>
+</Solution>
