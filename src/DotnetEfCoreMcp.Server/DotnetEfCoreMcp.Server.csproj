@@ -25,6 +25,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
 
+    <!-- Keep Identity-based DbContext hierarchies in the default load context so target
+         assemblies can share their EF Core type identity during discovery. -->
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+
     <!-- Safe, injection-resistant query DSL execution (parameters passed positionally, never
          string-concatenated into the predicate). -->
     <PackageReference Include="System.Linq.Dynamic.Core" Version="1.7.4" />
