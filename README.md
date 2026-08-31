@@ -86,24 +86,48 @@ with environment variables overriding user-secrets for the same key, per the sta
 `IConfiguration` provider order.
 
 Each connection needs `Provider` (one of `Sqlite`, `SqlServer`, `PostgreSql`) and
-`ConnectionString`, plus optional `AccessMode` (`ReadOnly` — the default — or `ReadWrite`;
-see the note in `development.md` section 3 about its current scope) and
-`CommandTimeoutSeconds` (defaults to 30).
+`ConnectionString`, plus optional `Environment` (`Development`, `Staging`, `Production`, or
+`Unspecified`), `AccessMode` (`ReadOnly` — the default — or `ReadWrite`; see the note in
+`development.md` section 3 about its current scope), and `CommandTimeoutSeconds` (defaults
+to 30).
+
+Keep the committed `appsettings.json` placeholder empty. For example, configure three named
+environments with user-secrets:
 
 ```powershell
 cd src/DotnetEfCoreMcp.Server
 dotnet user-secrets init
-dotnet user-secrets set "Connections:MyApp.Context:Provider" "SqlServer"
-dotnet user-secrets set "Connections:MyApp.Context:ConnectionString" "Server=...;Database=...;..."
+
+dotnet user-secrets set "Connections:MyApp.Development:Provider" "SqlServer"
+dotnet user-secrets set "Connections:MyApp.Development:ConnectionString" "Server=...;Database=...;..."
+dotnet user-secrets set "Connections:MyApp.Development:Environment" "Development"
+
+dotnet user-secrets set "Connections:MyApp.Staging:Provider" "SqlServer"
+dotnet user-secrets set "Connections:MyApp.Staging:ConnectionString" "Server=...;Database=...;..."
+dotnet user-secrets set "Connections:MyApp.Staging:Environment" "Staging"
+
+dotnet user-secrets set "Connections:MyApp.Production:Provider" "SqlServer"
+dotnet user-secrets set "Connections:MyApp.Production:ConnectionString" "Server=...;Database=...;..."
+dotnet user-secrets set "Connections:MyApp.Production:Environment" "Production"
 ```
 
-Or via environment variables (useful in containers/CI, and always takes precedence over
+Or use environment variables (useful in containers/CI, and always takes precedence over
 user-secrets for the same key):
 
 ```powershell
-$env:DOTNETEFCOREMCP_Connections__MyApp.Context__Provider = "SqlServer"
-$env:DOTNETEFCOREMCP_Connections__MyApp.Context__ConnectionString = "Server=...;Database=...;..."
+$env:DOTNETEFCOREMCP_Connections__MyApp.Development__Provider = "SqlServer"
+$env:DOTNETEFCOREMCP_Connections__MyApp.Development__ConnectionString = "Server=...;Database=...;..."
+$env:DOTNETEFCOREMCP_Connections__MyApp.Development__Environment = "Development"
 ```
+
+The first non-production connection is active at startup. Use the `list_connections` MCP
+tool to inspect redacted connection metadata and `swap_connection` to change the active
+default used by `get_schema` and `run_query` when no connection name is supplied.
+
+Production connections are always forced to `ReadOnly`, even if configured otherwise. They
+are never selected automatically and `swap_connection` requires an explicit
+`allowProduction: true` acknowledgement before activating one. A production-only registry
+therefore starts without an active connection.
 
 ### Point the server at a target project
 

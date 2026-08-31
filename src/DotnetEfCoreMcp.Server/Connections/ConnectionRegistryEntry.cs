@@ -15,8 +15,19 @@ public sealed class ConnectionRegistryEntry
 
     public int CommandTimeoutSeconds { get; init; } = 30;
 
+    /// <summary>The runtime environment this connection points at (see <see cref="EnvironmentType"/>).
+    /// Drives <see cref="IsProduction"/> so an operator can mark a connection as the production
+    /// database, which then gets read-only + protection semantics.</summary>
+    public EnvironmentType Environment { get; init; } = EnvironmentType.Unspecified;
+
+    /// <summary>True when this connection is designated as production via
+    /// <see cref="Environment"/> == <see cref="EnvironmentType.Production"/>. Production connections
+    /// are update-forbidden and protected from being made the active connection without explicit
+    /// acknowledgment (see <c>ConnectionRegistry.SetActive</c>).</summary>
+    public bool IsProduction => Environment == EnvironmentType.Production;
+
     /// <summary>Redacted representation safe to log or return to an MCP client - never includes
     /// <see cref="ConnectionString"/>.</summary>
     public override string ToString() =>
-        $"ConnectionRegistryEntry {{ Name = {Name}, Provider = {Provider}, AccessMode = {AccessMode}, CommandTimeoutSeconds = {CommandTimeoutSeconds}, ConnectionString = [REDACTED] }}";
+        $"ConnectionRegistryEntry {{ Name = {Name}, Provider = {Provider}, AccessMode = {AccessMode}, Environment = {Environment}, CommandTimeoutSeconds = {CommandTimeoutSeconds}, ConnectionString = [REDACTED] }}";
 }

@@ -82,7 +82,17 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
     than silently doing nothing.
 - [x] Fail closed: if no matching connection is configured for a requested context, refuse to connect rather than falling back to any default
   - `ConnectionRegistry.Get` throws `UnknownConnectionException` (listing known names) for
-    any name not present in the registry; there is no default/fallback connection.
+    any name not present in the registry; there is no fallback to an unconfigured connection.
+- [x] Classify named connections as `Development`, `Staging`, `Production`, or `Unspecified`
+  - Environment metadata is returned by `list_connections` without exposing connection
+    strings. Existing configuration remains compatible by defaulting to `Unspecified`.
+- [x] Maintain an active connection that can be changed at runtime
+  - The first non-production connection is selected at startup. `swap_connection` changes
+    the active default; `get_schema` and `run_query` use it when `connectionName` is omitted.
+- [x] Apply RSFU safeguards to production connections
+  - Production is forced to `ReadOnly`, never auto-selected, and requires an explicit
+    `allowProduction: true` acknowledgement in `swap_connection`. A production-only
+    registry starts with no active connection.
 
 ## 4. Schema / model discovery
 

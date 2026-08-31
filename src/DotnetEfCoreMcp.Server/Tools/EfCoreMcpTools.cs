@@ -84,7 +84,7 @@ public sealed class EfCoreMcpTools(
         "in the currently loaded target assembly, as discovered via reflection over the real compiled model.")]
     public string GetSchema(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema.")] string connectionName)
+        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. If omitted, the currently active connection is used.")] string? connectionName = null)
     {
         var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
@@ -107,8 +107,8 @@ public sealed class EfCoreMcpTools(
         "even if `take` is omitted or exceeds the server's configured maximum.")]
     public async Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry.")] string connectionName,
         [Description("CLR type name of the entity to query, as returned by get_schema.")] string entity,
+        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
         [Description("Optional Dynamic LINQ predicate, e.g. \"Age > 18 and Name.Contains(@0)\". Parameters are always passed positionally via `parameters`, never concatenated into this string.")] string? where = null,
         [Description("Positional parameters referenced from `where`/`orderBy` as @0, @1, ...")] object?[]? parameters = null,
         [Description("Optional Dynamic LINQ order-by expression, e.g. \"Age desc\".")] string? orderBy = null,
@@ -144,6 +144,56 @@ public sealed class EfCoreMcpTools(
         }
     }
 
+    [McpServerTool(Name = "list_connections"), Description(
+        "Lists the connections currently registered in the server's connection registry, including each " +
+        "connection's database provider, access mode, environment (Development/Staging/Production), whether it " +
+        "is a production connection (always read-only, swap-protected), and which one is currently active. " +
+        "Connection strings are never exposed.")]
+    public string ListConnections()
+    {
+        var infos = connectionRegistry.ListConnections();
+        return JsonSerializer.Serialize(new
+        {
+            activeConnection = connectionRegistry.ActiveConnectionName,
+            connections = infos.Select(i => new
+            {
+                name = i.Name,
+                provider = i.Provider.ToString(),
+                accessMode = i.AccessMode.ToString(),
+                environment = i.Environment.ToString(),
+                isProduction = i.IsProduction,
+                isActive = i.IsActive,
+            }),
+        }, JsonOptions);
+    }
+
+    [McpServerTool(Name = "swap_connection"), Description(
+        "Swaps the server's active connection to the named connection, changing which connection subsequent " +
+        "get_schema/run_query calls default to when no explicit connectionName is supplied. For production " +
+        "connections (environment = Production), this is refused unless allowProduction is set to true.")]
+    public string SwapConnection(
+        [Description("Logical connection name from the server's connection registry to make active.")] string connectionName,
+        [Description("Set to true to allow making a production connection active (for intentionally running diagnostics/read-only queries against production).")] bool allowProduction = false)
+    {
+        try
+        {
+            connectionRegistry.SetActive(connectionName, allowProduction);
+            return JsonSerializer.Serialize(new
+            {
+                activeConnection = connectionRegistry.ActiveConnectionName,
+            }, JsonOptions);
+        }
+        catch (ProductionProtectedException ex)
+        {
+            logger.LogWarning(ex, "Refused swap to production connection. Connection={ConnectionName}", ex.ConnectionName);
+            throw new McpException(ex.Message);
+        }
+        catch (UnknownConnectionException ex)
+        {
+            throw new McpException(ex.Message);
+        }
+    }
+
     private LoadedAssemblyHandle RequireLoadedAssembly()
     {
         return assemblyLoader.Current
@@ -165,12 +215,21 @@ public sealed class EfCoreMcpTools(
         return descriptor.ClrType;
     }
 
-    private ConnectionRegistryEntry ResolveConnection(string connectionName)
+    private ConnectionRegistryEntry ResolveConnection(string? connectionName)
     {
         try
         {
-            return connectionRegistry.Get(connectionName);
-        }
+            if (string.IsNullOrWhiteSpace(connectionName))
+            {
+                var active = connectionRegistry.ActiveConnection;
+                if (active is null)
+                {
+                    throw new McpException("No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections.)");
+                }
+                return active;
+            }
+
+            return connectionRegistry.Get(connectionName);        }
         catch (UnknownConnectionException ex)
         {
             throw new McpException(ex.Message);
