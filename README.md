@@ -129,13 +129,70 @@ are never selected automatically and `swap_connection` requires an explicit
 `allowProduction: true` acknowledgement before activating one. A production-only registry
 therefore starts without an active connection.
 
+### Visual Studio Code setup
+
+VS Code reads workspace MCP servers from `.vscode/mcp.json`. This example launches the server
+from a sibling clone, passes the open workspace to automatic assembly discovery, and prompts for
+the connection string without committing it:
+
+```jsonc
+{
+  "servers": {
+    "dotnet-efcore": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "C:\\repos\\dotnet-efcore-mcp\\src\\DotnetEfCoreMcp.Server"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "DOTNETEFCOREMCP_WORKSPACEPATH": "${workspaceFolder}",
+        "DOTNETEFCOREMCP_CONNECTIONS__Workspace__PROVIDER": "SqlServer",
+        "DOTNETEFCOREMCP_CONNECTIONS__Workspace__CONNECTIONSTRING": "${input:efcore-connection-string}",
+        "DOTNETEFCOREMCP_CONNECTIONS__Workspace__ACCESSMODE": "ReadOnly",
+        "DOTNETEFCOREMCP_CONNECTIONS__Workspace__ENVIRONMENT": "Development"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "efcore-connection-string",
+      "type": "promptString",
+      "description": "EF Core database connection string",
+      "password": true
+    }
+  ]
+}
+```
+
+Change `PROVIDER` to `Sqlite` or `PostgreSql` when appropriate. On first start VS Code prompts
+for the input and stores it securely; it is passed directly to the server process as configuration,
+not through an MCP tool call. Use **MCP: List Servers** from the Command Palette to start, stop,
+or restart this workspace server. See the official [VS Code MCP server configuration](https://code.visualstudio.com/docs/agent-customization/mcp-servers)
+and [sensitive input variable reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration#_input-variables-for-sensitive-data).
+
+When `WorkspacePath` is configured and `TargetAssemblyPath` is not, startup scans the workspace's
+C# projects and automatically loads the best existing output. Debug builds are preferred; within
+the same configuration the newest output wins, with the higher target framework breaking ties.
+Dependency and `ref` assemblies are excluded. If nothing has been built yet, the server still
+starts—build the target project and restart the server, or use `list_assembly_candidates` followed
+by `load_assembly`. The candidate tool shows all detected outputs in preference order, so another
+project, configuration, or target framework can be selected without changing configuration.
+
+> The VS Code Agent Host does not forward servers requiring interactive inputs to remote agents.
+> This prompted configuration is intended for local VS Code chat; configure secrets in the remote
+> environment separately for remote Agent Host use.
+
 ### Point the server at a target project
 
-Either set `TargetAssemblyPath` in configuration (loaded once at startup; failures are
-logged as a warning, not fatal, so the server still starts and you can retry via the
-`load_assembly` tool) — e.g. via `dotnet user-secrets set "TargetAssemblyPath" "C:\path\to\MyApp\bin\Debug\net8.0\MyApp.dll"` —
-or call the `load_assembly` MCP tool at runtime with the same path. `load_assembly` can be
-called again any time (e.g. after rebuilding the target project) to reload it.
+For clients other than VS Code, set `WorkspacePath` to a repository/workspace root to get the same
+automatic discovery behavior. Alternatively, set `TargetAssemblyPath` in configuration (it takes
+precedence over discovery and is loaded once at startup; failures are logged as a warning, not
+fatal) — e.g. via `dotnet user-secrets set "TargetAssemblyPath" "C:\path\to\MyApp\bin\Debug\net8.0\MyApp.dll"` —
+or call the `load_assembly` MCP tool at runtime with the same path. `load_assembly` can be called
+again any time (e.g. after rebuilding the target project) to reload it.
 
 By default, `load_assembly` accepts any absolute path (trusted local/dev usage is assumed —
 the MCP client is presumed to run at the same trust level as whoever launched the server).
@@ -177,13 +234,14 @@ process, or reference the same command from an `mcp.json`/equivalent client conf
 
 ### MCP tool contract
 
-All four tools are `[McpServerTool]`-attributed methods on a single class and operate
-against exactly one currently-loaded target assembly at a time (see `load_assembly`).
+All tools are `[McpServerTool]`-attributed methods on a single class and operate against
+exactly one currently-loaded target assembly at a time (see `load_assembly`).
 Errors are surfaced as `ModelContextProtocol.McpException` with an actionable message
 (no connection strings, no raw stack traces).
 
 | Tool | Parameters | Returns |
 |---|---|---|
+| `list_assembly_candidates` | `workspacePath: string` | JSON: `{ workspacePath, candidates: [{ assemblyPath, projectPath, configuration, targetFramework, lastWriteTimeUtc, isPreferred }] }` ordered by preference |
 | `load_assembly` | `assemblyPath: string` | JSON: `{ loadedAssemblyPath, loadedAtUtc, discoveredDbContexts: [{ name, fullName, constructionKind }] }` |
 | `list_contexts` | *(none)* | JSON: `{ assemblyPath, isStale, contexts: [{ name, fullName, constructionKind }] }` |
 | `get_schema` | `contextName: string`, `connectionName: string` | JSON schema: entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |

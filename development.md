@@ -163,7 +163,19 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
     directories when set; empty (the default) remains unrestricted for trusted,
     single-user local dev setups.
 
-## 7. Auditing & observability
+## 7. Visual Studio Code integration
+
+- [x] Document a first-class `.vscode/mcp.json` setup using the stdio transport and `${workspaceFolder}`
+- [x] Prompt for connection strings with a password-masked `${input:...}` variable so secrets are not committed
+- [x] Discover C# project output assemblies beneath a configured `WorkspacePath`
+  - Candidate discovery matches each `.csproj` output name, including explicit `AssemblyName`, and excludes dependency, `ref`, and `refint` DLLs.
+  - Ranking prefers Debug over custom configurations over Release, then newest output and highest target framework.
+- [x] Automatically load the preferred candidate at startup when `TargetAssemblyPath` is unset
+  - An explicit target remains the highest-priority override; no candidates or discovery failures are non-fatal.
+- [x] Expose `list_assembly_candidates` so agents can inspect alternatives and switch with `load_assembly`
+- [x] Cover ranking, filtering, custom assembly names, empty output, and invalid workspace behavior with focused tests
+
+## 8. Auditing & observability
 
 - [x] Log every executed query (context, entity, query shape, row count, duration) without logging secrets
   - `QueryExecutor` logs (via injected `ILogger<QueryExecutor>`) the context type, entity
@@ -180,7 +192,7 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
     pipeline exists in this repo yet to hook into (would need an OpenTelemetry or similar
     dependency decision that's out of scope for this MVP session).
 
-## 8. Documentation
+## 9. Documentation
 
 - [x] Document how to configure a target project + connection string once the config format is decided
 - [x] Document the MCP tool contract (inputs/outputs) for each tool once implemented
