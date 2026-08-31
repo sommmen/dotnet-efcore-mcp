@@ -31,6 +31,7 @@ builder.Logging.AddConsole(options =>
 // `AssemblyLoader:AllowedRoots` (unset by default, i.e. unrestricted - see AssemblyLoaderOptions)
 // is the primary control for constraining that surface in less-trusted deployments.
 builder.Services.AddSingleton(builder.Configuration.GetSection("AssemblyLoader").Get<AssemblyLoaderOptions>() ?? new AssemblyLoaderOptions());
+builder.Services.AddSingleton<AssemblyDiscoveryService>();
 builder.Services.AddSingleton<AssemblyLoaderService>();
 builder.Services.AddSingleton<ConnectionRegistry>();
 builder.Services.AddSingleton<SchemaCache>();
@@ -51,11 +52,40 @@ var host = builder.Build();
 // list_contexts/get_schema/run_query work without a separate load_assembly call first. This is
 // purely a convenience - load_assembly remains available to (re)point the server at a different
 // build without restarting the process.
+var logger = host.Services.GetRequiredService<ILogger<Program>>();
 var configuredAssemblyPath = builder.Configuration["TargetAssemblyPath"];
+var workspacePath = builder.Configuration["WorkspacePath"];
+
+if (string.IsNullOrWhiteSpace(configuredAssemblyPath) && !string.IsNullOrWhiteSpace(workspacePath))
+{
+    try
+    {
+        configuredAssemblyPath = host.Services.GetRequiredService<AssemblyDiscoveryService>()
+            .Discover(workspacePath)
+            .FirstOrDefault()?.AssemblyPath;
+
+        if (configuredAssemblyPath is null)
+        {
+            logger.LogInformation(
+                "No target assemblies found under workspace {WorkspacePath}. Build a project or use load_assembly explicitly.",
+                Path.GetFullPath(workspacePath));
+        }
+        else
+        {
+            logger.LogInformation(
+                "Automatically selected target assembly {AssemblyPath} from workspace {WorkspacePath}.",
+                configuredAssemblyPath, Path.GetFullPath(workspacePath));
+        }
+    }
+    catch (AssemblyDiscoveryException ex)
+    {
+        logger.LogWarning(ex, "Could not discover target assemblies under workspace {WorkspacePath}.", workspacePath);
+    }
+}
+
 if (!string.IsNullOrWhiteSpace(configuredAssemblyPath))
 {
     var loader = host.Services.GetRequiredService<AssemblyLoaderService>();
-    var logger = host.Services.GetRequiredService<ILogger<Program>>();
     try
     {
         loader.Load(configuredAssemblyPath);

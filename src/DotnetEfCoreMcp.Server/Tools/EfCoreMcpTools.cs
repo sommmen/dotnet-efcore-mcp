@@ -19,6 +19,7 @@ namespace DotnetEfCoreMcp.Server.Tools;
 [McpServerToolType]
 public sealed class EfCoreMcpTools(
     AssemblyLoaderService assemblyLoader,
+    AssemblyDiscoveryService assemblyDiscovery,
     ConnectionRegistry connectionRegistry,
     SchemaCache schemaCache,
     QueryExecutor queryExecutor,
@@ -30,6 +31,36 @@ public sealed class EfCoreMcpTools(
         ReferenceHandler = ReferenceHandler.IgnoreCycles,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
+
+    [McpServerTool(Name = "list_assembly_candidates"), Description(
+        "Discovers compiled project assemblies under a workspace, ordered by the recommended selection. " +
+        "Debug outputs are preferred over other configurations and Release. Pass any returned assemblyPath to load_assembly to switch targets.")]
+    public string ListAssemblyCandidates(
+        [Description("Absolute path to the workspace or repository to inspect.")] string workspacePath)
+    {
+        try
+        {
+            var candidates = assemblyDiscovery.Discover(workspacePath);
+            return JsonSerializer.Serialize(new
+            {
+                workspacePath = Path.GetFullPath(workspacePath),
+                candidates = candidates.Select(candidate => new
+                {
+                    assemblyPath = candidate.AssemblyPath,
+                    projectPath = candidate.ProjectPath,
+                    configuration = candidate.Configuration,
+                    targetFramework = candidate.TargetFramework,
+                    lastWriteTimeUtc = candidate.LastWriteTimeUtc,
+                    isPreferred = candidate.IsPreferred,
+                }),
+            }, JsonOptions);
+        }
+        catch (AssemblyDiscoveryException ex)
+        {
+            logger.LogWarning(ex, "Failed to discover target assemblies. WorkspacePath={WorkspacePath}", workspacePath);
+            throw new McpException(ex.Message);
+        }
+    }
 
     [McpServerTool(Name = "load_assembly"), Description(
         "Loads (or reloads) a compiled target .NET project's assembly (its bin/<Configuration>/<TFM>/*.dll output) " +
