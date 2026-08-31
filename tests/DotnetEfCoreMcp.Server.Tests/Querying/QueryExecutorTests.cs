@@ -1,4 +1,5 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
@@ -21,7 +22,7 @@ public sealed class QueryExecutorTests : IDisposable
         var handle = service.Load(FixturePaths.SampleAppDllPath);
         _contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext").ClrType;
 
-        using var seedContext = DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry());
+        using var seedContext = DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
         seedContext.Database.EnsureCreated();
 
         _customerType = EntitySeeding.GetEntityClrType(seedContext, "Customer");
@@ -49,7 +50,7 @@ public sealed class QueryExecutorTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private DbContext NewContext() => DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry());
+    private DbContext NewContext() => DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
     [Fact]
     public async Task ExecuteAsync_NoFilters_ReturnsAllRowsUpToDefaultTake()

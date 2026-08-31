@@ -30,13 +30,17 @@ public static class DbContextActivator
 {
     private const BindingFlags AnyInstanceCtor = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
 
-    public static DbContext CreateInstance(Type contextType, ConnectionRegistryEntry entry)
+    /// <param name="provider">The effective database provider to configure the context with -
+    /// either the connection's explicitly configured provider or one inferred from the target
+    /// assembly's EF Core provider package reference. Resolution happens before this call; this
+    /// method never infers on its own.</param>
+    public static DbContext CreateInstance(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider)
     {
         var genericOptionsType = typeof(DbContextOptions<>).MakeGenericType(contextType);
         var genericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [genericOptionsType], modifiers: null);
         if (genericOptionsCtor is not null)
         {
-            var options = CreateGenericOptions(contextType, entry);
+            var options = CreateGenericOptions(contextType, entry, provider);
             return Invoke(genericOptionsCtor, contextType, [options]);
         }
 
@@ -44,7 +48,7 @@ public static class DbContextActivator
         if (nonGenericOptionsCtor is not null)
         {
             var builder = new DbContextOptionsBuilder();
-            ConfigureProvider(builder, entry);
+            ConfigureProvider(builder, entry, provider);
             return Invoke(nonGenericOptionsCtor, contextType, [builder.Options]);
         }
 
@@ -74,7 +78,7 @@ public static class DbContextActivator
                 throw new DbContextActivationException($"Design-time factory for '{contextType.FullName}' threw while creating the context.", ex.InnerException);
             }
 
-            OverrideConnectionString(instance, entry, contextType);
+            OverrideConnectionString(instance, entry, contextType, provider);
             return instance;
         }
 
@@ -82,7 +86,7 @@ public static class DbContextActivator
         if (parameterlessCtor is not null)
         {
             var instance = Invoke(parameterlessCtor, contextType, null);
-            OverrideConnectionString(instance, entry, contextType);
+            OverrideConnectionString(instance, entry, contextType, provider);
             return instance;
         }
 
@@ -102,11 +106,11 @@ public static class DbContextActivator
         }
     }
 
-    private static object CreateGenericOptions(Type contextType, ConnectionRegistryEntry entry)
+    private static object CreateGenericOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider)
     {
         var builderType = typeof(DbContextOptionsBuilder<>).MakeGenericType(contextType);
         var builder = (DbContextOptionsBuilder)Activator.CreateInstance(builderType)!;
-        ConfigureProvider(builder, entry);
+        ConfigureProvider(builder, entry, provider);
 
         // DbContextOptionsBuilder<TContext> re-declares `Options` with `new` to narrow its return
         // type; without DeclaredOnly, GetProperty("Options") sees both the base and derived
@@ -116,9 +120,9 @@ public static class DbContextActivator
         return optionsProperty.GetValue(builder)!;
     }
 
-    private static void ConfigureProvider(DbContextOptionsBuilder builder, ConnectionRegistryEntry entry)
+    private static void ConfigureProvider(DbContextOptionsBuilder builder, ConnectionRegistryEntry entry, DatabaseProvider provider)
     {
-        switch (entry.Provider)
+        switch (provider)
         {
             case DatabaseProvider.Sqlite:
                 builder.UseSqlite(entry.ConnectionString, o => o.CommandTimeout(entry.CommandTimeoutSeconds));
@@ -130,11 +134,11 @@ public static class DbContextActivator
                 builder.UseNpgsql(entry.ConnectionString, o => o.CommandTimeout(entry.CommandTimeoutSeconds));
                 break;
             default:
-                throw new DbContextActivationException($"Provider '{entry.Provider}' is not supported.");
+                throw new DbContextActivationException($"Provider '{provider}' is not supported.");
         }
     }
 
-    private static void OverrideConnectionString(DbContext instance, ConnectionRegistryEntry entry, Type contextType)
+    private static void OverrideConnectionString(DbContext instance, ConnectionRegistryEntry entry, Type contextType, DatabaseProvider provider)
     {
         try
         {
@@ -144,7 +148,7 @@ public static class DbContextActivator
         {
             instance.Dispose();
             throw new DbContextActivationException(
-                $"'{contextType.FullName}' could not be reconfigured to use the server-registered connection '{entry.Name}'. This usually means the context's own OnConfiguring/design-time factory uses a different database provider than the one registered ({entry.Provider}); register it with the matching provider.",
+                $"'{contextType.FullName}' could not be reconfigured to use the server-registered connection '{entry.Name}'. This usually means the context's own OnConfiguring/design-time factory uses a different database provider than the one registered ({provider}); register it with the matching provider.",
                 ex);
         }
     }

@@ -56,14 +56,18 @@ public sealed class ConnectionRegistryTests
     }
 
     [Fact]
-    public void Constructor_MissingProvider_ThrowsConfigurationException()
+    public void Constructor_MissingProvider_LeavesProviderNullForInference()
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
-            ["Connections:Bad:ConnectionString"] = "Data Source=test.db",
+            ["Connections:Inferred:ConnectionString"] = "Data Source=test.db",
         });
 
-        Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+        var registry = new ConnectionRegistry(configuration);
+        var entry = registry.Get("Inferred");
+
+        Assert.Null(entry.Provider);
+        Assert.Equal("Data Source=test.db", entry.ConnectionString);
     }
 
     [Fact]

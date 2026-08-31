@@ -85,28 +85,34 @@ across the MCP boundary. Configure real connections on the server via `dotnet us
 with environment variables overriding user-secrets for the same key, per the standard
 `IConfiguration` provider order.
 
-Each connection needs `Provider` (one of `Sqlite`, `SqlServer`, `PostgreSql`) and
-`ConnectionString`, plus optional `Environment` (`Development`, `Staging`, `Production`, or
+Each connection needs `ConnectionString`, plus optional `Provider` (one of `Sqlite`,
+`SqlServer`, `PostgreSql`), `Environment` (`Development`, `Staging`, `Production`, or
 `Unspecified`), `AccessMode` (`ReadOnly` — the default — or `ReadWrite`; see the note in
 `development.md` section 3 about its current scope), and `CommandTimeoutSeconds` (defaults
 to 30).
 
+`Provider` is optional because it's normally **inferred** from the EF Core provider package
+referenced by the currently loaded target project assembly (e.g. referencing
+`Microsoft.EntityFrameworkCore.SqlServer` infers `SqlServer`). Inference only ever looks at
+the target assembly's compiled package references — never at the target project's own
+configuration or connection strings. An explicit `Provider` always takes precedence over
+inference, and is required if the target project references zero or more than one supported
+EF Core provider package (inference then fails with an actionable error naming the
+`Connections:<name>:Provider` key to set).
+
 Keep the committed `appsettings.json` placeholder empty. For example, configure three named
-environments with user-secrets:
+environments with user-secrets, letting the provider be inferred:
 
 ```powershell
 cd src/DotnetEfCoreMcp.Server
 dotnet user-secrets init
 
-dotnet user-secrets set "Connections:MyApp.Development:Provider" "SqlServer"
 dotnet user-secrets set "Connections:MyApp.Development:ConnectionString" "Server=...;Database=...;..."
 dotnet user-secrets set "Connections:MyApp.Development:Environment" "Development"
 
-dotnet user-secrets set "Connections:MyApp.Staging:Provider" "SqlServer"
 dotnet user-secrets set "Connections:MyApp.Staging:ConnectionString" "Server=...;Database=...;..."
 dotnet user-secrets set "Connections:MyApp.Staging:Environment" "Staging"
 
-dotnet user-secrets set "Connections:MyApp.Production:Provider" "SqlServer"
 dotnet user-secrets set "Connections:MyApp.Production:ConnectionString" "Server=...;Database=...;..."
 dotnet user-secrets set "Connections:MyApp.Production:Environment" "Production"
 ```
@@ -115,9 +121,15 @@ Or use environment variables (useful in containers/CI, and always takes preceden
 user-secrets for the same key):
 
 ```powershell
-$env:DOTNETEFCOREMCP_Connections__MyApp.Development__Provider = "SqlServer"
 $env:DOTNETEFCOREMCP_Connections__MyApp.Development__ConnectionString = "Server=...;Database=...;..."
 $env:DOTNETEFCOREMCP_Connections__MyApp.Development__Environment = "Development"
+```
+
+If a target project references more than one supported EF Core provider (or none), set
+`Provider` explicitly for the affected connection(s):
+
+```powershell
+dotnet user-secrets set "Connections:MyApp.Development:Provider" "SqlServer"
 ```
 
 The first non-production connection is active at startup. Use the `list_connections` MCP
