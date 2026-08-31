@@ -40,6 +40,8 @@ builder.Services.AddSingleton<SchemaCache>();
 // tightened per-deployment without a code change, while still defaulting to safe values if unset.
 builder.Services.AddSingleton(builder.Configuration.GetSection("QueryExecution").Get<QueryExecutionOptions>() ?? new QueryExecutionOptions());
 builder.Services.AddSingleton<QueryExecutor>();
+builder.Services.AddSingleton(builder.Configuration.GetSection("RawSqlExecution").Get<RawSqlExecutionOptions>() ?? new RawSqlExecutionOptions());
+builder.Services.AddSingleton<SqlQueryExecutor>();
 
 builder.Services
     .AddMcpServer()

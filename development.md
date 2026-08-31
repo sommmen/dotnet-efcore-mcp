@@ -125,10 +125,12 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
     of what the caller requests or omits; `skip`/`take` are always honored for paging.
 - [x] Enforce a query timeout (command timeout / cancellation token) to avoid runaway queries
 - [x] Reject or restrict unsafe query shapes (e.g. arbitrary raw SQL, unbounded `.Include()` graphs) unless explicitly allowlisted
-  - No raw SQL path exists at all. `include` entries are validated against the entity's
-    actual navigation property names (rejecting anything else), and the resulting
-    projection is hard-capped to exactly one level of navigation depth regardless of what
-    is requested — there is no way to request a deeper/unbounded graph.
+  - `run_sql_query` is disabled by default and must be explicitly enabled through
+    `RawSqlExecution:Enabled`. It is independently rejected for production and non-`ReadWrite`
+    connections, even when globally enabled. `include` entries are validated against the entity's
+    actual navigation property names (rejecting anything else), and the resulting projection is
+    hard-capped to exactly one level of navigation depth regardless of what is requested — there
+    is no way to request a deeper/unbounded graph.
   - Only EF-model-mapped scalar properties are ever reflected over and projected (via
     `IEntityType.GetProperties()`/`GetNavigations()`), never arbitrary public CLR members —
     so `[NotMapped]` computed properties or unrelated members can't leak into results.
@@ -148,7 +150,8 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
 
 - [x] `list_contexts` — list discovered `DbContext` types available from the currently loaded assembly
 - [x] `get_schema` — return the model/schema for a given context
-- [x] `run_query` — execute a query against a given context and entity
+- [x] `run_query` — execute a read-only Dynamic LINQ query against a given context and entity
+- [x] `run_sql_query` — execute explicitly enabled raw SQL only against development `ReadWrite` connections
 - [x] `load_assembly` (or startup-only configuration) — point the server at a project's build output
   - Implemented as both: an optional `TargetAssemblyPath` startup config value AND a
     `load_assembly` MCP tool.
