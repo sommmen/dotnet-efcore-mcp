@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build and Test (.NET)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore dotnet-efcore-mcp.slnx
+
+      - name: Build
+        run: dotnet build dotnet-efcore-mcp.slnx --no-restore --configuration Release
+
+      - name: Run tests
+        run: dotnet test dotnet-efcore-mcp.slnx --no-build --no-restore --configuration Release --verbosity normal
