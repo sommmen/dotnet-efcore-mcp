@@ -189,7 +189,7 @@ public sealed class EfCoreMcpTools(
             connections = infos.Select(i => new
             {
                 name = i.Name,
-                provider = i.Provider.ToString(),
+                provider = i.Provider?.ToString() ?? "(inferred)",
                 accessMode = i.AccessMode.ToString(),
                 environment = i.Environment.ToString(),
                 isProduction = i.IsProduction,
@@ -269,13 +269,33 @@ public sealed class EfCoreMcpTools(
 
     private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry)
     {
+        var provider = ResolveEffectiveProvider(contextType, entry);
         try
         {
-            return DbContextActivator.CreateInstance(contextType, entry);
+            return DbContextActivator.CreateInstance(contextType, entry, provider);
         }
         catch (DbContextActivationException ex)
         {
             throw new McpException(ex.Message);
         }
+    }
+
+    /// <summary>Resolves the provider to configure a context with: an explicit
+    /// <see cref="ConnectionRegistryEntry.Provider"/> always wins, otherwise it is inferred from the
+    /// EF Core provider package referenced by the loaded target assembly that declares
+    /// <paramref name="contextType"/>.</summary>
+    private static DatabaseProvider ResolveEffectiveProvider(Type contextType, ConnectionRegistryEntry entry)
+    {
+        if (entry.Provider is { } configured)
+        {
+            return configured;
+        }
+
+        if (!ProviderInference.TryInfer(contextType.Assembly, out var inferred, out var error))
+        {
+            throw new McpException($"Connection '{entry.Name}' has no configured provider. {error}");
+        }
+
+        return inferred;
     }
 }

@@ -7,7 +7,8 @@ public sealed class ConnectionRegistryEntry
 {
     public required string Name { get; init; }
 
-    public required DatabaseProvider Provider { get; init; }
+    /// <summary>Explicit provider override. When omitted, the provider is inferred from the loaded target assembly.</summary>
+    public DatabaseProvider? Provider { get; init; }
 
     public required string ConnectionString { get; init; }
 
@@ -29,5 +30,5 @@ public sealed class ConnectionRegistryEntry
     /// <summary>Redacted representation safe to log or return to an MCP client - never includes
     /// <see cref="ConnectionString"/>.</summary>
     public override string ToString() =>
-        $"ConnectionRegistryEntry {{ Name = {Name}, Provider = {Provider}, AccessMode = {AccessMode}, Environment = {Environment}, CommandTimeoutSeconds = {CommandTimeoutSeconds}, ConnectionString = [REDACTED] }}";
+        $"ConnectionRegistryEntry {{ Name = {Name}, Provider = {Provider?.ToString() ?? "(inferred)"}, AccessMode = {AccessMode}, Environment = {Environment}, CommandTimeoutSeconds = {CommandTimeoutSeconds}, ConnectionString = [REDACTED] }}";
 }

@@ -105,23 +105,23 @@ public sealed class ConnectionRegistry
             var commandTimeoutRaw = child["CommandTimeoutSeconds"];
             var environmentRaw = child["Environment"];
 
-            if (string.IsNullOrWhiteSpace(providerRaw))
-            {
-                throw new ConnectionRegistryConfigurationException(
-                    $"Connection '{name}' is missing a required 'Provider' value.");
-            }
-
             if (string.IsNullOrWhiteSpace(connectionString))
             {
                 throw new ConnectionRegistryConfigurationException(
                     $"Connection '{name}' is missing a required 'ConnectionString' value.");
             }
 
-            if (!Enum.TryParse<DatabaseProvider>(providerRaw, ignoreCase: true, out var provider))
+            DatabaseProvider? provider = null;
+            if (!string.IsNullOrWhiteSpace(providerRaw))
             {
-                var allowed = string.Join(", ", Enum.GetNames<DatabaseProvider>());
-                throw new ConnectionRegistryConfigurationException(
-                    $"Connection '{name}' has unsupported provider '{providerRaw}'. Allowed providers: {allowed}.");
+                if (!Enum.TryParse<DatabaseProvider>(providerRaw, ignoreCase: true, out var parsedProvider))
+                {
+                    var allowed = string.Join(", ", Enum.GetNames<DatabaseProvider>());
+                    throw new ConnectionRegistryConfigurationException(
+                        $"Connection '{name}' has unsupported provider '{providerRaw}'. Allowed providers: {allowed}.");
+                }
+
+                provider = parsedProvider;
             }
 
             var accessMode = ConnectionAccessMode.ReadOnly;
@@ -179,7 +179,7 @@ public sealed class ConnectionRegistry
 /// contains the connection string.</summary>
 public sealed record ConnectionInfo(
     string Name,
-    DatabaseProvider Provider,
+    DatabaseProvider? Provider,
     ConnectionAccessMode AccessMode,
     EnvironmentType Environment,
     bool IsProduction,

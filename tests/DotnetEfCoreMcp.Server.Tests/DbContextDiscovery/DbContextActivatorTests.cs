@@ -1,4 +1,5 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
@@ -15,7 +16,7 @@ public sealed class DbContextActivatorTests
         var handle = service.Load(FixturePaths.SampleAppDllPath);
         var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext");
 
-        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry());
+        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
         Assert.Equal(db.ConnectionString, context.Database.GetConnectionString());
     }
@@ -28,7 +29,7 @@ public sealed class DbContextActivatorTests
         var handle = service.Load(FixturePaths.SampleAppDllPath);
         var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "LegacyOnConfiguringDbContext");
 
-        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry());
+        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
         // The fixture's OnConfiguring hardcodes a bogus filename; if the server's override didn't
         // work this would still be "Data Source=__should_never_be_used__.db".
@@ -44,7 +45,7 @@ public sealed class DbContextActivatorTests
         var handle = service.Load(FixturePaths.SampleAppDllPath);
         var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "FactoryOnlyDbContext");
 
-        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry());
+        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
         Assert.Equal(db.ConnectionString, context.Database.GetConnectionString());
         Assert.DoesNotContain("factory_should_never_be_used", context.Database.GetConnectionString());
@@ -58,7 +59,7 @@ public sealed class DbContextActivatorTests
         var handle = service.Load(FixturePaths.SampleAppDllPath);
         var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext");
 
-        using (var writeContext = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry()))
+        using (var writeContext = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite))
         {
             writeContext.Database.EnsureCreated();
             var customerType = EntitySeeding.GetEntityClrType(writeContext, "Customer");
@@ -71,7 +72,7 @@ public sealed class DbContextActivatorTests
             writeContext.SaveChanges();
         }
 
-        using var readContext = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry());
+        using var readContext = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
         var customerClrType = EntitySeeding.GetEntityClrType(readContext, "Customer");
         var setMethod = typeof(Microsoft.EntityFrameworkCore.DbContext).GetMethod("Set", Type.EmptyTypes)!.MakeGenericMethod(customerClrType);
         var dbSet = (System.Collections.IEnumerable)setMethod.Invoke(readContext, null)!;

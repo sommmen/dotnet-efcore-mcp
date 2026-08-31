@@ -1,4 +1,5 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
@@ -13,7 +14,7 @@ public sealed class SchemaBuilderTests
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
         var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext");
-        var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry());
+        var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
         return (context, db);
     }
 
@@ -101,7 +102,7 @@ public sealed class SchemaBuilderTests
             ConnectionString = $"Data Source={neverCreatedPath}",
         };
 
-        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, entry);
+        using var context = DbContextActivator.CreateInstance(descriptor.ClrType, entry, DatabaseProvider.Sqlite);
 
         var schema = SchemaBuilder.Build(context);
 
