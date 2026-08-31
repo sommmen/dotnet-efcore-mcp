@@ -273,6 +273,7 @@ Errors are surfaced as `ModelContextProtocol.McpException` with an actionable me
 | `list_contexts` | *(none)* | JSON: `{ assemblyPath, isStale, contexts: [{ name, fullName, constructionKind }] }` |
 | `get_schema` | `contextName: string`, `connectionName: string` | JSON schema: entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
 | `run_query` | `contextName: string`, `connectionName: string`, `entity: string`, `where?: string`, `parameters?: object[]`, `orderBy?: string`, `skip?: int`, `take?: int`, `include?: string[]` | JSON: `{ entity, rowCount, effectiveTake, effectiveSkip, includedNavigations, rows: [{ ...scalar + one-level-deep included navigation properties }] }` |
+| `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | JSON: `{ rows, rowCount, affectedRows, maxRows, hasMoreRows }`; disabled by default and restricted to development `ReadWrite` connections |
 
 `where`/`orderBy` are [Dynamic LINQ](https://dynamic-linq.net/) expression strings (e.g.
 `"Age > 18 and Name.Contains(@0)"`); values referenced as `@0`, `@1`, ... must be supplied
@@ -283,6 +284,25 @@ if omitted or if a larger value is requested. `include` entries must be an actua
 navigation property name on `entity` (validated against the real EF Core model) or the
 call is rejected; included navigations are projected exactly one level deep into plain
 dictionaries (never a tracked entity graph), so results are cycle-safe by construction.
+
+`run_sql_query` is an explicitly opt-in escape hatch for development diagnostics and migrations;
+prefer `run_query` whenever its Dynamic LINQ contract is sufficient. Enable it only in a local
+or development server configuration:
+
+```powershell
+dotnet user-secrets set "RawSqlExecution:Enabled" "true"
+# Or for the current process:
+$env:DOTNETEFCOREMCP_RAWSQLEXECUTION__ENABLED = "true"
+```
+
+Raw SQL positional values must use provider parameters named `@p0`, `@p1`, and so on (for
+example, `SELECT * FROM Users WHERE Id = @p0` with `parameters: [42]`); values are passed as
+ADO.NET parameters rather than interpolated. Result rows are materialized up to the configured
+maximum (200 by default), but the command itself is not rewritten with a dialect-specific
+`LIMIT` or `TOP`. The tool remains unavailable for production and `ReadOnly` connections even
+when globally enabled. On an eligible development `ReadWrite` connection it can run mutating
+SQL, including `DELETE`, `TRUNCATE`, or schema changes—enable it only where that risk is
+acceptable.
 
 `get_schema` and `run_query` both require `connectionName` even though `get_schema` never
 queries the database — constructing the `DbContext` object at all (even for schema-only

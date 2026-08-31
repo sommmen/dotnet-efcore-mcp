@@ -16,15 +16,23 @@ namespace DotnetEfCoreMcp.Server.Tests.Tools;
 /// should still surface as a normal <see cref="McpException"/>.</summary>
 public sealed class EfCoreMcpToolsProviderInferenceTests
 {
-    private static EfCoreMcpTools CreateTools(SqliteTestDatabase db, out AssemblyLoaderService assemblyLoader)
+    private static EfCoreMcpTools CreateTools(
+        SqliteTestDatabase db,
+        out AssemblyLoaderService assemblyLoader,
+        RawSqlExecutionOptions? rawSqlOptions = null,
+        bool readWrite = false,
+        bool production = false)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Connections:Inferred:ConnectionString"] = db.ConnectionString,
+                ["Connections:Inferred:AccessMode"] = readWrite ? "ReadWrite" : "ReadOnly",
+                ["Connections:Inferred:Environment"] = production ? "Production" : "Development",
             })
             .Build();
 
+        var resolvedRawSqlOptions = rawSqlOptions ?? new RawSqlExecutionOptions();
         assemblyLoader = new AssemblyLoaderService();
         var tools = new EfCoreMcpTools(
             assemblyLoader,
@@ -32,6 +40,8 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
             new ConnectionRegistry(configuration),
             new SchemaCache(),
             new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
+            resolvedRawSqlOptions,
+            new SqlQueryExecutor(resolvedRawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             NullLogger<EfCoreMcpTools>.Instance);
         return tools;
     }
@@ -57,5 +67,41 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var json = tools.ListConnections();
 
         Assert.Contains("(inferred)", json);
+    }
+
+    [Fact]
+    public async Task RunSqlQuery_WhenDisabled_RejectsBeforeQuerying()
+    {
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(db, out var assemblyLoader);
+        assemblyLoader.Load(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
+
+        Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunSqlQuery_WithReadOnlyConnection_RejectsEvenWhenEnabled()
+    {
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(db, out var assemblyLoader, new RawSqlExecutionOptions { Enabled = true });
+        assemblyLoader.Load(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
+
+        Assert.Contains("ReadWrite", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunSqlQuery_WithProductionConnection_RejectsEvenWhenConfiguredReadWrite()
+    {
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(db, out var assemblyLoader, new RawSqlExecutionOptions { Enabled = true }, readWrite: true, production: true);
+        assemblyLoader.Load(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
+
+        Assert.Contains("production", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

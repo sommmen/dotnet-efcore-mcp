@@ -23,6 +23,8 @@ public sealed class EfCoreMcpTools(
     ConnectionRegistry connectionRegistry,
     SchemaCache schemaCache,
     QueryExecutor queryExecutor,
+    RawSqlExecutionOptions rawSqlExecutionOptions,
+    SqlQueryExecutor sqlQueryExecutor,
     ILogger<EfCoreMcpTools> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -167,6 +169,51 @@ public sealed class EfCoreMcpTools(
         try
         {
             var result = await queryExecutor.ExecuteAsync(context, request, entry.CommandTimeoutSeconds, cancellationToken);
+            return JsonSerializer.Serialize(result, JsonOptions);
+        }
+        catch (QueryExecutionException ex)
+        {
+            throw new McpException(ex.Message);
+        }
+    }
+
+    [McpServerTool(Name = "run_sql_query"), Description(
+        "Executes a parameterized raw SQL command against a Development ReadWrite connection. This potentially " +
+        "destructive tool is unavailable unless RawSqlExecution:Enabled is explicitly set to true on the server; " +
+        "it is always rejected for Production and ReadOnly connections. Use @p0, @p1, ... placeholders for values " +
+        "provided through parameters. Result rows are capped server-side.")]
+    public async Task<string> RunSqlQuery(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("Raw SQL command text. Use @p0, @p1, ... for values rather than embedding them in this string.")] string sql,
+        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Positional parameter values referenced by SQL placeholders @p0, @p1, ...")] object?[]? parameters = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!rawSqlExecutionOptions.Enabled)
+        {
+            throw new McpException("Raw SQL execution is disabled. Enable RawSqlExecution:Enabled in server-side configuration to use this tool.");
+        }
+
+        var contextType = ResolveContextType(contextName);
+        var entry = ResolveConnection(connectionName);
+        if (entry.IsProduction)
+        {
+            throw new McpException("Raw SQL execution is not permitted for production connections.");
+        }
+
+        if (entry.AccessMode != ConnectionAccessMode.ReadWrite)
+        {
+            throw new McpException("Raw SQL execution requires a ReadWrite connection.");
+        }
+
+        using var context = CreateContext(contextType, entry);
+        try
+        {
+            var result = await sqlQueryExecutor.ExecuteAsync(
+                context,
+                new SqlQueryRequest { Sql = sql, Parameters = parameters },
+                entry.CommandTimeoutSeconds,
+                cancellationToken);
             return JsonSerializer.Serialize(result, JsonOptions);
         }
         catch (QueryExecutionException ex)
