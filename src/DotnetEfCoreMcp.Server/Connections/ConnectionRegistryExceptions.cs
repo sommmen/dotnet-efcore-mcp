@@ -32,3 +32,21 @@ public sealed class UnknownConnectionException : Exception
         return $"No connection named '{requestedName}' is configured on the server. Known connections: {known}.";
     }
 }
+
+/// <summary>Thrown when an operation attempts to mutate or make active a connection that is
+/// protected because it is designated as production (see <see cref="ConnectionRegistryEntry.IsProduction"/>).
+/// Production connections are update-forbidden and cannot be set as the active connection without
+/// the caller explicitly acknowledging the production target.</summary>
+public sealed class ProductionProtectedException : Exception
+{
+    public ProductionProtectedException(string connectionName)
+        : base(
+            $"Connection '{connectionName}' is designated as production and is protected. " +
+            "Production connections cannot be made the active connection without explicitly " +
+            "confirming the production target (allowProduction: true).")
+    {
+        ConnectionName = connectionName;
+    }
+
+    public string ConnectionName { get; }
+}

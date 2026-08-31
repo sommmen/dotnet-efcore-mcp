@@ -19,3 +19,17 @@ public enum ConnectionAccessMode
     ReadOnly,
     ReadWrite,
 }
+
+/// <summary>Which runtime environment a registered connection points at. It is a registry-level
+/// designation used to drive safety policy (see <c>IsProduction</c>): a connection marked
+/// <see cref="Production"/> is treated as update-forbidden (read-only) and is protected from being
+/// made the server's active connection without explicit acknowledgment. Connections without an
+/// explicit environment default to <see cref="Unspecified"/> and get no special production
+/// safeguards (backwards compatible with existing configurations).</summary>
+public enum EnvironmentType
+{
+    Unspecified,
+    Development,
+    Staging,
+    Production,
+}

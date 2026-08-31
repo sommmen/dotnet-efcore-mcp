@@ -119,6 +119,184 @@ public sealed class ConnectionRegistryTests
     }
 
     [Fact]
+    public void Get_ConnectionWithEnvironment_ParsesEnvironment()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Staging:Provider"] = "Sqlite",
+            ["Connections:Staging:ConnectionString"] = "Data Source=staging.db",
+            ["Connections:Staging:Environment"] = "staging",
+        });
+
+        var entry = new ConnectionRegistry(configuration).Get("Staging");
+
+        Assert.Equal(EnvironmentType.Staging, entry.Environment);
+        Assert.False(entry.IsProduction);
+    }
+
+    [Fact]
+    public void Constructor_InvalidEnvironment_ThrowsConfigurationException()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Bad:Provider"] = "Sqlite",
+            ["Connections:Bad:ConnectionString"] = "Data Source=test.db",
+            ["Connections:Bad:Environment"] = "DisasterRecovery",
+        });
+
+        var exception = Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+
+        Assert.Contains("Environment", exception.Message);
+        Assert.Contains("DisasterRecovery", exception.Message);
+    }
+
+    [Fact]
+    public void Constructor_ProductionConnection_ForcesReadOnlyAccessMode()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Production:Provider"] = "Sqlite",
+            ["Connections:Production:ConnectionString"] = "Data Source=production.db",
+            ["Connections:Production:Environment"] = "Production",
+            ["Connections:Production:AccessMode"] = "ReadWrite",
+        });
+
+        var entry = new ConnectionRegistry(configuration).Get("Production");
+
+        Assert.True(entry.IsProduction);
+        Assert.Equal(ConnectionAccessMode.ReadOnly, entry.AccessMode);
+    }
+
+    [Fact]
+    public void Constructor_DefaultsActiveConnectionToFirstNonProductionConnection()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Production:Provider"] = "Sqlite",
+            ["Connections:Production:ConnectionString"] = "Data Source=production.db",
+            ["Connections:Production:Environment"] = "Production",
+            ["Connections:Development:Provider"] = "Sqlite",
+            ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Development:Environment"] = "Development",
+        });
+
+        var registry = new ConnectionRegistry(configuration);
+
+        Assert.Equal("Development", registry.ActiveConnectionName);
+        Assert.Same(registry.Get("Development"), registry.ActiveConnection);
+    }
+
+    [Fact]
+    public void Constructor_WithOnlyProductionConnections_HasNoActiveConnection()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Production:Provider"] = "Sqlite",
+            ["Connections:Production:ConnectionString"] = "Data Source=production.db",
+            ["Connections:Production:Environment"] = "Production",
+        });
+
+        var registry = new ConnectionRegistry(configuration);
+
+        Assert.Null(registry.ActiveConnectionName);
+        Assert.Null(registry.ActiveConnection);
+    }
+
+    [Fact]
+    public void SetActive_NonProductionConnection_ChangesActiveConnection()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Development:Provider"] = "Sqlite",
+            ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Staging:Provider"] = "Sqlite",
+            ["Connections:Staging:ConnectionString"] = "Data Source=staging.db",
+            ["Connections:Staging:Environment"] = "Staging",
+        });
+        var registry = new ConnectionRegistry(configuration);
+
+        registry.SetActive("Staging");
+
+        Assert.Equal("Staging", registry.ActiveConnectionName);
+        Assert.Same(registry.Get("Staging"), registry.ActiveConnection);
+    }
+
+    [Fact]
+    public void SetActive_ProductionConnectionWithoutAcknowledgment_ThrowsAndPreservesActiveConnection()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Development:Provider"] = "Sqlite",
+            ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Production:Provider"] = "Sqlite",
+            ["Connections:Production:ConnectionString"] = "Data Source=production.db",
+            ["Connections:Production:Environment"] = "Production",
+        });
+        var registry = new ConnectionRegistry(configuration);
+        var originalActive = registry.ActiveConnectionName;
+
+        var exception = Assert.Throws<ProductionProtectedException>(() => registry.SetActive("Production"));
+
+        Assert.Equal("Production", exception.ConnectionName);
+        Assert.Equal(originalActive, registry.ActiveConnectionName);
+    }
+
+    [Fact]
+    public void SetActive_ProductionConnectionWithAcknowledgment_ChangesActiveConnection()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Development:Provider"] = "Sqlite",
+            ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Production:Provider"] = "Sqlite",
+            ["Connections:Production:ConnectionString"] = "Data Source=production.db",
+            ["Connections:Production:Environment"] = "Production",
+        });
+        var registry = new ConnectionRegistry(configuration);
+
+        registry.SetActive("Production", allowProduction: true);
+
+        Assert.Equal("Production", registry.ActiveConnectionName);
+        Assert.True(registry.ActiveConnection!.IsProduction);
+        Assert.Equal(ConnectionAccessMode.ReadOnly, registry.ActiveConnection.AccessMode);
+    }
+
+    [Fact]
+    public void ListConnections_ReturnsRedactedMetadataAndMarksActiveConnection()
+    {
+        const string secret = "Data Source=super-secret-production.db;Password=hunter2";
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:Development:Provider"] = "Sqlite",
+            ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Development:Environment"] = "Development",
+            ["Connections:Production:Provider"] = "Sqlite",
+            ["Connections:Production:ConnectionString"] = secret,
+            ["Connections:Production:Environment"] = "Production",
+        });
+        var registry = new ConnectionRegistry(configuration);
+
+        var connections = registry.ListConnections();
+
+        Assert.Collection(connections,
+            development =>
+            {
+                Assert.Equal("Development", development.Name);
+                Assert.True(development.IsActive);
+                Assert.False(development.IsProduction);
+            },
+            production =>
+            {
+                Assert.Equal("Production", production.Name);
+                Assert.False(production.IsActive);
+                Assert.True(production.IsProduction);
+                Assert.Equal(ConnectionAccessMode.ReadOnly, production.AccessMode);
+            });
+        Assert.DoesNotContain(secret, connections.ToString());
+        Assert.DoesNotContain("hunter2", connections.ToString());
+    }
+
+    [Fact]
     public void Entry_ToString_NeverIncludesRawConnectionString()
     {
         var entry = new ConnectionRegistryEntry
