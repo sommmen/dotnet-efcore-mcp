@@ -215,6 +215,21 @@ path outside them is rejected before the assembly is touched:
 dotnet user-secrets set "AssemblyLoader:AllowedRoots:0" "C:\repos\MyApp\bin"
 ```
 
+### Using Git worktrees
+
+The server, the target project, or both can live in a [Git worktree](https://git-scm.com/docs/git-worktree)
+(e.g. `git worktree add ../myapp-feature`) instead of the primary checkout — `WorkspacePath`,
+`TargetAssemblyPath`, and `load_assembly` all operate on plain absolute filesystem paths, so
+worktrees need no special handling. Two things worth knowing:
+
+- In VS Code, `${workspaceFolder}` resolves to whichever worktree is currently open, so the
+  `mcp.json` example above works unchanged when the whole repo (server + target project) is
+  checked out as a worktree — just open that worktree's folder.
+- If the server and the target project live in **different** worktrees (or different repos
+  entirely), point `WorkspacePath`/`TargetAssemblyPath` at the target project's worktree path
+  explicitly rather than relying on `${workspaceFolder}`, since that variable only reflects the
+  workspace VS Code currently has open, not the server's own working directory.
+
 ### Tune query execution limits
 
 Two safety limits are configurable under `QueryExecution` (both have sane defaults, so this
