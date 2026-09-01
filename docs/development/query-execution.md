@@ -8,6 +8,15 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Querying`](../../tests/DotnetEfCoreM
 See the [README "MCP tool contract"](../../README.md#mcp-tool-contract) for the public
 `run_query` request and response shapes.
 
+## Consumer-visible failures
+
+`run_query` preserves its concise, entity-scoped failure message and returns a recognized safe
+underlying cause without stack traces. It includes a recovery-oriented next step: queries using
+row-limiting operators without deterministic ordering are directed to add ordering, and runtime
+failures caused by invariant globalization mode direct operators to enable ICU/globalization support.
+Other provider failures remain sanitized and direct callers to validate model names with `get_schema`,
+validate query syntax, and consult server logs if required.
+
 ## LINQPad-style `run_query`
 
 `run_query` accepts one required `query` expression. Its first identifier must exactly match a public `DbSet<T>` property on the selected `DbContext`; `T` must be a mapped entity. For example:

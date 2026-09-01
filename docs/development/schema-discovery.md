@@ -21,6 +21,19 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Schema`](../../tests/DotnetEfCoreMcp
     so old cache entries can never be returned for a stale assembly — invalidation is a
     natural consequence of the identity change rather than an explicit cache-clear call.
 
+## Tool contract
+
+`get_schema` accepts either a DbContext short name (for example, `CommerceDbContext`) or its
+fully qualified CLR type name. `contextName` may be omitted only when the loaded assembly exposes
+exactly one DbContext; `load_assembly` reports that default context and an explicit hint in that
+case. Ambiguous, missing, and invalid selections list the available short names and direct callers
+to `list_contexts`.
+
+Schema responses are bounded at the tool boundary, while the complete model remains cached.
+`get_schema` returns entity pages using one-based `page` (default `1`) and `pageSize` (default
+`25`, maximum `100`), along with `totalEntityCount`, `truncated`, `hasMore`, and `nextPage`. When
+more entities remain, the response includes a continuation hint showing the next request.
+
 ## Proposed open work — P0 #6: schema slicing/search
 
 Add two read-only tools over the existing `SchemaCache`; neither may construct a `DbContext`,
