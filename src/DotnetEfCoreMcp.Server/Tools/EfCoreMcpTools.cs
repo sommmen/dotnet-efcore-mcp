@@ -85,6 +85,10 @@ public sealed class EfCoreMcpTools(
                 loadedAssemblyPath = handle.AssemblyPath,
                 loadedAtUtc = handle.LoadedAtUtc,
                 discoveredDbContexts = scan.Descriptors.Select(c => new { name = c.Name, fullName = c.FullName, constructionKind = c.ConstructionKind.ToString() }),
+                defaultContext = scan.Descriptors.Count == 1 ? scan.Descriptors[0].Name : null,
+                hint = scan.Descriptors.Count == 1
+                    ? $"get_schema may omit contextName; '{scan.Descriptors[0].Name}' will be used by default."
+                    : null,
                 warnings = warnings.Count > 0 ? warnings : null,
             });
         }
@@ -125,16 +129,23 @@ public sealed class EfCoreMcpTools(
     }
 
     [McpServerTool(Name = "get_schema"), Description(
-        "Returns the EF Core model (entities, properties, keys, foreign keys, navigations) for a DbContext " +
-        "in the currently loaded target assembly, as discovered via reflection over the real compiled model.")]
+        "Returns a bounded, paginated page of the EF Core model (entities, properties, keys, foreign keys, navigations) " +
+        "for a DbContext in the currently loaded target assembly. Use nextPage when hasMore is true.")]
     public string GetSchema(
-        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. If omitted, the currently active connection is used.")] string? connectionName = null)
+        [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
+        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("One-based entity page number. Defaults to 1.")] int page = 1,
+        [Description("Number of entities per page. Defaults to 25 and is capped at 100.")] int pageSize = 25)
     {
+        if (page < 1)
+            throw new McpException("`page` must be at least 1.");
+        if (pageSize < 1 || pageSize > 100)
+            throw new McpException("`pageSize` must be between 1 and 100.");
+
         var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
 
-        logger.LogInformation("get_schema requested. Context={ContextName} Connection={ConnectionName}", contextName, connectionName);
+        logger.LogInformation("get_schema requested. Context={ContextName} Connection={ConnectionName} Page={Page} PageSize={PageSize}", contextType.Name, connectionName, page, pageSize);
 
         var schema = schemaCache.GetOrBuild(contextType, () =>
         {
@@ -142,7 +153,24 @@ public sealed class EfCoreMcpTools(
             return Schema.SchemaBuilder.Build(context);
         });
 
-        return resultFormatter.Format(schema);
+        var totalEntityCount = schema.Entities.Count;
+        var offset = (long)(page - 1) * pageSize;
+        var entities = offset >= totalEntityCount
+            ? []
+            : schema.Entities.Skip((int)offset).Take(pageSize).ToArray();
+        var hasMore = offset + pageSize < totalEntityCount;
+        return resultFormatter.Format(new
+        {
+            contextName = schema.ContextName,
+            totalEntityCount,
+            page,
+            pageSize,
+            entities,
+            truncated = hasMore,
+            hasMore,
+            nextPage = hasMore ? page + 1 : (int?)null,
+            hint = hasMore ? $"Call get_schema with page={page + 1} and pageSize={pageSize} to retrieve the next entity page." : null,
+        });
     }
 
     [McpServerTool(Name = "run_query"), Description(
@@ -166,7 +194,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (QueryExecutionException ex)
         {
-            throw new McpException(ex.Message);
+            throw new McpException(FormatQueryError(ex));
         }
     }
     [McpServerTool(Name = "run_sql_query"), Description(
@@ -270,27 +298,66 @@ public sealed class EfCoreMcpTools(
             ?? throw new McpException("No target assembly is loaded yet. Call load_assembly with the path to a compiled target project's DLL first.");
     }
 
-    private Type ResolveContextType(string contextName)
+    private Type ResolveContextType(string? contextName)
     {
         var handle = RequireLoadedAssembly();
         var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
-        var descriptor = scan.Descriptors
-            .FirstOrDefault(c => string.Equals(c.Name, contextName, StringComparison.Ordinal));
+        var contexts = scan.Descriptors;
 
-        if (descriptor is null)
+        if (string.IsNullOrWhiteSpace(contextName))
         {
-            var known = scan.Descriptors.Select(c => c.Name);
-            var message = $"No DbContext named '{contextName}' was found in the currently loaded assembly. Known contexts: {string.Join(", ", known)}.";
-            if (scan.Descriptors.Count == 0 && scan.TypeLoadWarnings.Count > 0)
-            {
-                message += " " + string.Join(" ", scan.TypeLoadWarnings);
-            }
+            if (contexts.Count == 1)
+                return contexts[0].ClrType;
 
-            throw new McpException(message);
+            throw new McpException(BuildContextSelectionError(
+                contexts,
+                contexts.Count == 0
+                    ? "No DbContexts were found in the currently loaded assembly."
+                    : "`contextName` is required because the loaded assembly contains multiple DbContexts."));
         }
 
-        return descriptor.ClrType;
+        var matches = contexts
+            .Where(c => string.Equals(c.FullName, contextName, StringComparison.Ordinal) ||
+                        string.Equals(c.Name, contextName, StringComparison.Ordinal))
+            .ToArray();
+
+        if (matches.Length == 1)
+            return matches[0].ClrType;
+
+        var reason = matches.Length > 1
+            ? $"DbContext name '{contextName}' is ambiguous."
+            : $"No DbContext named '{contextName}' was found in the currently loaded assembly.";
+        throw new McpException(BuildContextSelectionError(contexts, reason));
     }
+
+    private static string BuildContextSelectionError(IReadOnlyList<DbContextDescriptor> contexts, string reason)
+    {
+        var choices = contexts.Count == 0 ? "(none)" : string.Join(", ", contexts.Select(c => c.Name));
+        return $"{reason} Choose one of these short context names: {choices}. Next step: call list_contexts, then pass contextName using a listed short name or fully qualified name.";
+    }
+
+    private static string FormatQueryError(QueryExecutionException exception)
+    {
+        var cause = exception.InnerException?.Message?.Trim();
+        if (string.IsNullOrEmpty(cause))
+            return $"{exception.Message} Next step: {GenericQueryRecoveryHint}";
+
+        if (cause.Contains("RowLimitingOperationWithoutOrderByWarning", StringComparison.OrdinalIgnoreCase) ||
+            (cause.Contains("Skip", StringComparison.OrdinalIgnoreCase) && cause.Contains("Take", StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"{exception.Message} Cause: {cause} Next step: Add a deterministic orderBy expression whenever using skip or take, then retry the query.";
+        }
+
+        if (cause.Contains("Globalization Invariant Mode is not supported", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{exception.Message} Cause: {cause} Next step: Enable ICU/globalization support in the target .NET runtime or container, then retry the query.";
+        }
+
+        return $"{exception.Message} Next step: {GenericQueryRecoveryHint}";
+    }
+
+    private const string GenericQueryRecoveryHint =
+        "verify entity and property names with get_schema, validate Dynamic LINQ syntax, and consult server logs if the problem persists.";
 
     /// <summary>Turns a <see cref="DbContextScanResult"/>'s type-load diagnostics into
     /// client-facing warning strings, adding an explicit "zero DbContexts found" warning when the
