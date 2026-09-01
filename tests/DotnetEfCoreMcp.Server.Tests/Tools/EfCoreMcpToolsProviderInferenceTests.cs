@@ -56,7 +56,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
 
         var output = tools.GetSchema("SampleAppDbContext", "Inferred");
 
-        Assert.Contains("Entities[", output, StringComparison.Ordinal);
+        Assert.Contains("entities[", output, StringComparison.Ordinal);
         Assert.DoesNotContain("\"entities\"", output, StringComparison.OrdinalIgnoreCase);
     }
 
