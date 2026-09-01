@@ -18,7 +18,7 @@ Most existing EF Core + MCP integrations require the tools to be baked into the 
 - Discovers its model dynamically via reflection instead of design-time source generation.
 - Exposes safe, generalized schema discovery and querying to an MCP client.
 
-This project aims to fill that gap. See [development.md](./development.md) for the current feature status and roadmap.
+This project aims to fill that gap. See [DEVELOPMENT.md](./DEVELOPMENT.md) for the current feature status and module guides.
 
 ## How it works
 
@@ -41,12 +41,12 @@ Target application's database
 
 ## Status
 
-MVP implemented (`development.md` sections 0–7): assembly loading, `DbContext` discovery,
-server-side connection registry, schema discovery, safe Dynamic-LINQ query execution, and
-the MCP stdio tool surface are all in place and tested (`dotnet test`). Section 8
-(documentation) and the optional metrics/telemetry sub-item of section 7 are the remaining
-open items — see [development.md](./development.md) for the full checklist and
-implementation notes.
+MVP implemented: assembly loading, `DbContext` discovery, server-side connection registry,
+schema discovery, safe Dynamic-LINQ query execution, and the MCP stdio tool surface are all
+in place and tested (`dotnet test`). Structured logging is also in place; the optional
+metrics/telemetry hooks are the only remaining open item — see
+[DEVELOPMENT.md](./DEVELOPMENT.md) for the module-by-module breakdown and the [work
+tracker](./docs/development/WORK-TRACKER.md) for outstanding work.
 
 ## Prior art / inspiration
 
@@ -88,8 +88,8 @@ with environment variables overriding user-secrets for the same key, per the sta
 Each connection needs `ConnectionString`, plus optional `Provider` (one of `Sqlite`,
 `SqlServer`, `PostgreSql`), `Environment` (`Development`, `Staging`, `Production`, or
 `Unspecified`), `AccessMode` (`ReadOnly` — the default — or `ReadWrite`; see the note in
-`development.md` section 3 about its current scope), and `CommandTimeoutSeconds` (defaults
-to 30).
+[`docs/development/connections.md`](./docs/development/connections.md) about its current
+scope), and `CommandTimeoutSeconds` (defaults to 30).
 
 `Provider` is optional because it's normally **inferred** from the EF Core provider package
 referenced by the currently loaded target project assembly (e.g. referencing
@@ -326,7 +326,7 @@ purposes) requires a real connection string/provider to build its `DbContextOpti
 
 ## Security
 
-Because this server can execute arbitrary queries against a real database on behalf of an agent, security is a first-class concern, not an afterthought. See the "Security & connection management" section of [development.md](./development.md) for the planned safeguards (connection string storage, query allowlisting/read-only enforcement, result limits, auditing).
+Because this server can execute arbitrary queries against a real database on behalf of an agent, security is a first-class concern, not an afterthought. See the [Connection management](./docs/development/connections.md) and [Query execution](./docs/development/query-execution.md) module guides for the implemented safeguards (connection string storage, query allowlisting/read-only enforcement, result limits, auditing).
 
 ## Contributing
 
