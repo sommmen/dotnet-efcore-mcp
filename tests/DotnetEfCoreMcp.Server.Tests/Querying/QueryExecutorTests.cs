@@ -106,6 +106,68 @@ public sealed class QueryExecutorTests : IDisposable
     }
 
     [Theory]
+    [InlineData("Customers.SelectMany(c => c.Orders)")]
+    [InlineData("Orders.Join(Customers, o => o.CustomerId, c => c.Id, (o, c) => c.Name)")]
+    [InlineData("Orders.GroupJoin(Customers, o => o.CustomerId, c => c.Id, (o, cs) => cs)")]
+    public async Task ExecuteAsync_RejectsUnsupportedDynamicLinqOperators(string query)
+    {
+        using var context = NewContext();
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = query }, 30, CancellationToken.None));
+        Assert.Contains("unsupported", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FirstOrDefaultReturnsScalarRow()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name).FirstOrDefault()" }, 30, CancellationToken.None);
+        Assert.True(result.IsScalar);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SingleOrDefaultReturnsScalarRow()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.SingleOrDefault(c => c.Name == \"Alice\")" }, 30, CancellationToken.None);
+        Assert.True(result.IsScalar);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AnyReturnsScalarBoolean()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Any(c => c.Age > 18)" }, 30, CancellationToken.None);
+        Assert.True(result.IsScalar);
+        Assert.Equal(true, result.Scalar);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllReturnsScalarBoolean()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.All(c => c.Age > 0)" }, 30, CancellationToken.None);
+        Assert.True(result.IsScalar);
+        Assert.Equal(true, result.Scalar);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DistinctReturnsSequence()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Select(c => c.Age).Distinct()" }, 30, CancellationToken.None);
+        Assert.False(result.IsScalar);
+        Assert.Equal(2, result.RowCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnionCombinesTwoDbSetsByName()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Select(c => c.Name).Union(Orders.Select(o => \"Alice\"))" }, 30, CancellationToken.None);
+        Assert.False(result.IsScalar);
+    }
+
+    [Theory]
     [InlineData("customers.Where(c => c.Age > 0)")]
     [InlineData("Unknown.Where(c => true)")]
     [InlineData("Customers.AsEnumerable()")]

@@ -302,9 +302,17 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 `DbSet<T>` property name on the selected context, such as
 `Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`. The server accepts one
 strictly allowlisted, provider-translatable `Queryable` expression only; it does not execute
-arbitrary C# or client-side `Enumerable` operations. Sequences receive a deterministic default
+arbitrary C# or client-side `Enumerable` operations. Allowlisted operators include `Where`,
+`Select`, `GroupBy`, ordering, `Skip`, `Take`, `Distinct`, aggregates (`Count`, `Sum`, `Average`,
+`Min`, `Max`), element operators (`First(OrDefault)`, `Single(OrDefault)`, `Any`, `All`), and the
+set operators `Concat`/`Union`/`Except`/`Intersect`. Sequences receive a deterministic default
 page and any caller `Take` is clamped server-side (200 rows by default); terminal scalar
-aggregates are not paginated.
+aggregates/element operators are not paginated. A terminal call such as `.ToList()`/
+`.ToListAsync()`/`.FirstOrDefault()` is never required — the server always materializes and caps
+the result — but adding one (or an explicit `Take(n)`) still narrows the result as expected.
+`Join`, `GroupJoin`, `SelectMany`, and `Zip` are not supported (a hard limitation of the Dynamic
+LINQ string parser); use a navigation-property predicate
+(`Orders.Where(o => o.Customer.Name == "Alice")`) or `Concat`/`Union`/`Except`/`Intersect` instead.
 
 `run_sql_query` is an explicitly opt-in escape hatch for development diagnostics and migrations;
 prefer `run_query` whenever its Dynamic LINQ contract is sufficient. Enable it only in a local

@@ -187,8 +187,13 @@ public sealed class EfCoreMcpTools(
 
     [McpServerTool(Name = "run_query"), Description(
         "Executes a safe, read-only LINQPad-style expression rooted at a public DbSet property on the selected DbContext. " +
-        "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). Only approved, database-translatable LINQ operators are allowed. " +
-        "Sequence results are deterministically ordered and capped server-side; terminal scalar aggregates are not paginated.")]
+        "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: " +
+        "results are always materialized, deterministically ordered, and capped server-side (terminal scalar aggregates/element operators such as " +
+        "Count/FirstOrDefault/Single/Any are not paginated), but adding one still narrows the result as expected. Allowed operators: Where, Select, " +
+        "GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, Distinct, Count, LongCount, Sum, Average, Min, Max, First, " +
+        "FirstOrDefault, Single, SingleOrDefault, Any, All, and the set operators Concat/Union/Except/Intersect (which may reference another public " +
+        "DbSet by name, e.g. Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). Join, GroupJoin, SelectMany, and Zip are NOT " +
+        "supported (a hard Dynamic LINQ parser limitation) — use a navigation-property predicate instead, e.g. Orders.Where(o => o.Customer.Name == \"Alice\").")]
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
