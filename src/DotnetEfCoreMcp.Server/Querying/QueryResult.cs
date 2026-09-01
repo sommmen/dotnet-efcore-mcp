@@ -1,26 +1,18 @@
 namespace DotnetEfCoreMcp.Server.Querying;
 
+/// <summary>The materialized result of a LINQPad-style query expression.</summary>
 public sealed record QueryResult(
     string Entity,
     int RowCount,
-    int EffectiveTake,
-    int EffectiveSkip,
-    IReadOnlyList<string> IncludedNavigations,
+    int? EffectiveTake,
+    bool IsScalar,
+    object? Scalar,
     IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
 
-/// <summary>Thrown for any invalid or unsafe query request (unknown entity, unknown/invalid
-/// `Include` navigation, malformed Dynamic LINQ expression, provider/query failure). Messages are
-/// sanitized - never includes connection strings, and EF Core/provider exceptions are summarized
-/// rather than passed through with full stack traces.</summary>
+/// <summary>Thrown for invalid, unsafe, or failed query expressions. Messages are sanitized and
+/// never include connection strings or provider-generated SQL.</summary>
 public sealed class QueryExecutionException : Exception
 {
-    public QueryExecutionException(string message)
-        : base(message)
-    {
-    }
-
-    public QueryExecutionException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-    }
+    public QueryExecutionException(string message) : base(message) { }
+    public QueryExecutionException(string message, Exception innerException) : base(message, innerException) { }
 }

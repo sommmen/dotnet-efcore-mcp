@@ -259,7 +259,8 @@ section is optional):
 
 ```powershell
 dotnet user-secrets set "QueryExecution:MaxTake" "100"
-dotnet user-secrets set "QueryExecution:MaxIncludedCollectionItems" "50"
+dotnet user-secrets set "QueryExecution:DefaultTake" "50"
+dotnet user-secrets set "QueryExecution:MaxQueryLength" "4000"
 ```
 
 ### Run the server
@@ -294,18 +295,16 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `load_assembly` | `assemblyPath: string` | Loaded assembly path/time and discovered `DbContext` names, full names, and construction kinds |
 | `list_contexts` | *(none)* | Current assembly path, stale flag, and discovered contexts |
 | `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
-| `run_query` | `contextName: string`, `connectionName: string`, `entity: string`, `where?: string`, `parameters?: object[]`, `orderBy?: string`, `skip?: int`, `take?: int`, `include?: string[]` | Entity, paging metadata, included navigations, and rows with scalar plus one-level-deep included navigation properties |
+| `run_query` | `contextName: string`, `query: string`, `connectionName?: string` | Root DbSet name, scalar-or-sequence result, effective sequence page size, and safely projected rows |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
 
-`where`/`orderBy` are [Dynamic LINQ](https://dynamic-linq.net/) expression strings (e.g.
-`"Age > 18 and Name.Contains(@0)"`); values referenced as `@0`, `@1`, ... must be supplied
-positionally via `parameters` — they are never string-concatenated into the expression, so
-caller-supplied values (including quote characters) can't break out of the predicate.
-`take` is always clamped server-side to a configurable maximum (200 rows by default) even
-if omitted or if a larger value is requested. `include` entries must be an actual
-navigation property name on `entity` (validated against the real EF Core model) or the
-call is rejected; included navigations are projected exactly one level deep into plain
-dictionaries (never a tracked entity graph), so results are cycle-safe by construction.
+`query` is a [Dynamic LINQ](https://dynamic-linq.net/) expression rooted at an exact, public
+`DbSet<T>` property name on the selected context, such as
+`Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`. The server accepts one
+strictly allowlisted, provider-translatable `Queryable` expression only; it does not execute
+arbitrary C# or client-side `Enumerable` operations. Sequences receive a deterministic default
+page and any caller `Take` is clamped server-side (200 rows by default); terminal scalar
+aggregates are not paginated.
 
 `run_sql_query` is an explicitly opt-in escape hatch for development diagnostics and migrations;
 prefer `run_query` whenever its Dynamic LINQ contract is sufficient. Enable it only in a local

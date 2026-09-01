@@ -146,41 +146,22 @@ public sealed class EfCoreMcpTools(
     }
 
     [McpServerTool(Name = "run_query"), Description(
-        "Executes a safe, read-only, capped-row query against a single entity's DbSet on a DbContext in the " +
-        "currently loaded target assembly, using a Dynamic LINQ `where`/`orderBy` expression with positional " +
-        "parameters (@0, @1, ...). Always runs with AsNoTracking(); row count is always capped server-side " +
-        "even if `take` is omitted or exceeds the server's configured maximum.")]
+        "Executes a safe, read-only LINQPad-style expression rooted at a public DbSet property on the selected DbContext. " +
+        "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). Only approved, database-translatable LINQ operators are allowed. " +
+        "Sequence results are deterministically ordered and capped server-side; terminal scalar aggregates are not paginated.")]
     public async Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("CLR type name of the entity to query, as returned by get_schema.")] string entity,
+        [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
         [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
-        [Description("Optional Dynamic LINQ predicate, e.g. \"Age > 18 and Name.Contains(@0)\". Parameters are always passed positionally via `parameters`, never concatenated into this string.")] string? where = null,
-        [Description("Positional parameters referenced from `where`/`orderBy` as @0, @1, ...")] object?[]? parameters = null,
-        [Description("Optional Dynamic LINQ order-by expression, e.g. \"Age desc\".")] string? orderBy = null,
-        [Description("Number of rows to skip.")] int? skip = null,
-        [Description("Number of rows to return; capped server-side regardless of the value requested.")] int? take = null,
-        [Description("Navigation property names to eager-load; each must be an actual navigation property on `entity` (validated against the model) or the request is rejected.")] string[]? include = null,
         CancellationToken cancellationToken = default)
     {
         var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
-
         using var context = CreateContext(contextType, entry);
-
-        var request = new QueryRequest
-        {
-            Entity = entity,
-            Where = where,
-            Parameters = parameters,
-            OrderBy = orderBy,
-            Skip = skip,
-            Take = take,
-            Include = include,
-        };
 
         try
         {
-            var result = await queryExecutor.ExecuteAsync(context, request, entry.CommandTimeoutSeconds, cancellationToken);
+            var result = await queryExecutor.ExecuteAsync(context, new QueryRequest { Query = query }, entry.CommandTimeoutSeconds, cancellationToken);
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
@@ -188,7 +169,6 @@ public sealed class EfCoreMcpTools(
             throw new McpException(ex.Message);
         }
     }
-
     [McpServerTool(Name = "run_sql_query"), Description(
         "Executes a parameterized raw SQL command against a Development ReadWrite connection. This potentially " +
         "destructive tool is unavailable unless RawSqlExecution:Enabled is explicitly set to true on the server; " +
