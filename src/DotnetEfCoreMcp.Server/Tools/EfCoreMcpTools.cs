@@ -1,6 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
@@ -25,14 +23,9 @@ public sealed class EfCoreMcpTools(
     QueryExecutor queryExecutor,
     RawSqlExecutionOptions rawSqlExecutionOptions,
     SqlQueryExecutor sqlQueryExecutor,
+    IToolResultFormatter resultFormatter,
     ILogger<EfCoreMcpTools> logger)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        ReferenceHandler = ReferenceHandler.IgnoreCycles,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
 
     [McpServerTool(Name = "list_assembly_candidates"), Description(
         "Discovers compiled project assemblies under a workspace, ordered by the recommended selection. " +
@@ -43,7 +36,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             var candidates = assemblyDiscovery.Discover(workspacePath);
-            return JsonSerializer.Serialize(new
+            return resultFormatter.Format(new
             {
                 workspacePath = Path.GetFullPath(workspacePath),
                 candidates = candidates.Select(candidate => new
@@ -55,7 +48,7 @@ public sealed class EfCoreMcpTools(
                     lastWriteTimeUtc = candidate.LastWriteTimeUtc,
                     isPreferred = candidate.IsPreferred,
                 }),
-            }, JsonOptions);
+            });
         }
         catch (AssemblyDiscoveryException ex)
         {
@@ -87,13 +80,13 @@ public sealed class EfCoreMcpTools(
                     handle.AssemblyPath, string.Join(" | ", warnings));
             }
 
-            return JsonSerializer.Serialize(new
+            return resultFormatter.Format(new
             {
                 loadedAssemblyPath = handle.AssemblyPath,
                 loadedAtUtc = handle.LoadedAtUtc,
                 discoveredDbContexts = scan.Descriptors.Select(c => new { name = c.Name, fullName = c.FullName, constructionKind = c.ConstructionKind.ToString() }),
                 warnings = warnings.Count > 0 ? warnings : null,
-            }, JsonOptions);
+            });
         }
         catch (AssemblyLoadFailedException ex)
         {
@@ -117,7 +110,7 @@ public sealed class EfCoreMcpTools(
                 handle.AssemblyPath, string.Join(" | ", warnings));
         }
 
-        return JsonSerializer.Serialize(new
+        return resultFormatter.Format(new
         {
             assemblyPath = handle.AssemblyPath,
             isStale = assemblyLoader.IsCurrentAssemblyStale(),
@@ -128,7 +121,7 @@ public sealed class EfCoreMcpTools(
                 constructionKind = c.ConstructionKind.ToString(),
             }),
             warnings = warnings.Count > 0 ? warnings : null,
-        }, JsonOptions);
+        });
     }
 
     [McpServerTool(Name = "get_schema"), Description(
@@ -149,7 +142,7 @@ public sealed class EfCoreMcpTools(
             return Schema.SchemaBuilder.Build(context);
         });
 
-        return JsonSerializer.Serialize(schema, JsonOptions);
+        return resultFormatter.Format(schema);
     }
 
     [McpServerTool(Name = "run_query"), Description(
@@ -188,7 +181,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             var result = await queryExecutor.ExecuteAsync(context, request, entry.CommandTimeoutSeconds, cancellationToken);
-            return JsonSerializer.Serialize(result, JsonOptions);
+            return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
         {
@@ -233,7 +226,7 @@ public sealed class EfCoreMcpTools(
                 new SqlQueryRequest { Sql = sql, Parameters = parameters },
                 entry.CommandTimeoutSeconds,
                 cancellationToken);
-            return JsonSerializer.Serialize(result, JsonOptions);
+            return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
         {
@@ -249,7 +242,7 @@ public sealed class EfCoreMcpTools(
     public string ListConnections()
     {
         var infos = connectionRegistry.ListConnections();
-        return JsonSerializer.Serialize(new
+        return resultFormatter.Format(new
         {
             activeConnection = connectionRegistry.ActiveConnectionName,
             connections = infos.Select(i => new
@@ -261,7 +254,7 @@ public sealed class EfCoreMcpTools(
                 isProduction = i.IsProduction,
                 isActive = i.IsActive,
             }),
-        }, JsonOptions);
+        });
     }
 
     [McpServerTool(Name = "swap_connection"), Description(
@@ -275,10 +268,10 @@ public sealed class EfCoreMcpTools(
         try
         {
             connectionRegistry.SetActive(connectionName, allowProduction);
-            return JsonSerializer.Serialize(new
+            return resultFormatter.Format(new
             {
                 activeConnection = connectionRegistry.ActiveConnectionName,
-            }, JsonOptions);
+            });
         }
         catch (ProductionProtectedException ex)
         {

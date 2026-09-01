@@ -42,6 +42,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
             new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
             resolvedRawSqlOptions,
             new SqlQueryExecutor(resolvedRawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
+            new ToonToolResultFormatter(),
             NullLogger<EfCoreMcpTools>.Instance);
         return tools;
     }
@@ -53,9 +54,10 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var tools = CreateTools(db, out var assemblyLoader);
         assemblyLoader.Load(FixturePaths.SampleAppDllPath);
 
-        var json = tools.GetSchema("SampleAppDbContext", "Inferred");
+        var output = tools.GetSchema("SampleAppDbContext", "Inferred");
 
-        Assert.Contains("\"entities\"", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Entities[", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"entities\"", output, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

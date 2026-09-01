@@ -24,3 +24,9 @@ per-tool parameter/response reference; this page tracks the surface's design dec
     (`AssemblyLoaderOptions`) restricts `load_assembly` to a configured set of root
     directories when set; empty (the default) remains unrestricted for trusted,
     single-user local dev setups.
+- [x] Format successful tool payloads for agent-efficient consumption without changing MCP transport framing
+  - Successful tool text content defaults to [TOON](https://github.com/Cysharp/ToonEncoder),
+    while the stdio stream remains JSON-RPC and errors retain MCP-native behavior.
+  - `IToolResultFormatter` keeps the tool surface independent of the encoding library.
+    `ToonToolResultFormatter` is the default implementation and `JsonToolResultFormatter`
+    preserves the former indented JSON payload for `ToolOutput:Format=json` compatibility.

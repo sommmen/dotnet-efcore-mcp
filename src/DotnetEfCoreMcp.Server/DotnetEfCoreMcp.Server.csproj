@@ -13,6 +13,7 @@
   <ItemGroup>
     <!-- MCP server SDK: hosting/DI integration package, stdio transport for this MVP. -->
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
+    <PackageReference Include="ToonEncoder" Version="2.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.11" />
