@@ -10,6 +10,8 @@ public static class FixturePaths
 
     public static string BrokenDependencyAppDllPath => GetFixtureDllPath("BrokenDependencyApp", "BrokenDependencyApp.dll");
 
+    public static string PackageDependencyAppDllPath => GetFixtureDllPath("PackageDependencyApp", "PackageDependencyApp.dll");
+
     private static string GetFixtureDllPath(string fixtureName, string assemblyFileName)
     {
         foreach (var config in new[] { "Debug", "Release" })

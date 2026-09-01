@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PackageDependencyApp</RootNamespace>
+    <!-- This fixture reproduces the "plain class library" shape that AssemblyDependencyResolver
+         alone cannot resolve. Because it is a library without CopyLocalLockFileAssemblies, the
+         SDK copies none of its NuGet dependencies into bin/ and emits no
+         *.runtimeconfig.dev.json, so the target's .deps.json entries have no probing root to
+         resolve against. The FrameworkReference additionally puts Microsoft.AspNetCore.App into
+         the runtimeconfig, whose assemblies live only in the installed shared framework.
+         Everything here therefore has to come from TargetDependencyProbe. Do NOT add
+         CopyLocalLockFileAssemblies or an OutputType - that would defeat the regression. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

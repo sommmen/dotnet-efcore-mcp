@@ -69,7 +69,7 @@ public sealed class EfCoreMcpTools(
         {
             var handle = assemblyLoader.Load(assemblyPath);
             var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
-            var warnings = BuildScanWarnings(scan);
+            var warnings = BuildScanWarnings(scan, handle);
             logger.LogInformation(
                 "Loaded target assembly. Path={AssemblyPath} DbContextCount={DbContextCount}",
                 handle.AssemblyPath, scan.Descriptors.Count);
@@ -316,9 +316,16 @@ public sealed class EfCoreMcpTools(
     /// client-facing warning strings, adding an explicit "zero DbContexts found" warning when the
     /// scan came back empty (regardless of whether that was caused by type-load failures) so the
     /// caller never has to infer the problem from an empty list alone.</summary>
-    private static List<string> BuildScanWarnings(DbContextScanResult scan)
+    private static List<string> BuildScanWarnings(DbContextScanResult scan, LoadedAssemblyHandle? handle = null)
     {
         var warnings = new List<string>();
+
+        // Dependency diagnostics come first: an unresolvable shared framework is usually the cause
+        // of the type-load failures reported below it, so it should not be buried under them.
+        if (handle is not null)
+        {
+            warnings.AddRange(handle.DependencyDiagnostics);
+        }
 
         if (scan.Descriptors.Count == 0)
         {

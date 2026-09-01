@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DotnetEfCoreMcp.Server.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- MCP server SDK: hosting/DI integration package, stdio transport for this MVP. -->
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
     <PackageReference Include="ToonEncoder" Version="2.0.0" />

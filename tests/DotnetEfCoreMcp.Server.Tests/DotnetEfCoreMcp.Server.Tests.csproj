@@ -31,12 +31,14 @@
     <None Include="..\Fixtures\NoContextApp\NoContextApp.csproj" />
     <None Include="..\Fixtures\BrokenDependencyApp\BrokenDependencyApp.csproj" />
     <None Include="..\Fixtures\BrokenDependencyApp.Dependency\BrokenDependencyApp.Dependency.csproj" />
+    <None Include="..\Fixtures\PackageDependencyApp\PackageDependencyApp.csproj" />
   </ItemGroup>
 
   <Target Name="BuildFixtureAssemblies" BeforeTargets="Build">
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\SampleApp\SampleApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\NoContextApp\NoContextApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\BrokenDependencyApp\BrokenDependencyApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\PackageDependencyApp\PackageDependencyApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
   </Target>
 
 </Project>
