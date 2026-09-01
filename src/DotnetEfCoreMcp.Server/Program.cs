@@ -33,6 +33,7 @@ builder.Logging.AddConsole(options =>
 builder.Services.AddSingleton(builder.Configuration.GetSection("AssemblyLoader").Get<AssemblyLoaderOptions>() ?? new AssemblyLoaderOptions());
 builder.Services.AddSingleton<AssemblyDiscoveryService>();
 builder.Services.AddSingleton<AssemblyLoaderService>();
+builder.Services.AddHostedService<AssemblyReloadWatcher>();
 builder.Services.AddSingleton<ConnectionRegistry>();
 builder.Services.AddSingleton<SchemaCache>();
 // Query safety limits (row/width caps, timeout margin) are configurable from the "QueryExecution"

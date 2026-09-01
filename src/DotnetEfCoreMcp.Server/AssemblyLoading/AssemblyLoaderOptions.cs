@@ -12,4 +12,11 @@ public sealed class AssemblyLoaderOptions
     /// same trust level as whoever launched the server. Configure this to lock the server down to a
     /// known set of project output directories in any less-trusted deployment.</summary>
     public IReadOnlyList<string> AllowedRoots { get; init; } = [];
+
+    /// <summary>Whether <see cref="AssemblyReloadWatcher"/> should automatically reload the
+    /// currently loaded assembly when its DLL changes on disk (e.g. after MSBuild finishes a
+    /// rebuild). Defaults to <c>true</c>; set to <c>false</c> to disable hot-reloading in
+    /// less-trusted deployments where a target project's output shouldn't be re-executed without an
+    /// explicit `load_assembly` call.</summary>
+    public bool AutoReloadEnabled { get; init; } = true;
 }
