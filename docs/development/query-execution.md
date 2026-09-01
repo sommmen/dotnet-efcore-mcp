@@ -5,23 +5,23 @@
 Code: [`src/DotnetEfCoreMcp.Server/Querying`](../../src/DotnetEfCoreMcp.Server/Querying) ·
 Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Querying`](../../tests/DotnetEfCoreMcp.Server.Tests/Querying)
 
-See also the [README "MCP tool contract"](../../README.md#mcp-tool-contract) section for the
-`run_query` request/response shape and legacy Dynamic LINQ parameter-binding rules.
+See the [README "MCP tool contract"](../../README.md#mcp-tool-contract) for the public
+`run_query` request and response shapes.
 
-- [x] Define the query input format the agent will send (e.g. a LINQ-like query DSL, a subset of expressions, or a safe query string translated to LINQ)
-  - `QueryRequest`: `entity`, `where`, `parameters`, `orderBy`, `skip`, `take`, `include`
-    (see [`QueryRequest.cs`](../../src/DotnetEfCoreMcp.Server/Querying/QueryRequest.cs)),
-    executed via `System.Linq.Dynamic.Core`.
-## Proposed open work — P0 #1: arbitrary LINQ in `run_query`
+## LINQPad-style `run_query`
 
-Add a query-expression mode alongside the existing structured `QueryRequest`: it accepts a LINQPad-style C# expression whose first identifier is a public `DbSet<T>` property on the resolved `DbContext`, for example `ShopProducts.Where(c => c.Domain.ShortName == "nl").Select(c => new { c.Id, c.Slug })`. Resolve the root from the context property and validate that `T` is a mapped EF entity. Preserve the structured `entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` contract as an explicitly separate legacy mode until it can be retired; reject mixed-mode requests. The new mode replaces the proposed root `properties` input and dedicated aggregate executor: `Select`, `GroupBy`, and terminal aggregate chains are expressed through `run_query` itself.
+`run_query` accepts one required `query` expression. Its first identifier must exactly match a public `DbSet<T>` property on the selected `DbContext`; `T` must be a mapped entity. For example:
 
-Do not evaluate untrusted arbitrary C#. Parse one expression (with an optional trailing semicolon) into syntax and translate only a strict, documented queryable subset into an expression tree rooted in the resolved `DbSet`. Accept only provider-translatable LINQ operators and model-mapped property/navigation access; reject blocks, declarations, assignments, invocation of arbitrary methods, reflection, type construction, service access, raw SQL APIs, and client-evaluation escape hatches. Validate every member and method before query construction, enforce an expression-length/node/operator limit, and return sanitized errors without logging raw caller expression text or parameter values. `AsNoTracking`, access-policy authorization, command timeout, cancellation, include bounds, result serialization, and raw-SQL gating remain mandatory.
+```csharp
+ShopProducts.Where(c => c.Domain.ShortName == "nl")
+    .Select(c => new { c.Id, c.Slug })
+```
 
-Build a single intermediate query-plan representation shared with the legacy request form and `preview_query_sql`. Track whether the caller provided a deterministic ordering and whether the expression ends in a sequence or a terminal scalar aggregate. For a sequence lacking ordering, inject root primary-key ordering before the first shape-changing operation; apply the effective server-side capped `Take` and the P0 #2 sentinel after the caller chain. A caller-provided `Take` is still clamped to `MaxTake`; do not accept an unbounded terminal sequence. Do not append ordering or paging to scalar `Count`, `Sum`, `Average`, `Min`, or `Max` results. For grouping/projection sequences whose ordering cannot safely be derived, reject the request unless the caller supplies a deterministic provider-translatable order rather than inventing client-side ordering.
+This prerelease surface replaces the former structured `entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` inputs. Caller-authored `Select`, `GroupBy`, and terminal aggregate chains use this one read-only query surface.
 
-Add unit tests for root resolution, supported chained filters, projections, group/aggregate result shapes, legacy-mode compatibility, mode exclusivity, and all rejected syntax/operator paths. SQLite integration tests should prove ordering and page/sentinel injection occur in translated SQL, aggregate queries remain server-side, and preview builds the same SQL without executing it.
-## Proposed open work — P0 #2: `run_query` continuation indicator
+The server parses exactly one expression (an optional trailing semicolon is accepted); it never evaluates arbitrary C#. It permits only the `Queryable` operators `Where`, `Select`, `GroupBy`, ordering, `Skip`, `Take`, `Count`, `LongCount`, `Sum`, `Average`, `Min`, and `Max`, plus a small provider-translatable string-method subset. It rejects client-side `Enumerable` operations, arbitrary methods, construction without a projection, reflection, service/raw-SQL access, and multi-statement input. Expression length, tree depth, node count, and operator count are limited before the database is queried. Errors are sanitized and raw caller expression text is not logged.
+
+Execution is always `AsNoTracking`, subject to the selected connection's command timeout and server cancellation. Root primary-key ordering supplies deterministic ordering for un-ordered root sequences. Sequence results receive the configured default page when no `Take` is supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated. translated SQL, aggregate queries remain server-side, and preview builds the same SQL without executing it.## Proposed open work — P0 #2: `run_query` continuation indicator
 
 Extend sequence `QueryResult` values and their `run_query` responses with `hasMoreRows`. For a
 positive effective take, it is `true` only if at least one row remains after applying the final sequence

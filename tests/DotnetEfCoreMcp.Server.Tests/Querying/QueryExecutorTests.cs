@@ -14,281 +14,106 @@ public sealed class QueryExecutorTests : IDisposable
     private readonly Type _customerType;
     private readonly Type _orderType;
     private readonly Type _contextType;
-    private readonly int _aliceId;
 
     public QueryExecutorTests()
     {
-        var service = new AssemblyLoaderService();
-        var handle = service.Load(FixturePaths.SampleAppDllPath);
+        var handle = new AssemblyLoaderService().Load(FixturePaths.SampleAppDllPath);
         _contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "SampleAppDbContext").ClrType;
-
-        using var seedContext = DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
-        seedContext.Database.EnsureCreated();
-
-        _customerType = EntitySeeding.GetEntityClrType(seedContext, "Customer");
-        _orderType = EntitySeeding.GetEntityClrType(seedContext, "Order");
-
+        using var context = NewContext();
+        context.Database.EnsureCreated();
+        _customerType = EntitySeeding.GetEntityClrType(context, "Customer");
+        _orderType = EntitySeeding.GetEntityClrType(context, "Order");
         var alice = EntitySeeding.CreateEntity(_customerType, new Dictionary<string, object?> { ["Name"] = "Alice", ["Age"] = 30 });
-        var bob = EntitySeeding.CreateEntity(_customerType, new Dictionary<string, object?> { ["Name"] = "Bob", ["Age"] = 15 });
-        var obrien = EntitySeeding.CreateEntity(_customerType, new Dictionary<string, object?> { ["Name"] = "O'Brien", ["Age"] = 45 });
-
-        seedContext.Add(alice);
-        seedContext.Add(bob);
-        seedContext.Add(obrien);
-        seedContext.SaveChanges();
-
-        _aliceId = (int)EntitySeeding.GetPropertyValue(alice, "Id")!;
-        var order = EntitySeeding.CreateEntity(_orderType, new Dictionary<string, object?>
-        {
-            ["CustomerId"] = _aliceId,
-            ["Amount"] = 19.99m,
-            ["CreatedAtUtc"] = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc),
-        });
-        seedContext.Add(order);
-        seedContext.SaveChanges();
+        context.Add(alice);
+        context.Add(EntitySeeding.CreateEntity(_customerType, new Dictionary<string, object?> { ["Name"] = "Bob", ["Age"] = 15 }));
+        context.Add(EntitySeeding.CreateEntity(_customerType, new Dictionary<string, object?> { ["Name"] = "Carol", ["Age"] = 30 }));
+        context.SaveChanges();
+        context.Add(EntitySeeding.CreateEntity(_orderType, new Dictionary<string, object?> { ["CustomerId"] = EntitySeeding.GetPropertyValue(alice, "Id"), ["Amount"] = 19.99m, ["CreatedAtUtc"] = DateTime.UtcNow }));
+        context.SaveChanges();
     }
 
     public void Dispose() => _db.Dispose();
-
     private DbContext NewContext() => DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
+    private static QueryExecutor CreateExecutor(int maxTake = 200, int defaultTake = 50, int maxQueryOperators = 20) => new(new QueryExecutionOptions { MaxTake = maxTake, DefaultTake = defaultTake, MaxQueryOperators = maxQueryOperators }, NullLogger<QueryExecutor>.Instance);
 
     [Fact]
-    public async Task ExecuteAsync_NoFilters_ReturnsAllRowsUpToDefaultTake()
+    public async Task ExecuteAsync_ResolvesDbSetAndFiltersProjection()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(context, new QueryRequest { Entity = "Customer" }, commandTimeoutSeconds: 30, CancellationToken.None);
-
-        Assert.Equal(3, result.RowCount);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhereWithPositionalParameter_FiltersCorrectly_AndHandlesQuoteCharacterSafely()
-    {
-        using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Where = "Name == @0", Parameters = ["O'Brien"] },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        Assert.Equal(1, result.RowCount);
-        Assert.Equal("O'Brien", result.Rows[0]["Name"]);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhereWithComparisonAndParameter_FiltersCorrectly()
-    {
-        using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Where = "Age > @0", Parameters = [18] },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Where(c => c.Age == 30).Select(c => c.Name)" }, 30, CancellationToken.None);
         Assert.Equal(2, result.RowCount);
-        Assert.All(result.Rows, row => Assert.True((int)row["Age"]! > 18));
+        Assert.All(result.Rows, row => Assert.Contains(row["Value"], new[] { "Alice", "Carol" }));
     }
 
     [Fact]
-    public async Task ExecuteAsync_OrderByDescending_ReturnsRowsInDescendingOrder()
+    public async Task ExecuteAsync_AllowsNavigationPredicate()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", OrderBy = "Age desc" },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        var ages = result.Rows.Select(r => (int)r["Age"]!).ToList();
-        Assert.Equal(ages.OrderByDescending(a => a), ages);
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Orders.Where(o => o.Customer.Name == \"Alice\")" }, 30, CancellationToken.None);
+        Assert.Single(result.Rows);
     }
 
     [Fact]
-    public async Task ExecuteAsync_SkipAndTake_PagesResults()
+    public async Task ExecuteAsync_ReturnsTerminalAggregateWithoutPaging()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Count(c => c.Age >= 30)" }, 30, CancellationToken.None);
+        Assert.True(result.IsScalar);
+        Assert.Equal(2, result.Scalar);
+        Assert.Null(result.EffectiveTake);
+    }
 
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", OrderBy = "Age", Skip = 1, Take = 1 },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
+    [Fact]
+    public async Task ExecuteAsync_CapsSequenceResults()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor(1).ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name)" }, 30, CancellationToken.None);
         Assert.Equal(1, result.RowCount);
-        Assert.Equal(1, result.EffectiveSkip);
         Assert.Equal(1, result.EffectiveTake);
     }
 
     [Fact]
-    public async Task ExecuteAsync_TakeExceedsServerMax_IsClampedToServerMax()
+    public async Task ExecuteAsync_UsesDefaultPageWhenNoTakeIsSpecified()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions { MaxTake = 2 }, NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Take = 10_000 },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        Assert.Equal(2, result.EffectiveTake);
-        Assert.True(result.RowCount <= 2);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_TakeOmitted_UsesConfiguredDefaultTake()
-    {
-        using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions { DefaultTake = 1, MaxTake = 200 }, NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer" },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        Assert.Equal(1, result.EffectiveTake);
+        var result = await CreateExecutor(maxTake: 2, defaultTake: 1).ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name)" }, 30, CancellationToken.None);
         Assert.Equal(1, result.RowCount);
+        Assert.Equal(1, result.EffectiveTake);
+        Assert.Equal("Alice", result.Rows[0]["Name"]);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ValidInclude_ProjectsNestedScalarOnlyNavigation()
+    public async Task ExecuteAsync_ClampsCallerTakeToMaximum()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Where = "Name == @0", Parameters = ["Alice"], Include = ["Orders"] },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        var row = Assert.Single(result.Rows);
-        var orders = Assert.IsAssignableFrom<System.Collections.IEnumerable>(row["Orders"]).Cast<object>().ToList();
-        var firstOrder = Assert.Single(orders);
-        var orderDict = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(firstOrder);
-        Assert.Equal(19.99m, orderDict["Amount"]);
-        // Depth is bounded to one level - the nested Order must not itself expand its own
-        // `Customer` back-reference navigation (which would otherwise be an unbounded cycle).
-        Assert.False(orderDict.ContainsKey("Customer"));
+        var result = await CreateExecutor(maxTake: 1).ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Take(100)" }, 30, CancellationToken.None);
+        Assert.Single(result.Rows);
+        Assert.Equal(1, result.EffectiveTake);
     }
 
     [Fact]
-    public async Task ExecuteAsync_InvalidInclude_ThrowsQueryExecutionException()
+    public async Task ExecuteAsync_RejectsEnumerableOperations()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Include = ["NotARealNavigation"] },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None));
-
-        Assert.Contains("NotARealNavigation", ex.Message);
+        await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Where(c => c.Name.ToCharArray().Contains('A'))" }, 30, CancellationToken.None));
     }
 
     [Fact]
-    public async Task ExecuteAsync_UnknownEntity_ThrowsQueryExecutionException()
+    public async Task ExecuteAsync_RejectsExcessiveOperators()
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "DoesNotExist" },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None));
+        await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor(maxQueryOperators: 1).ExecuteAsync(context, new QueryRequest { Query = "Customers.Where(c => c.Age > 0).Select(c => c.Name)" }, 30, CancellationToken.None));
     }
 
-    [Fact]
-    public async Task ExecuteAsync_InvalidWhereExpression_ThrowsQueryExecutionException()
+    [Theory]
+    [InlineData("customers.Where(c => c.Age > 0)")]
+    [InlineData("Unknown.Where(c => true)")]
+    [InlineData("Customers.AsEnumerable()")]
+    [InlineData("Customers.Select(c => new DateTime())")]
+    [InlineData("Customers; Orders")]
+    public async Task ExecuteAsync_RejectsInvalidOrUnsafeExpressions(string query)
     {
         using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Where = "this is not a valid expression &&&" },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ResultRows_ContainOnlyScalarTopLevelPropertiesByDefault()
-    {
-        using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Where = "Name == @0", Parameters = ["Alice"] },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        var row = Assert.Single(result.Rows);
-        Assert.False(row.ContainsKey("Orders"));
-        Assert.Equal("Alice", row["Name"]);
-        Assert.Equal(30, row["Age"]);
-
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ResultRows_ExcludeNotMappedProperties()
-    {
-        using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Where = "Name == @0", Parameters = ["Alice"] },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        var row = Assert.Single(result.Rows);
-        // `Customer.DisplayLabel` is a `[NotMapped]` computed property - only EF-mapped scalar
-        // properties should ever be reflected over and projected.
-        Assert.False(row.ContainsKey("DisplayLabel"));
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_IncludedCollectionExceedingCap_IsTruncatedToMaxIncludedCollectionItems()
-    {
-        using var seedContext = NewContext();
-
-        for (var i = 0; i < 10; i++)
-        {
-            var extraOrder = EntitySeeding.CreateEntity(_orderType, new Dictionary<string, object?>
-            {
-                ["CustomerId"] = _aliceId,
-                ["Amount"] = 1.00m,
-                ["CreatedAtUtc"] = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
-            });
-            seedContext.Add(extraOrder);
-        }
-        seedContext.SaveChanges();
-
-        using var context = NewContext();
-        var executor = new QueryExecutor(new QueryExecutionOptions { MaxIncludedCollectionItems = 3 }, NullLogger<QueryExecutor>.Instance);
-
-        var result = await executor.ExecuteAsync(
-            context,
-            new QueryRequest { Entity = "Customer", Where = "Name == @0", Parameters = ["Alice"], Include = ["Orders"] },
-            commandTimeoutSeconds: 30,
-            CancellationToken.None);
-
-        var row = Assert.Single(result.Rows);
-        var orders = Assert.IsAssignableFrom<System.Collections.IEnumerable>(row["Orders"]).Cast<object>().ToList();
-        // Alice has 11 orders total (1 seeded + 10 extra) but the cap is 3.
-        Assert.Equal(3, orders.Count);
+        await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = query }, 30, CancellationToken.None));
     }
 }

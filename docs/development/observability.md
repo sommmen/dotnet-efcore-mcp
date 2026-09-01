@@ -7,12 +7,12 @@ Code: logging is emitted from
 [`Tools/EfCoreMcpTools.cs`](../../src/DotnetEfCoreMcp.Server/Tools/EfCoreMcpTools.cs) via
 `Microsoft.Extensions.Logging`.
 
-- [x] Log every executed query (context, entity, query shape, row count, duration) without logging secrets
-  - `QueryExecutor` logs (via injected `ILogger<QueryExecutor>`) the context type, entity
-    name, effective skip/take, included navigation names, row count, and elapsed
-    milliseconds for every `ExecuteAsync` call, plus a warning-level log on failure (entity/
-    context only, never the connection string or full exception detail that could include
-    it). `EfCoreMcpTools` similarly logs `load_assembly`/`get_schema` invocations.
+- [x] Log every executed query (context, root set, query shape, row count, duration) without logging secrets
+  - `QueryExecutor` logs (via injected `ILogger<QueryExecutor>`) the context type, root
+    `DbSet` name, effective page size, result row count, and elapsed milliseconds for every
+    `ExecuteAsync` call, plus a warning-level log on failure. It never logs the connection
+    string, caller expression text, or full exception detail that could expose either.
+    `EfCoreMcpTools` similarly logs `load_assembly`/`get_schema` invocations.
 - [x] Add structured logging with configurable verbosity
   - Standard `Microsoft.Extensions.Logging` structured logging (named parameters, not
     string interpolation), verbosity configurable via the normal `Logging:LogLevel`

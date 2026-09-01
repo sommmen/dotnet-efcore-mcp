@@ -9,11 +9,11 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 
 - [x] `list_contexts` — list discovered `DbContext` types available from the currently loaded assembly
 - [x] `get_schema` — return the model/schema for a given context
-- [x] `run_query` — execute a read-only Dynamic LINQ query against a given context and entity
+- [x] `run_query` — execute a read-only LINQPad-style query expression against a selected context
 
-## Proposed open work — P0 #1: arbitrary LINQ in `run_query`
+## P0 #1 — LINQPad-style `run_query`
 
-Add a `query: string` mode to `run_query` for LINQPad-style query expressions rooted at a `DbSet<>` property on the selected `DbContext`. For example:
+`run_query` accepts a required `query: string` containing a LINQPad-style query expression rooted at a `DbSet<>` property on the selected `DbContext`. For example:
 
 ```csharp
 ShopProducts
@@ -22,12 +22,11 @@ ShopProducts
     .Select(c => new { c.Id, c.Slug })
 ```
 
-The first identifier is case-sensitive and must resolve to an actual public `DbSet<T>` property whose `T` is in the EF model; it replaces the separate `entity` selector for this mode. The rest is a LINQ **query expression** over that set, so it can use `Where`, `Select`, `GroupBy`, and supported terminal aggregates. This supersedes both the proposed `properties` parameter and the separate `run_aggregate` tool: projection and aggregate semantics belong to the one query surface. Keep the current `entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` form as a backward-compatible legacy mode during migration; reject requests that mix it with `query`.
+The first identifier is case-sensitive and must resolve to an actual public `DbSet<T>` property whose `T` is in the EF model. The rest is a LINQ **query expression** over that set, so it can use `Where`, `Select`, `GroupBy`, ordering, paging, and supported terminal aggregates. This is the only `run_query` request shape: the former structured `entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` parameters are not supported. Projection and aggregate semantics belong to this one read-only query surface.
 
 This is not permission to execute arbitrary C# on the server. The tool accepts one expression (an optional trailing semicolon is harmless), not declarations, assignments, blocks, statements, type creation, reflection, service access, raw SQL, or arbitrary method calls. Parse the C# expression and allow only a documented, provider-translatable `IQueryable` operator/member subset against model-mapped members. Reject unknown roots, non-`DbSet` roots, forbidden syntax, unsupported methods, client-evaluated operations, and non-translatable query shapes before opening a command, without echoing the expression or values in errors/logs.
 
-`QueryExecutor` owns the common execution plan. It must always apply `AsNoTracking`, access policy, cancellation/timeout, complexity caps, and result projection. For sequence results, retain caller ordering when supplied; otherwise inject deterministic root-key ordering before a shape-changing operator, then append the effective capped page and P0 #2 sentinel at the end. Never silently page a terminal scalar aggregate (`Count`, `Sum`, `Average`, `Min`, or `Max`); return its scalar result. The SQL-preview surface must accept the same mode and build the identical unexecuted expression tree. Add focused tool tests for binding/mode exclusivity and examples covering chained filters, `Select`, grouping, terminal aggregates, invalid roots, rejected C# escape syntax, and the ordering/page safeguards, paired with executor coverage in [Query execution](./query-execution.md#proposed-open-work--p0-1-arbitrary-linq-in-run_query).
-## Proposed open work — P0 #2: `run_query` continuation indicator
+`QueryExecutor` always applies `AsNoTracking`, access policy, cancellation/timeout, complexity caps, and safe result projection. For an un-ordered root sequence, it injects deterministic primary-key ordering before the caller expression. Sequence materialization applies the configured default page when no `Take` is present and clamps any supplied `Take` to the configured maximum. Terminal scalar aggregates (`Count`, `LongCount`, `Sum`, `Average`, `Min`, and `Max`) return a scalar result without paging. Focused executor tests cover root binding, chained filters, projection, aggregates, rejected escape syntax, complexity limits, and paging behavior. coverage in [Query execution](./query-execution.md#proposed-open-work--p0-1-arbitrary-linq-in-run_query).## Proposed open work — P0 #2: `run_query` continuation indicator
 
 Add `hasMoreRows: boolean` to successful **sequence-returning** `run_query` responses. It reports
 whether another row matches after the effective `skip` and effective `take` window; it does not add a
