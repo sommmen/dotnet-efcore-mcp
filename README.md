@@ -282,14 +282,20 @@ exactly one currently-loaded target assembly at a time (see `load_assembly`).
 Errors are surfaced as `ModelContextProtocol.McpException` with an actionable message
 (no connection strings, no raw stack traces).
 
+Successful tool payloads use [TOON](https://github.com/Cysharp/ToonEncoder) by default,
+which reduces structural overhead for agent consumption. This affects only the text content
+returned by each tool: the stdio transport remains MCP JSON-RPC. To retain the legacy,
+indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
+`dotnet user-secrets set "ToolOutput:Format" "json"`).
+
 | Tool | Parameters | Returns |
 |---|---|---|
-| `list_assembly_candidates` | `workspacePath: string` | JSON: `{ workspacePath, candidates: [{ assemblyPath, projectPath, configuration, targetFramework, lastWriteTimeUtc, isPreferred }] }` ordered by preference |
-| `load_assembly` | `assemblyPath: string` | JSON: `{ loadedAssemblyPath, loadedAtUtc, discoveredDbContexts: [{ name, fullName, constructionKind }] }` |
-| `list_contexts` | *(none)* | JSON: `{ assemblyPath, isStale, contexts: [{ name, fullName, constructionKind }] }` |
-| `get_schema` | `contextName: string`, `connectionName: string` | JSON schema: entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
-| `run_query` | `contextName: string`, `connectionName: string`, `entity: string`, `where?: string`, `parameters?: object[]`, `orderBy?: string`, `skip?: int`, `take?: int`, `include?: string[]` | JSON: `{ entity, rowCount, effectiveTake, effectiveSkip, includedNavigations, rows: [{ ...scalar + one-level-deep included navigation properties }] }` |
-| `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | JSON: `{ rows, rowCount, affectedRows, maxRows, hasMoreRows }`; disabled by default and restricted to development `ReadWrite` connections |
+| `list_assembly_candidates` | `workspacePath: string` | `workspacePath` and preference-ordered `candidates` (assembly path, project, configuration, target framework, write time, preferred flag) |
+| `load_assembly` | `assemblyPath: string` | Loaded assembly path/time and discovered `DbContext` names, full names, and construction kinds |
+| `list_contexts` | *(none)* | Current assembly path, stale flag, and discovered contexts |
+| `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
+| `run_query` | `contextName: string`, `connectionName: string`, `entity: string`, `where?: string`, `parameters?: object[]`, `orderBy?: string`, `skip?: int`, `take?: int`, `include?: string[]` | Entity, paging metadata, included navigations, and rows with scalar plus one-level-deep included navigation properties |
+| `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
 
 `where`/`orderBy` are [Dynamic LINQ](https://dynamic-linq.net/) expression strings (e.g.
 `"Age > 18 and Name.Contains(@0)"`); values referenced as `@0`, `@1`, ... must be supplied

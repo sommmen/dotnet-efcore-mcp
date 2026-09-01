@@ -44,6 +44,21 @@ builder.Services.AddSingleton<QueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("RawSqlExecution").Get<RawSqlExecutionOptions>() ?? new RawSqlExecutionOptions());
 builder.Services.AddSingleton<SqlQueryExecutor>();
 
+var configuredToolOutputFormat = builder.Configuration["ToolOutput:Format"];
+var toolResultFormat = string.IsNullOrWhiteSpace(configuredToolOutputFormat)
+    ? ToolResultFormat.Toon
+    : Enum.TryParse<ToolResultFormat>(configuredToolOutputFormat, ignoreCase: true, out var parsedToolResultFormat)
+        && Enum.IsDefined(parsedToolResultFormat)
+        ? parsedToolResultFormat
+        : throw new InvalidOperationException($"Unsupported ToolOutput:Format value '{configuredToolOutputFormat}'. Use 'toon' or 'json'.");
+
+builder.Services.AddSingleton<IToolResultFormatter>(_ => toolResultFormat switch
+{
+    ToolResultFormat.Toon => new ToonToolResultFormatter(),
+    ToolResultFormat.Json => new JsonToolResultFormatter(),
+    _ => throw new InvalidOperationException($"Unsupported tool result format '{toolResultFormat}'."),
+});
+
 builder.Services
     .AddMcpServer()
     .WithStdioServerTransport()
