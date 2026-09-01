@@ -56,12 +56,24 @@ public sealed class QueryExecutor
         if (context.Model.FindEntityType(entityType) is null)
             throw new QueryExecutionException($"DbSet '{rootName}' is not part of this context's model.");
 
-        var lambda = ParseExpression(entityType, expressionText);
+        // Other public DbSets on the context are registered as additional named lambda parameters so that
+        // set operators can reference a second DbSet by its property name
+        // (e.g. `Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))`).
+        var otherDbSets = GetOtherDbSetProperties(context, rootName);
+        var lambda = ParseExpression(rootName, entityType, otherDbSets, expressionText);
         new QueryExpressionValidator(_options).Validate(lambda.Body);
 
         var source = (IQueryable)dbSetProperty.GetValue(context)!;
         source = ApplyNoTrackingAndKeyOrder(source, entityType, context);
-        var body = new ReplaceExpressionVisitor(lambda.Parameters[0], Expression.Constant(source, typeof(IQueryable<>).MakeGenericType(entityType))).Visit(lambda.Body)!;
+        var substitutions = new List<(Expression From, Expression To)> { (lambda.Parameters[0], Expression.Constant(source, typeof(IQueryable<>).MakeGenericType(entityType))) };
+        for (var i = 0; i < otherDbSets.Count; i++)
+        {
+            var (otherProperty, otherEntityType) = otherDbSets[i];
+            var otherSource = (IQueryable)otherProperty.GetValue(context)!;
+            otherSource = ApplyNoTrackingAndKeyOrder(otherSource, otherEntityType, context);
+            substitutions.Add((lambda.Parameters[i + 1], Expression.Constant(otherSource, typeof(IQueryable<>).MakeGenericType(otherEntityType))));
+        }
+        var body = new ReplaceExpressionVisitor(substitutions).Visit(lambda.Body)!;
 
         object execution;
         try
@@ -108,18 +120,48 @@ public sealed class QueryExecutor
         if (value.Contains(';')) throw new QueryExecutionException("`query` must contain one expression only.");
         var match = System.Text.RegularExpressions.Regex.Match(value, "^(?<root>[A-Za-z_][A-Za-z0-9_]*)");
         if (!match.Success) throw new QueryExecutionException("`query` must start with a DbSet property name.");
-        return (match.Groups["root"].Value, "it" + value[match.Groups["root"].Length..]);
+        return (match.Groups["root"].Value, value);
     }
 
-    private static LambdaExpression ParseExpression(Type entityType, string expression)
+    /// <summary>
+    /// Returns every other public, model-mapped <see cref="DbSet{TEntity}"/> property on <paramref name="context"/> so it can be
+    /// registered as an additional named parameter, enabling cross-DbSet set operators such as Concat/Union/Except/Intersect
+    /// (e.g. <c>Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))</c>).
+    /// </summary>
+    private static IReadOnlyList<(PropertyInfo Property, Type EntityType)> GetOtherDbSetProperties(DbContext context, string rootName)
     {
+        var result = new List<(PropertyInfo, Type)>();
+        foreach (var property in context.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        {
+            if (property.Name == rootName) continue;
+            if (!property.PropertyType.IsGenericType || property.PropertyType.GetGenericTypeDefinition() != typeof(DbSet<>)) continue;
+            var entityType = property.PropertyType.GetGenericArguments()[0];
+            if (context.Model.FindEntityType(entityType) is null) continue;
+            result.Add((property, entityType));
+        }
+        return result;
+    }
+
+    private static LambdaExpression ParseExpression(string rootName, Type entityType, IReadOnlyList<(PropertyInfo Property, Type EntityType)> otherDbSets, string expression)
+    {
+        var parameters = new ParameterExpression[otherDbSets.Count + 1];
+        parameters[0] = Expression.Parameter(typeof(IQueryable<>).MakeGenericType(entityType), rootName);
+        for (var i = 0; i < otherDbSets.Count; i++)
+            parameters[i + 1] = Expression.Parameter(typeof(IQueryable<>).MakeGenericType(otherDbSets[i].EntityType), otherDbSets[i].Property.Name);
         try
         {
-            return DynamicExpressionParser.ParseLambda(new ParsingConfig { ResolveTypesBySimpleName = false }, false, [Expression.Parameter(typeof(IQueryable<>).MakeGenericType(entityType), "it")], typeof(object), expression);
+            return DynamicExpressionParser.ParseLambda(new ParsingConfig { ResolveTypesBySimpleName = false }, false, parameters, typeof(object), expression);
         }
-        catch (ParseException ex)
+        catch (Exception ex) when (ex is ParseException or InvalidOperationException or ArgumentException)
         {
-            throw new QueryExecutionException("`query` is not a valid supported LINQ expression.", ex);
+            // Dynamic LINQ Core's string parser cannot represent operators that need a dual-parameter lambda scope
+            // (e.g. Join/GroupJoin/SelectMany/Zip); it throws ParseException/InvalidOperationException/ArgumentException
+            // depending on the operator. Use navigation-property predicates (e.g. `Orders.Where(o => o.Customer.Name == ...)`)
+            // or Concat/Union/Except/Intersect for cross-DbSet set operations instead.
+            throw new QueryExecutionException(
+                "`query` is not a valid supported LINQ expression. If this uses Join/GroupJoin/SelectMany/Zip, note that these " +
+                "are unsupported by the dynamic LINQ parser; use a navigation-property predicate (e.g. `Orders.Where(o => o.Customer.Name == \"Alice\")`) " +
+                "or Concat/Union/Except/Intersect for cross-DbSet operations instead.", ex);
         }
     }
 
@@ -167,9 +209,14 @@ public sealed class QueryExecutor
 
     private static bool IsScalar(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) || type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(Guid) || Nullable.GetUnderlyingType(type) is not null;
 
-    private sealed class ReplaceExpressionVisitor(Expression from, Expression to) : ExpressionVisitor
+    private sealed class ReplaceExpressionVisitor(IReadOnlyList<(Expression From, Expression To)> substitutions) : ExpressionVisitor
     {
-        public override Expression? Visit(Expression? node) => node == from ? to : base.Visit(node);
+        public override Expression? Visit(Expression? node)
+        {
+            foreach (var (from, to) in substitutions)
+                if (node == from) return to;
+            return base.Visit(node);
+        }
     }
 
     private sealed class TakeFinder : ExpressionVisitor
@@ -193,7 +240,14 @@ public sealed class QueryExecutor
 
     private sealed class QueryExpressionValidator(QueryExecutionOptions options) : ExpressionVisitor
     {
-        private static readonly HashSet<string> QueryOperators = ["Where", "Select", "GroupBy", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending", "Skip", "Take", "Count", "LongCount", "Sum", "Average", "Min", "Max"];
+        // Note: Join, GroupJoin, SelectMany and Zip are intentionally excluded. Dynamic LINQ Core's string parser
+        // resolves every instance call through Expression.Call against the standard Queryable/Enumerable generic
+        // method definitions; it cannot express these operators' multi-parameter-scope or delegate-shape
+        // requirements from a parsed string in any syntax form, so they always fail with an opaque
+        // "No generic method '<name>' ... is compatible" InvalidOperationException. Use a navigation-property
+        // predicate instead (e.g. `Orders.Where(o => o.Customer.Name == "Alice")`), or Concat/Union/Except/Intersect
+        // for combining two DbSets, which do work through the parser.
+        private static readonly HashSet<string> QueryOperators = ["Where", "Select", "GroupBy", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending", "Skip", "Take", "Distinct", "Count", "LongCount", "Sum", "Average", "Min", "Max", "First", "FirstOrDefault", "Single", "SingleOrDefault", "Any", "All", "Concat", "Union", "Except", "Intersect"];
         private static readonly HashSet<string> StringMethods = ["Contains", "StartsWith", "EndsWith", "ToLower", "ToUpper", "Trim"];
         private int _nodes;
         private int _operatorCalls;
