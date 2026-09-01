@@ -8,8 +8,39 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`](../../tests/Dotnet
 - [x] Load a target project's compiled output (`bin/Debug/<tfm>/*.dll`) given a file path
 - [x] Load the assembly in an isolated, **collectible** `AssemblyLoadContext` so it can be unloaded/reloaded (e.g. after a rebuild) without restarting the server
 - [x] Resolve the target assembly's dependencies (its own `.deps.json` / referenced DLLs alongside it), so it doesn't fail to load due to missing EF Core / provider assemblies
-  - Implemented via `AssemblyDependencyResolver` in `TargetAssemblyLoadContext`, so the
-    target project's own `.deps.json` / adjacent DLLs resolve correctly.
+  - Resolution in `TargetAssemblyLoadContext` is two-stage. `AssemblyDependencyResolver` is
+    tried first because it applies the host's own asset-selection rules, then
+    `TargetDependencyProbe` handles what it cannot see.
+  - `AssemblyDependencyResolver` alone is **not** sufficient for the common case. It reads the
+    target's `.deps.json` for package-relative paths but needs *probing roots* to resolve them
+    against, and those only exist when the build emits a `*.runtimeconfig.dev.json` or bakes in
+    `additionalProbingPaths`. A plain `dotnet build` of a **class library** emits neither, and
+    the SDK does not copy NuGet DLLs into `bin/` without `CopyLocalLockFileAssemblies=true`. So
+    for a typical DAL library every `"type": "package"` entry resolves to `null` and only
+    adjacent project outputs are found — which previously surfaced as mass type-load failures
+    and zero discovered `DbContext`s.
+  - `TargetDependencyProbe` closes that gap the way the host would, without requiring the target
+    project to be rebuilt or modified:
+    - **Probing roots**, in order: `*.runtimeconfig.dev.json` `additionalProbingPaths`, then
+      `packageFolders` from the target's `obj/project.assets.json` (found by walking up from the
+      output folder), then `NUGET_PACKAGES`, then `%USERPROFILE%/.nuget/packages`. Reading
+      `packageFolders` is the same trick `dotnet-ef` uses — it respects custom package folders
+      without re-implementing NuGet config resolution.
+    - **Asset selection** from `.deps.json`: `runtime`, `native` and RID-specific
+      `runtimeTargets` groups, skipping the `_._` placeholder. The output folder is always
+      tried first so a fresh build wins over a stale cache copy.
+    - **Shared frameworks**: the target's `runtimeconfig.json` frameworks (or, for a class
+      library that has none, `frameworkReferences` from the assets file) are mapped onto
+      installed shared frameworks with roll-forward, so a target built against
+      `Microsoft.AspNetCore.App 10.0.0` binds to an installed `10.0.11`.
+      `Microsoft.NETCore.App` is deliberately **excluded** — the process already chose its
+      runtime, and loading a second copy of `System.*` would break type identity rather than
+      fix anything.
+  - Anything neither stage resolves returns `null` and falls back to the default context, which
+    is the correct home for genuinely shared framework types.
+  - Non-fatal problems (e.g. a required shared framework that is not installed) are collected as
+    `LoadedAssemblyHandle.DependencyDiagnostics` and surfaced ahead of type-load warnings in the
+    `load_assembly` result, so the cause is reported above its symptoms.
 - [x] Handle assembly load failures gracefully (missing file, wrong TFM/runtime mismatch, missing dependencies) with clear error messages surfaced to the MCP client
 - [x] Detect and handle stale/locked DLLs (e.g. project was rebuilt while the server was running)
   - `AssemblyLoaderService` exposes a staleness check based on the DLL's last-write time

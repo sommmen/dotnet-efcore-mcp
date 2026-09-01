@@ -28,6 +28,11 @@ public sealed class LoadedAssemblyHandle
 
     public DateTimeOffset LoadedAtUtc { get; }
 
+    /// <summary>Non-fatal problems found while preparing dependency resolution for this target
+    /// (e.g. a shared framework the target needs that is not installed). Empty for a target whose
+    /// dependencies could all be located.</summary>
+    public IReadOnlyList<string> DependencyDiagnostics => _context.DependencyDiagnostics;
+
     /// <summary>Begins unloading the assembly's <see cref="AssemblyLoadContext"/>. This is
     /// asynchronous with respect to the CLR's GC - the memory isn't necessarily reclaimed the
     /// instant this call returns.</summary>
