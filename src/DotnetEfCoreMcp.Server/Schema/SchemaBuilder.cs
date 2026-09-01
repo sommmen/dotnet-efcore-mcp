@@ -15,6 +15,13 @@ public static class SchemaBuilder
         var model = context.Model;
         var entities = new List<EntityTypeSchema>();
 
+        // The relational annotation extensions (e.g. GetColumnType) throw InvalidCastException
+        // when the provider isn't relational (e.g. Cosmos, InMemory), because they attempt to
+        // cast the provider's type mapping to RelationalTypeMapping. Checking IsRelational() up
+        // front lets us skip those calls entirely for non-relational providers, instead of using
+        // a catch-all to paper over the expected failure (which would also hide real bugs).
+        var isRelational = context.Database.IsRelational();
+
         foreach (var entityType in model.GetEntityTypes())
         {
             var properties = entityType.GetProperties()
@@ -22,7 +29,7 @@ public static class SchemaBuilder
                     Name: p.Name,
                     ClrTypeName: p.ClrType.Name,
                     ColumnName: TryGetColumnName(p),
-                    StoreType: TryGetColumnType(p),
+                    StoreType: isRelational ? p.GetColumnType() : null,
                     IsNullable: p.IsNullable,
                     IsPrimaryKey: p.IsPrimaryKey(),
                     IsForeignKey: p.IsForeignKey(),
@@ -72,16 +79,4 @@ public static class SchemaBuilder
     private static string? TryGetTableName(IEntityType entityType) => entityType.GetTableName();
 
     private static string? TryGetColumnName(IProperty property) => property.GetColumnName();
-
-    private static string? TryGetColumnType(IProperty property)
-    {
-        try
-        {
-            return property.GetColumnType();
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }
