@@ -215,6 +215,22 @@ path outside them is rejected before the assembly is touched:
 dotnet user-secrets set "AssemblyLoader:AllowedRoots:0" "C:\repos\MyApp\bin"
 ```
 
+### Automatic reload after rebuild
+
+Once an assembly has been loaded (via startup discovery, `TargetAssemblyPath`, or `load_assembly`),
+the server watches its DLL on disk and automatically reloads it whenever the file changes — e.g.
+when `dotnet build`/MSBuild finishes rebuilding the target project — so `load_assembly` normally
+never needs to be called again after the first load. File-change events are debounced (MSBuild
+writes the DLL more than once per build) and a reload attempt is retried a few times if the file is
+still locked because a build is still in progress. If every retry fails (or the rebuilt assembly
+fails to load, e.g. bad IL mid-write), the server logs a warning and keeps serving the previously
+loaded assembly; call `load_assembly` manually once the issue is resolved. Disable this behavior
+with:
+
+```powershell
+dotnet user-secrets set "AssemblyLoader:AutoReloadEnabled" "false"
+```
+
 ### Using Git worktrees
 
 The server, the target project, or both can live in a [Git worktree](https://git-scm.com/docs/git-worktree)

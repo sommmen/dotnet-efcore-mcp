@@ -41,6 +41,13 @@ public sealed class AssemblyLoaderService
         }
     }
 
+    /// <summary>Raised each time <see cref="Load"/> succeeds, after the new assembly has become
+    /// <see cref="Current"/>. Used by <see cref="AssemblyReloadWatcher"/> to (re)target its
+    /// <see cref="System.IO.FileSystemWatcher"/> at whichever file is currently loaded, without
+    /// polling <see cref="Current"/>. Handlers run outside the internal lock, so they may safely
+    /// call back into this service.</summary>
+    public event Action<LoadedAssemblyHandle>? AssemblyLoaded;
+
     /// <summary>Loads (or reloads, if an assembly is already loaded) the target assembly at
     /// <paramref name="assemblyPath"/>. If an assembly was already loaded, its previous
     /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> is unloaded first.</summary>
@@ -88,6 +95,7 @@ public sealed class AssemblyLoaderService
                 ex);
         }
 
+        LoadedAssemblyHandle handle;
         lock (_gate)
         {
             var previous = _current;
@@ -98,7 +106,7 @@ public sealed class AssemblyLoaderService
             Assembly assembly;
             try
             {
-                assembly = context.LoadFromAssemblyPath(fullPath);
+                assembly = context.LoadMainAssembly(fullPath);
             }
             catch (BadImageFormatException ex)
             {
@@ -120,7 +128,7 @@ public sealed class AssemblyLoaderService
                 throw new AssemblyLoadFailedException($"Failed to load '{fullPath}': {ex.Message}", ex);
             }
 
-            var handle = new LoadedAssemblyHandle(context, assembly, fullPath, DateTimeOffset.UtcNow);
+            handle = new LoadedAssemblyHandle(context, assembly, fullPath, DateTimeOffset.UtcNow);
             _current = handle;
             _loadedFileWriteTimeUtc = fileInfo.LastWriteTimeUtc;
 
@@ -128,9 +136,12 @@ public sealed class AssemblyLoaderService
             {
                 previous.Unload();
             }
-
-            return handle;
         }
+
+        // Raised outside the lock so handlers (e.g. AssemblyReloadWatcher re-targeting its
+        // FileSystemWatcher) can't deadlock by calling back into this service.
+        AssemblyLoaded?.Invoke(handle);
+        return handle;
     }
 
     /// <summary>Returns <c>true</c> if the currently loaded assembly's on-disk file has been

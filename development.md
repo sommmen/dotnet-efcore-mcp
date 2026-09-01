@@ -39,6 +39,15 @@ This document tracks the features needed to get `dotnet-efcore-mcp` from an empt
   - `AssemblyLoaderService` exposes a staleness check based on the DLL's last-write time
     vs. what was loaded; `load_assembly` can always be called again to force a reload
     (old collectible `AssemblyLoadContext` is unloaded first).
+- [x] Automatically reload the loaded assembly when its DLL changes on disk (e.g. MSBuild finishes a rebuild), so the server stays up to date without a manual `load_assembly` call
+  - `AssemblyReloadWatcher` (a hosted service) watches the currently loaded assembly's
+    file with a `FileSystemWatcher`, debounces rapid successive write events (MSBuild
+    writes the DLL more than once per build), and re-invokes `AssemblyLoaderService.Load()`
+    — reusing its existing file-lock probing so a DLL still being written mid-build is
+    retried (bounded attempts) rather than treated as a hard failure. Only active once
+    an assembly has been loaded (manually or via startup auto-discovery); failures
+    during a watched reload log a warning and keep serving the previously loaded
+    assembly rather than crash. Opt out with `AssemblyLoader:AutoReloadEnabled=false`.
 
 ## 2. DbContext discovery
 

@@ -51,6 +51,24 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         _resolver = new AssemblyDependencyResolver(mainAssemblyPath);
     }
 
+    /// <summary>Reads an assembly (and optional symbols) from disk into a stream and loads it into
+    /// this context. The file streams are disposed immediately after loading, so the build output
+    /// is never locked by this context and MSBuild can freely replace it between rebuilds.</summary>
+    private Assembly LoadAssemblyFromStream(string assemblyPath)
+    {
+        using var assemblyStream = File.OpenRead(assemblyPath);
+        var symbolPath = Path.ChangeExtension(assemblyPath, ".pdb");
+        if (!File.Exists(symbolPath))
+        {
+            return LoadFromStream(assemblyStream);
+        }
+
+        using var symbolStream = File.OpenRead(symbolPath);
+        return LoadFromStream(assemblyStream, symbolStream);
+    }
+
+    public Assembly LoadMainAssembly(string assemblyPath) => LoadAssemblyFromStream(assemblyPath);
+
     protected override Assembly? Load(AssemblyName assemblyName)
     {
         if (assemblyName.Name is not null && SharedAssemblyNames.Contains(assemblyName.Name))
@@ -64,14 +82,20 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         // server assembly, etc.) continue to resolve against the default load context too. Only
         // assemblies the resolver can specifically locate next to the target DLL (the target's
         // own code and any dependency not already shared above) are loaded into this isolated
-        // context.
+        // context. Dependencies are loaded from stream (not path) so rebuilds can replace them
+        // without fighting an open file lock.
         var assemblyPath = _resolver.ResolveAssemblyToPath(assemblyName);
-        return assemblyPath is not null ? LoadFromAssemblyPath(assemblyPath) : null;
+        return assemblyPath is not null ? LoadAssemblyFromStream(assemblyPath) : null;
     }
 
     protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
     {
         var libraryPath = _resolver.ResolveUnmanagedDllToPath(unmanagedDllName);
-        return libraryPath is not null ? LoadUnmanagedDllFromPath(libraryPath) : IntPtr.Zero;
+        if (libraryPath is null)
+        {
+            return IntPtr.Zero;
+        }
+
+        return LoadUnmanagedDllFromPath(libraryPath);
     }
 }
