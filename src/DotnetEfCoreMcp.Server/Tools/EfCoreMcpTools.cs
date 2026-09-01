@@ -67,6 +67,7 @@ public sealed class EfCoreMcpTools(
     [McpServerTool(Name = "load_assembly"), Description(
         "Loads (or reloads) a compiled target .NET project's assembly (its bin/<Configuration>/<TFM>/*.dll output) " +
         "into an isolated, collectible AssemblyLoadContext, replacing any previously loaded assembly. " +
+        "Returns warnings when no DbContexts are found or when assembly types could not load. " +
         "Call this before list_contexts/get_schema/run_query, or again after rebuilding the target project.")]
     public string LoadAssembly(
         [Description("Absolute or relative path to the target project's compiled assembly DLL.")] string assemblyPath)
@@ -74,15 +75,24 @@ public sealed class EfCoreMcpTools(
         try
         {
             var handle = assemblyLoader.Load(assemblyPath);
-            var contexts = DbContextScanner.FindDbContextTypes(handle.Assembly);
+            var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
+            var warnings = BuildScanWarnings(scan);
             logger.LogInformation(
                 "Loaded target assembly. Path={AssemblyPath} DbContextCount={DbContextCount}",
-                handle.AssemblyPath, contexts.Count);
+                handle.AssemblyPath, scan.Descriptors.Count);
+            if (warnings.Count > 0)
+            {
+                logger.LogWarning(
+                    "Assembly scan produced warnings. Path={AssemblyPath} Warnings={Warnings}",
+                    handle.AssemblyPath, string.Join(" | ", warnings));
+            }
+
             return JsonSerializer.Serialize(new
             {
                 loadedAssemblyPath = handle.AssemblyPath,
                 loadedAtUtc = handle.LoadedAtUtc,
-                discoveredDbContexts = contexts.Select(c => new { name = c.Name, fullName = c.FullName, constructionKind = c.ConstructionKind.ToString() }),
+                discoveredDbContexts = scan.Descriptors.Select(c => new { name = c.Name, fullName = c.FullName, constructionKind = c.ConstructionKind.ToString() }),
+                warnings = warnings.Count > 0 ? warnings : null,
             }, JsonOptions);
         }
         catch (AssemblyLoadFailedException ex)
@@ -93,22 +103,31 @@ public sealed class EfCoreMcpTools(
     }
 
     [McpServerTool(Name = "list_contexts"), Description(
-        "Lists the Microsoft.EntityFrameworkCore.DbContext-derived types discovered in the currently loaded target assembly.")]
+        "Lists the Microsoft.EntityFrameworkCore.DbContext-derived types discovered in the currently loaded target assembly, " +
+        "including warnings when none are found or when assembly types could not load.")]
     public string ListContexts()
     {
         var handle = RequireLoadedAssembly();
-        var contexts = DbContextScanner.FindDbContextTypes(handle.Assembly);
+        var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
+        var warnings = BuildScanWarnings(scan);
+        if (warnings.Count > 0)
+        {
+            logger.LogWarning(
+                "Assembly scan produced warnings. Path={AssemblyPath} Warnings={Warnings}",
+                handle.AssemblyPath, string.Join(" | ", warnings));
+        }
 
         return JsonSerializer.Serialize(new
         {
             assemblyPath = handle.AssemblyPath,
             isStale = assemblyLoader.IsCurrentAssemblyStale(),
-            contexts = contexts.Select(c => new
+            contexts = scan.Descriptors.Select(c => new
             {
                 name = c.Name,
                 fullName = c.FullName,
                 constructionKind = c.ConstructionKind.ToString(),
             }),
+            warnings = warnings.Count > 0 ? warnings : null,
         }, JsonOptions);
     }
 
@@ -281,16 +300,44 @@ public sealed class EfCoreMcpTools(
     private Type ResolveContextType(string contextName)
     {
         var handle = RequireLoadedAssembly();
-        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly)
+        var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
+        var descriptor = scan.Descriptors
             .FirstOrDefault(c => string.Equals(c.Name, contextName, StringComparison.Ordinal));
 
         if (descriptor is null)
         {
-            var known = DbContextScanner.FindDbContextTypes(handle.Assembly).Select(c => c.Name);
-            throw new McpException($"No DbContext named '{contextName}' was found in the currently loaded assembly. Known contexts: {string.Join(", ", known)}.");
+            var known = scan.Descriptors.Select(c => c.Name);
+            var message = $"No DbContext named '{contextName}' was found in the currently loaded assembly. Known contexts: {string.Join(", ", known)}.";
+            if (scan.Descriptors.Count == 0 && scan.TypeLoadWarnings.Count > 0)
+            {
+                message += " " + string.Join(" ", scan.TypeLoadWarnings);
+            }
+
+            throw new McpException(message);
         }
 
         return descriptor.ClrType;
+    }
+
+    /// <summary>Turns a <see cref="DbContextScanResult"/>'s type-load diagnostics into
+    /// client-facing warning strings, adding an explicit "zero DbContexts found" warning when the
+    /// scan came back empty (regardless of whether that was caused by type-load failures) so the
+    /// caller never has to infer the problem from an empty list alone.</summary>
+    private static List<string> BuildScanWarnings(DbContextScanResult scan)
+    {
+        var warnings = new List<string>();
+
+        if (scan.Descriptors.Count == 0)
+        {
+            warnings.Add(
+                "No DbContext-derived types were found in the loaded assembly. If a DbContext is expected here, " +
+                "check that the assembly path points at the project actually declaring it, and that all of its " +
+                "runtime dependencies (including any ASP.NET Core shared framework or transitive NuGet packages) " +
+                "are present in the output folder.");
+        }
+
+        warnings.AddRange(scan.TypeLoadWarnings);
+        return warnings;
     }
 
     private ConnectionRegistryEntry ResolveConnection(string? connectionName)

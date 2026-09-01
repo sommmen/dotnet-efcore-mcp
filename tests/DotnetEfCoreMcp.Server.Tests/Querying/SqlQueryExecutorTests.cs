@@ -16,7 +16,7 @@ public sealed class SqlQueryExecutorTests : IDisposable
     public SqlQueryExecutorTests()
     {
         var handle = new AssemblyLoaderService().Load(FixturePaths.SampleAppDllPath);
-        _contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext").ClrType;
+        _contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "SampleAppDbContext").ClrType;
 
         using var context = NewContext();
         context.Database.EnsureCreated();

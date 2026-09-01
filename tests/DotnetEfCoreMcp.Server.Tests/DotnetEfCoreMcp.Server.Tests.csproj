@@ -28,10 +28,15 @@
          projects, so we only need its build output, not a compile-time reference. A pre-build
          target below ensures it is built before the test assembly runs. -->
     <None Include="..\Fixtures\SampleApp\SampleApp.csproj" />
+    <None Include="..\Fixtures\NoContextApp\NoContextApp.csproj" />
+    <None Include="..\Fixtures\BrokenDependencyApp\BrokenDependencyApp.csproj" />
+    <None Include="..\Fixtures\BrokenDependencyApp.Dependency\BrokenDependencyApp.Dependency.csproj" />
   </ItemGroup>
 
-  <Target Name="BuildSampleAppFixture" BeforeTargets="Build">
+  <Target Name="BuildFixtureAssemblies" BeforeTargets="Build">
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\SampleApp\SampleApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\NoContextApp\NoContextApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\BrokenDependencyApp\BrokenDependencyApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
   </Target>
 
 </Project>
