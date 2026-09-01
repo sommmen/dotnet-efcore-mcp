@@ -24,3 +24,11 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`](../../tests/Dotnet
     an assembly has been loaded (manually or via startup auto-discovery); failures
     during a watched reload log a warning and keep serving the previously loaded
     assembly rather than crash. Opt out with `AssemblyLoader:AutoReloadEnabled=false`.
+
+## Proposed open work — P2 #15: named multi-target assembly registry
+
+Today the server holds exactly one loaded target (`AssemblyLoaderService.Current`); loading a
+new assembly always unloads and replaces it. See [Multi-target assembly
+registry](./assembly-registry.md) for the proposed named registry that lets several targets
+stay loaded at once, each with its own isolated `AssemblyLoadContext` and reload watcher,
+while preserving today's single-target behavior for callers that never pass a `targetName`.
