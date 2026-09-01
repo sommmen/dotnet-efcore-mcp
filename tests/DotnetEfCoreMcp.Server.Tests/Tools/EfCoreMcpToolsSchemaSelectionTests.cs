@@ -72,7 +72,15 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
 
     private static EfCoreMcpTools CreateTools()
     {
-        var configuration = new ConfigurationBuilder().Build();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Connections:SchemaTests:ConnectionString"] = "Data Source=:memory:",
+                ["Connections:SchemaTests:Provider"] = "Sqlite",
+                ["Connections:SchemaTests:AccessMode"] = "ReadOnly",
+                ["Connections:SchemaTests:Environment"] = "Development",
+            })
+            .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
 
         return new EfCoreMcpTools(
