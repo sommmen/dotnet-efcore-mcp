@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>BrokenDependencyApp.Dependency</RootNamespace>
+    <!-- A small dependency assembly that BrokenDependencyApp references. Tests simulate a
+         missing/unresolvable transitive dependency (e.g. a shared framework assembly, or a
+         transitive NuGet DLL not copied to the output folder - see the real-world scenario
+         described in DbContextScanner) by copying BrokenDependencyApp's output to a scratch
+         folder and deleting this DLL before loading, rather than by deleting it here. -->
+  </PropertyGroup>
+
+</Project>

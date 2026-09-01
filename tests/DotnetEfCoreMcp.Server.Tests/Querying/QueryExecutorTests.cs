@@ -20,7 +20,7 @@ public sealed class QueryExecutorTests : IDisposable
     {
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
-        _contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext").ClrType;
+        _contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "SampleAppDbContext").ClrType;
 
         using var seedContext = DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
         seedContext.Database.EnsureCreated();

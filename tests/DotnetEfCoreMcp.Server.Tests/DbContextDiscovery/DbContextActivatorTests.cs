@@ -14,7 +14,7 @@ public sealed class DbContextActivatorTests
         using var db = new SqliteTestDatabase();
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
-        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext");
+        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "SampleAppDbContext");
 
         using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
@@ -27,7 +27,7 @@ public sealed class DbContextActivatorTests
         using var db = new SqliteTestDatabase();
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
-        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "LegacyOnConfiguringDbContext");
+        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "LegacyOnConfiguringDbContext");
 
         using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
@@ -43,7 +43,7 @@ public sealed class DbContextActivatorTests
         using var db = new SqliteTestDatabase();
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
-        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "FactoryOnlyDbContext");
+        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "FactoryOnlyDbContext");
 
         using var context = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
@@ -57,7 +57,7 @@ public sealed class DbContextActivatorTests
         using var db = new SqliteTestDatabase();
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
-        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Single(d => d.Name == "SampleAppDbContext");
+        var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "SampleAppDbContext");
 
         using (var writeContext = DbContextActivator.CreateInstance(descriptor.ClrType, db.ToRegistryEntry(), DatabaseProvider.Sqlite))
         {

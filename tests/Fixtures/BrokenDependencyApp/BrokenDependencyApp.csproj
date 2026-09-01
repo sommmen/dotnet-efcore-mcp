@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>BrokenDependencyApp</RootNamespace>
+    <!-- Simulates the real-world incident this fix is for: a target assembly containing a valid
+         DbContext alongside another type that depends on a dependency assembly which is missing
+         from the load folder (e.g. a shared framework, or a transitive NuGet DLL not copied to a
+         plain `bin` output). Tests copy this project's build output to a scratch folder and
+         delete BrokenDependencyApp.Dependency.dll from it before loading, forcing
+         Assembly.GetTypes() to throw ReflectionTypeLoadException while GoodDbContext still loads
+         fine, so discovery should surface a TypeLoadWarnings entry while still returning
+         GoodDbContext. This project intentionally has no ProjectReference from the test project;
+         see SampleApp.csproj for the same rationale. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BrokenDependencyApp.Dependency\BrokenDependencyApp.Dependency.csproj" />
+  </ItemGroup>
+
+</Project>
