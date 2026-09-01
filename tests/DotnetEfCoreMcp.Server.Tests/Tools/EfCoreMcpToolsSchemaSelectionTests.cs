@@ -40,6 +40,17 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     }
 
     [Fact]
+    public void GetSchema_WhenAnUnexpectedExceptionOccurs_ExposesItsDetails()
+    {
+        var tools = CreateTools(new ThrowingResultFormatter());
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext"));
+
+        Assert.Equal("get_schema failed: InvalidOperationException: formatter failure", exception.Message);
+    }
+
+    [Fact]
     public void GetSchema_ReturnsBoundedEntityPageAndContinuationMetadata()
     {
         var tools = CreateTools();
@@ -59,6 +70,19 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     }
 
     [Fact]
+    public async Task RunQuery_WhenAnUnexpectedExceptionOccurs_ExposesItsDetails()
+    {
+        var tools = CreateTools();
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+
+        Assert.StartsWith("run_query failed: SqliteException:", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void LoadAssembly_WhenExactlyOneContextExists_ReportsDefaultContextHint()
     {
         var tools = CreateTools();
@@ -70,7 +94,7 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
         Assert.Contains("omit contextName", root.GetProperty("hint").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static EfCoreMcpTools CreateTools()
+    private static EfCoreMcpTools CreateTools(IToolResultFormatter? resultFormatter = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -91,7 +115,22 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
             new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
-            new JsonToolResultFormatter(),
+            resultFormatter ?? new JsonToolResultFormatter(),
             NullLogger<EfCoreMcpTools>.Instance);
+    }
+
+    private sealed class ThrowingResultFormatter : IToolResultFormatter
+    {
+        private int formatCallCount;
+
+        public string Format(object value)
+        {
+            if (Interlocked.Increment(ref formatCallCount) > 1)
+            {
+                throw new InvalidOperationException("formatter failure");
+            }
+
+            return new JsonToolResultFormatter().Format(value);
+        }
     }
 }

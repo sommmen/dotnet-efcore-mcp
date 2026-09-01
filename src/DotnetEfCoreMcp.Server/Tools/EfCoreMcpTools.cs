@@ -32,6 +32,9 @@ public sealed class EfCoreMcpTools(
         "Debug outputs are preferred over other configurations and Release. Pass any returned assemblyPath to load_assembly to switch targets.")]
     public string ListAssemblyCandidates(
         [Description("Absolute path to the workspace or repository to inspect.")] string workspacePath)
+        => Execute("list_assembly_candidates", () => ListAssemblyCandidatesCore(workspacePath));
+
+    private string ListAssemblyCandidatesCore(string workspacePath)
     {
         try
         {
@@ -64,6 +67,9 @@ public sealed class EfCoreMcpTools(
         "Call this before list_contexts/get_schema/run_query, or again after rebuilding the target project.")]
     public string LoadAssembly(
         [Description("Absolute or relative path to the target project's compiled assembly DLL.")] string assemblyPath)
+        => Execute("load_assembly", () => LoadAssemblyCore(assemblyPath));
+
+    private string LoadAssemblyCore(string assemblyPath)
     {
         try
         {
@@ -103,6 +109,9 @@ public sealed class EfCoreMcpTools(
         "Lists the Microsoft.EntityFrameworkCore.DbContext-derived types discovered in the currently loaded target assembly, " +
         "including warnings when none are found or when assembly types could not load.")]
     public string ListContexts()
+        => Execute("list_contexts", ListContextsCore);
+
+    private string ListContextsCore()
     {
         var handle = RequireLoadedAssembly();
         var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
@@ -136,6 +145,9 @@ public sealed class EfCoreMcpTools(
         [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. If omitted, the currently active connection is used.")] string? connectionName = null,
         [Description("One-based entity page number. Defaults to 1.")] int page = 1,
         [Description("Number of entities per page. Defaults to 25 and is capped at 100.")] int pageSize = 25)
+        => Execute("get_schema", () => GetSchemaCore(contextName, connectionName, page, pageSize));
+
+    private string GetSchemaCore(string? contextName, string? connectionName, int page, int pageSize)
     {
         if (page < 1)
             throw new McpException("`page` must be at least 1.");
@@ -177,11 +189,14 @@ public sealed class EfCoreMcpTools(
         "Executes a safe, read-only LINQPad-style expression rooted at a public DbSet property on the selected DbContext. " +
         "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). Only approved, database-translatable LINQ operators are allowed. " +
         "Sequence results are deterministically ordered and capped server-side; terminal scalar aggregates are not paginated.")]
-    public async Task<string> RunQuery(
+    public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
         [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
         CancellationToken cancellationToken = default)
+        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, cancellationToken));
+
+    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, CancellationToken cancellationToken)
     {
         var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
@@ -202,12 +217,15 @@ public sealed class EfCoreMcpTools(
         "destructive tool is unavailable unless RawSqlExecution:Enabled is explicitly set to true on the server; " +
         "it is always rejected for Production and ReadOnly connections. Use @p0, @p1, ... placeholders for values " +
         "provided through parameters. Result rows are capped server-side.")]
-    public async Task<string> RunSqlQuery(
+    public Task<string> RunSqlQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("Raw SQL command text. Use @p0, @p1, ... for values rather than embedding them in this string.")] string sql,
         [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
         [Description("Positional parameter values referenced by SQL placeholders @p0, @p1, ...")] object?[]? parameters = null,
         CancellationToken cancellationToken = default)
+        => ExecuteAsync("run_sql_query", () => RunSqlQueryCore(contextName, sql, connectionName, parameters, cancellationToken));
+
+    private async Task<string> RunSqlQueryCore(string contextName, string sql, string? connectionName, object?[]? parameters, CancellationToken cancellationToken)
     {
         if (!rawSqlExecutionOptions.Enabled)
         {
@@ -248,6 +266,9 @@ public sealed class EfCoreMcpTools(
         "is a production connection (always read-only, swap-protected), and which one is currently active. " +
         "Connection strings are never exposed.")]
     public string ListConnections()
+        => Execute("list_connections", ListConnectionsCore);
+
+    private string ListConnectionsCore()
     {
         var infos = connectionRegistry.ListConnections();
         return resultFormatter.Format(new
@@ -272,6 +293,9 @@ public sealed class EfCoreMcpTools(
     public string SwapConnection(
         [Description("Logical connection name from the server's connection registry to make active.")] string connectionName,
         [Description("Set to true to allow making a production connection active (for intentionally running diagnostics/read-only queries against production).")] bool allowProduction = false)
+        => Execute("swap_connection", () => SwapConnectionCore(connectionName, allowProduction));
+
+    private string SwapConnectionCore(string connectionName, bool allowProduction)
     {
         try
         {
@@ -290,6 +314,48 @@ public sealed class EfCoreMcpTools(
         {
             throw new McpException(ex.Message);
         }
+    }
+
+    private T Execute<T>(string operation, Func<T> action)
+    {
+        try
+        {
+            return action();
+        }
+        catch (McpException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw CreateUnexpectedToolException(operation, ex);
+        }
+    }
+
+    private async Task<T> ExecuteAsync<T>(string operation, Func<Task<T>> action)
+    {
+        try
+        {
+            return await action();
+        }
+        catch (McpException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw CreateUnexpectedToolException(operation, ex);
+        }
+    }
+
+    private McpException CreateUnexpectedToolException(string operation, Exception exception)
+    {
+        logger.LogError(exception, "Unexpected error invoking MCP tool {ToolName}", operation);
+        return new McpException($"{operation} failed: {exception.GetType().Name}: {exception.Message}");
     }
 
     private LoadedAssemblyHandle RequireLoadedAssembly()

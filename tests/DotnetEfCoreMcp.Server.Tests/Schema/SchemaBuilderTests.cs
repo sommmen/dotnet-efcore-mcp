@@ -3,6 +3,7 @@ using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
+using Microsoft.EntityFrameworkCore;
 
 namespace DotnetEfCoreMcp.Server.Tests.Schema;
 
@@ -107,5 +108,37 @@ public sealed class SchemaBuilderTests
         var schema = SchemaBuilder.Build(context);
 
         Assert.NotEmpty(schema.Entities);
+    }
+
+    [Fact]
+    public void Build_NonRelationalProviderProducesNullStoreTypeInsteadOfThrowing()
+    {
+        // IProperty.GetColumnType() throws InvalidCastException for providers (e.g. InMemory)
+        // that don't supply a RelationalTypeMapping. SchemaBuilder must detect this up front via
+        // Database.IsRelational() rather than relying on a catch-all around GetColumnType(),
+        // so this exercises that non-relational code path end-to-end.
+        var options = new DbContextOptionsBuilder<InMemoryProbeContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString("N"))
+            .Options;
+        using var context = new InMemoryProbeContext(options);
+
+        var schema = SchemaBuilder.Build(context);
+
+        var entity = schema.Entities.Single(e => e.Name == nameof(InMemoryProbeEntity));
+        Assert.NotEmpty(entity.Properties);
+        Assert.All(entity.Properties, p => Assert.Null(p.StoreType));
+    }
+
+    private sealed class InMemoryProbeContext(DbContextOptions<InMemoryProbeContext> options)
+        : Microsoft.EntityFrameworkCore.DbContext(options)
+    {
+        public DbSet<InMemoryProbeEntity> Probes => Set<InMemoryProbeEntity>();
+    }
+
+    private sealed class InMemoryProbeEntity
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
     }
 }
