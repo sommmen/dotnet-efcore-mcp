@@ -28,6 +28,7 @@ Each module has its own implementation checklist, design decisions, and notes:
 | [Connection management](./docs/development/connections.md) | Server-side connection registry, secret storage, provider allowlisting (security-sensitive). |
 | [Schema / model discovery](./docs/development/schema-discovery.md) | Building and caching an agent-friendly serialization of the EF Core model. |
 | [Query execution](./docs/development/query-execution.md) | Safe Dynamic-LINQ query translation, read-only enforcement, result limits. |
+| [Roslyn-compiled `UserQuery`](./docs/development/roslyn-user-query.md) | Planned rewrite: LINQPad-style `UserQuery : TDbContext` compiled with Roslyn, replacing `System.Linq.Dynamic.Core`. |
 | [MCP tool surface](./docs/development/mcp-tools.md) | The `list_contexts` / `get_schema` / `run_query` / `run_sql_query` / `load_assembly` tools and their exposure decisions. |
 | [Migration inspection](./docs/development/migrations.md) | Planned P1 #11: structured `list_migrations`/`generate_migration_script` tooling. |
 | [Structured mutations](./docs/development/mutations.md) | Planned P1 #12: gated single-entity insert, update, and delete tooling. |
