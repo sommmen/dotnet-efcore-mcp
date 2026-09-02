@@ -165,7 +165,12 @@ public sealed class QueryExecutor
         }
     }
 
-    private static int GetEffectiveTake(Expression expression, QueryExecutionOptions options)
+    /// <summary>Finds the smallest <c>Take</c> already present on <paramref name="expression"/> (if
+    /// any) and clamps it against the configured default/max, so callers of any query engine that
+    /// produces an <see cref="IQueryable"/> (Dynamic LINQ today, Roslyn-compiled real C# tomorrow)
+    /// get identical paging behavior - the check walks the queryable's own expression tree, which
+    /// exists regardless of how that tree was built.</summary>
+    internal static int GetEffectiveTake(Expression expression, QueryExecutionOptions options)
     {
         if (options.MaxTake <= 0 || options.DefaultTake <= 0)
             throw new InvalidOperationException("Query execution take limits must be positive.");
@@ -174,7 +179,11 @@ public sealed class QueryExecutor
         return Math.Min(take ?? options.DefaultTake, options.MaxTake);
     }
 
-    private static IQueryable ApplyNoTrackingAndKeyOrder(IQueryable source, Type entityType, DbContext context)
+    /// <summary>Applies <c>AsNoTracking</c> and a deterministic primary-key ordering to
+    /// <paramref name="source"/>. Shared across query engines: any engine handing back a raw
+    /// <see cref="IQueryable"/> for a DbSet root needs the same read-only, stable-paging
+    /// semantics.</summary>
+    internal static IQueryable ApplyNoTrackingAndKeyOrder(IQueryable source, Type entityType, DbContext context)
     {
         var noTracking = (IQueryable)AsNoTrackingMethod.MakeGenericMethod(entityType).Invoke(null, [source])!;
         var key = context.Model.FindEntityType(entityType)!.FindPrimaryKey()?.Properties.FirstOrDefault()?.PropertyInfo;
@@ -184,7 +193,10 @@ public sealed class QueryExecutor
         return (IQueryable)OrderByMethod.MakeGenericMethod(entityType, key.PropertyType).Invoke(null, [noTracking, selector])!;
     }
 
-    private static async Task<List<object?>> MaterializeUntypedAsync(IQueryable query, CancellationToken cancellationToken)
+    /// <summary>Materializes an <see cref="IQueryable"/> whose element type is only known at
+    /// runtime (shared across query engines - a Roslyn-compiled query's result is just as
+    /// untyped-at-compile-time from this executor's point of view as a Dynamic LINQ one).</summary>
+    internal static async Task<List<object?>> MaterializeUntypedAsync(IQueryable query, CancellationToken cancellationToken)
     {
         var task = (Task)MaterializeMethod.MakeGenericMethod(query.ElementType).Invoke(null, [query, cancellationToken])!;
         await task.ConfigureAwait(false);
@@ -197,7 +209,10 @@ public sealed class QueryExecutor
         return values.Cast<object?>().ToList();
     }
 
-    private static IReadOnlyDictionary<string, object?> ProjectValue(object? value)
+    /// <summary>Projects a single materialized row/scalar into the row-shape dictionary contract
+    /// returned by <see cref="QueryResult"/>. Shared across query engines: the output contract does
+    /// not depend on how the value was produced.</summary>
+    internal static IReadOnlyDictionary<string, object?> ProjectValue(object? value)
     {
         if (value is null || IsScalar(value.GetType())) return new Dictionary<string, object?> { ["Value"] = value };
         if (value is IDictionary dictionary)
@@ -207,7 +222,7 @@ public sealed class QueryExecutor
             .ToDictionary(property => property.Name, property => property.GetValue(value));
     }
 
-    private static bool IsScalar(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) || type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(Guid) || Nullable.GetUnderlyingType(type) is not null;
+    internal static bool IsScalar(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) || type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(Guid) || Nullable.GetUnderlyingType(type) is not null;
 
     private sealed class ReplaceExpressionVisitor(IReadOnlyList<(Expression From, Expression To)> substitutions) : ExpressionVisitor
     {

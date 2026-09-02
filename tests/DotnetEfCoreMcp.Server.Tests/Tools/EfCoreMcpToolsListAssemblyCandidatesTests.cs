@@ -1,5 +1,6 @@
 using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
@@ -83,6 +84,8 @@ public sealed class EfCoreMcpToolsListAssemblyCandidatesTests : IDisposable
             new ConnectionRegistry(configuration),
             new SchemaCache(),
             new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
+            new RoslynQueryExecutor(new QueryExecutionOptions(), new QueryCompiler(new QueryCompilationOptions())),
+            new QueryExecutionOptions(),
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new JsonToolResultFormatter(),

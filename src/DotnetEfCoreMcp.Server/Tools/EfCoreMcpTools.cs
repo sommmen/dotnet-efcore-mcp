@@ -21,6 +21,8 @@ public sealed class EfCoreMcpTools(
     ConnectionRegistry connectionRegistry,
     SchemaCache schemaCache,
     QueryExecutor queryExecutor,
+    RoslynQueryExecutor roslynQueryExecutor,
+    QueryExecutionOptions queryExecutionOptions,
     RawSqlExecutionOptions rawSqlExecutionOptions,
     SqlQueryExecutor sqlQueryExecutor,
     IToolResultFormatter resultFormatter,
@@ -259,15 +261,26 @@ public sealed class EfCoreMcpTools(
         CancellationToken cancellationToken = default)
         => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, cancellationToken));
 
+    private async Task<QueryResult> ExecuteDynamicLinqAsync(Type contextType, ConnectionRegistryEntry entry, string query, CancellationToken cancellationToken)
+    {
+        using var context = CreateContext(contextType, entry);
+        return await queryExecutor.ExecuteAsync(context, new QueryRequest { Query = query }, entry.CommandTimeoutSeconds, cancellationToken);
+    }
+
     private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, CancellationToken cancellationToken)
     {
         var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
-        using var context = CreateContext(contextType, entry);
-
         try
         {
-            var result = await queryExecutor.ExecuteAsync(context, new QueryRequest { Query = query }, entry.CommandTimeoutSeconds, cancellationToken);
+            var result = queryExecutionOptions.Engine switch
+            {
+                QueryEngine.DynamicLinq => await ExecuteDynamicLinqAsync(contextType, entry, query, cancellationToken),
+                QueryEngine.Roslyn => await roslynQueryExecutor.ExecuteAsync(
+                    RequireLoadedAssembly(), contextType, entry, ResolveEffectiveProvider(contextType, entry),
+                    new QueryRequest { Query = query }, cancellationToken),
+                _ => throw new InvalidOperationException($"Unsupported query engine '{queryExecutionOptions.Engine}'.")
+            };
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
