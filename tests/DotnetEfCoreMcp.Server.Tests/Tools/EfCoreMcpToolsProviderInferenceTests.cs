@@ -81,6 +81,8 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
 
         Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RawSqlExecution:Enabled", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("restart", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

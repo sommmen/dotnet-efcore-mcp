@@ -186,12 +186,15 @@ or restart this workspace server. See the official [VS Code MCP server configura
 and [sensitive input variable reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration#_input-variables-for-sensitive-data).
 
 When `WorkspacePath` is configured and `TargetAssemblyPath` is not, startup scans the workspace's
-C# projects and automatically loads the best existing output. Debug builds are preferred; within
-the same configuration the newest output wins, with the higher target framework breaking ties.
-Dependency and `ref` assemblies are excluded. If nothing has been built yet, the server still
-starts—build the target project and restart the server, or use `list_assembly_candidates` followed
-by `load_assembly`. The candidate tool shows all detected outputs in preference order, so another
-project, configuration, or target framework can be selected without changing configuration.
+C# projects and automatically loads the best existing output. Assemblies whose metadata suggests
+they contain a `DbContext`-derived type are preferred first; Debug builds are then preferred, with
+the newest output and higher target framework breaking remaining ties. Dependency and `ref`
+assemblies are excluded. If nothing has been built yet, the server still starts—build the target
+project and restart the server, or use `list_assembly_candidates` followed by `load_assembly`.
+By default, the candidate tool returns one preferred output per project, noting other available
+builds in `otherBuildsOfThisProject`; pass `includeAllBuilds: true` to inspect every
+configuration/TFM output or `pathFilter` to narrow a monorepo to projects whose path contains a
+specific project or folder name.
 
 > The VS Code Agent Host does not forward servers requiring interactive inputs to remote agents.
 > This prompted configuration is intended for local VS Code chat; configure secrets in the remote
@@ -291,7 +294,7 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 
 | Tool | Parameters | Returns |
 |---|---|---|
-| `list_assembly_candidates` | `workspacePath: string` | `workspacePath` and preference-ordered `candidates` (assembly path, project, configuration, target framework, write time, preferred flag) |
+| `list_assembly_candidates` | `workspacePath: string`, `pathFilter?: string`, `includeAllBuilds?: bool` | `workspacePath` and DbContext-first, preference-ordered `candidates` (assembly path, project, configuration, target framework, write time, preferred flag). By default, one preferred candidate per project is returned with `otherBuildsOfThisProject`; set `includeAllBuilds` to list every configuration/TFM output. |
 | `load_assembly` | `assemblyPath: string` | Loaded assembly path/time and discovered `DbContext` names, full names, and construction kinds |
 | `list_contexts` | *(none)* | Current assembly path, stale flag, and discovered contexts |
 | `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
@@ -315,8 +318,9 @@ LINQ string parser); use a navigation-property predicate
 (`Orders.Where(o => o.Customer.Name == "Alice")`) or `Concat`/`Union`/`Except`/`Intersect` instead.
 
 `run_sql_query` is an explicitly opt-in escape hatch for development diagnostics and migrations;
-prefer `run_query` whenever its Dynamic LINQ contract is sufficient. Enable it only in a local
-or development server configuration:
+prefer the always-on, read-only `run_query` whenever its Dynamic LINQ contract is sufficient.
+Enable raw SQL only in a local or development server configuration, then restart the MCP server;
+it cannot be enabled per request or per agent session:
 
 ```powershell
 dotnet user-secrets set "RawSqlExecution:Enabled" "true"

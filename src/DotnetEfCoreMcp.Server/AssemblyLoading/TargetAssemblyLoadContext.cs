@@ -23,7 +23,22 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     /// server's own referenced EF Core version (both net10.0 / EF Core 10.x for this MVP); a
     /// mismatched major version is out of scope and will likely surface as a
     /// <see cref="System.IO.FileLoadException"/> or <see cref="MissingMethodException"/> at
-    /// construction time rather than being detected up front.</summary>
+    /// construction time rather than being detected up front.
+    ///
+    /// This list must include not only the EF Core / provider assemblies themselves but also any
+    /// assembly whose types appear as public members (fields, parameters, return types) on those
+    /// shared types, even transitively. Missing one of those is a much subtler bug than missing an
+    /// EF Core assembly outright: reflection over the target's own types still works, and simple
+    /// queries can succeed, but any code path that touches the affected member throws a confusing
+    /// <see cref="MissingFieldException"/>/<see cref="MissingMethodException"/>/<see cref="TypeLoadException"/>
+    /// deep inside EF Core, because the target ALC ends up loading a second, type-identity-incompatible
+    /// copy of that dependency instead of sharing the default ALC's copy. For example,
+    /// Microsoft.Extensions.Logging.Abstractions defines <see cref="Microsoft.Extensions.Logging.EventId"/>,
+    /// the field type of <c>RelationalEventId.CommandExecuting</c> and friends; a target DbContext that
+    /// calls the extremely common <c>ConfigureWarnings(b => b.Log((RelationalEventId.CommandExecuting, ...)))</c>
+    /// pattern fails with "Field not found: RelationalEventId.CommandExecuting" if this assembly is
+    /// missing here, even though the field very much exists - the runtime just resolved the field token
+    /// against the wrong copy of the declaring assembly's dependency closure.</summary>
     private static readonly HashSet<string> SharedAssemblyNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "Microsoft.EntityFrameworkCore",
@@ -35,6 +50,8 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         "Microsoft.AspNetCore.Identity.EntityFrameworkCore",
         "Microsoft.Extensions.Identity.Core",
         "Microsoft.Extensions.Identity.Stores",
+        "Microsoft.Extensions.Logging",
+        "Microsoft.Extensions.Logging.Abstractions",
         "Microsoft.Data.Sqlite",
         "SQLitePCLRaw.core",
         "SQLitePCLRaw.provider.e_sqlite3",
