@@ -59,8 +59,14 @@ the new field.
 - [x] Enforce a query timeout (command timeout / cancellation token) to avoid runaway queries
 - [x] Reject or restrict unsafe query shapes (e.g. arbitrary raw SQL, unbounded `.Include()` graphs) unless explicitly allowlisted
   - `run_sql_query` is disabled by default and must be explicitly enabled through
-    `RawSqlExecution:Enabled`. It is independently rejected for production and non-`ReadWrite`
-    connections, even when globally enabled. `include` entries are validated against the entity's
+    `RawSqlExecution:Enabled`, then the MCP server must be restarted; it cannot be enabled by an
+    MCP request or session. The disabled-tool response gives configuration examples for
+    `appsettings.json`, `DOTNETEFCOREMCP_RawSqlExecution__Enabled=true`, and user-secrets, and
+    directs callers to the always-on read-only `run_query` alternative where appropriate. It is
+    independently rejected for production and non-`ReadWrite` connections, even when globally
+    enabled. Raw SQL execution failures retain their sanitized provider message and add a
+    `Cause` when available plus a next step to check `get_schema`, verify `@p0`-style placeholders,
+    and consult server logs. `include` entries are validated against the entity's
     actual navigation property names (rejecting anything else), and the resulting projection is
     hard-capped to exactly one level of navigation depth regardless of what is requested — there
     is no way to request a deeper/unbounded graph.

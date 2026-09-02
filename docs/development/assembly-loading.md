@@ -38,6 +38,15 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`](../../tests/Dotnet
       fix anything.
   - Anything neither stage resolves returns `null` and falls back to the default context, which
     is the correct home for genuinely shared framework types.
+  - **Shared type identity:** assemblies referenced by the server and target whose types cross a
+    public API boundary must resolve to the server's default context, not a second target-local
+    copy. `TargetAssemblyLoadContext.SharedAssemblyNames` includes EF Core and its required
+    companion assemblies, including `Microsoft.Extensions.Logging` and
+    `Microsoft.Extensions.Logging.Abstractions`. Omitting one can create incompatible copies of
+    types used by shared EF Core diagnostics and surface as runtime member-resolution failures
+    such as `MissingFieldException` for `RelationalEventId.CommandExecuting`. When adding a shared
+    assembly, also share every assembly that defines a type exposed by its public
+    fields, parameters, or return values.
   - Non-fatal problems (e.g. a required shared framework that is not installed) are collected as
     `LoadedAssemblyHandle.DependencyDiagnostics` and surfaced ahead of type-load warnings in the
     `load_assembly` result, so the cause is reported above its symptoms.

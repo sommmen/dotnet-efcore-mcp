@@ -1,3 +1,5 @@
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Xml.Linq;
 
 namespace DotnetEfCoreMcp.Server.AssemblyLoading;
@@ -8,7 +10,8 @@ public sealed record AssemblyCandidate(
     string Configuration,
     string TargetFramework,
     DateTime LastWriteTimeUtc,
-    bool IsPreferred);
+    bool IsPreferred,
+    bool LikelyContainsDbContext = false);
 
 public sealed class AssemblyDiscoveryException(string message, Exception? innerException = null)
     : Exception(message, innerException);
@@ -42,7 +45,14 @@ public sealed class AssemblyDiscoveryService
             var ranked = Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
                 .Where(path => !IsUnderExcludedDirectory(Path.GetRelativePath(root, path)))
                 .SelectMany(DiscoverProjectOutputs)
-                .OrderBy(candidate => ConfigurationRank(candidate.Configuration))
+                .Select(candidate => candidate with { LikelyContainsDbContext = ProbablyContainsDbContext(candidate.AssemblyPath) })
+                // Ranking prioritizes assemblies whose metadata references DbContext (a fast,
+                // best-effort heuristic - see ProbablyContainsDbContext) so agents scanning a
+                // monorepo with hundreds of built outputs (test projects, tools, unrelated APIs)
+                // see the assemblies that actually matter first, before falling back to the
+                // pre-existing Debug/newest/highest-TFM tie-breakers.
+                .OrderByDescending(candidate => candidate.LikelyContainsDbContext)
+                .ThenBy(candidate => ConfigurationRank(candidate.Configuration))
                 .ThenByDescending(candidate => candidate.LastWriteTimeUtc)
                 .ThenByDescending(candidate => TargetFrameworkVersion(candidate.TargetFramework))
                 .ThenBy(candidate => candidate.AssemblyPath, StringComparer.OrdinalIgnoreCase)
@@ -108,6 +118,84 @@ public sealed class AssemblyDiscoveryService
     private static int ConfigurationRank(string configuration) =>
         configuration.Equals("Debug", StringComparison.OrdinalIgnoreCase) ? 0 :
         configuration.Equals("Release", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+
+    /// <summary>Best-effort, fast (no assembly load, no target-context involvement) check for
+    /// whether an assembly is likely to contain a DbContext-derived type: reads the assembly's
+    /// metadata tables directly via <see cref="MetadataReader"/> and looks for any type
+    /// definition whose base type - walked up the TypeDef/TypeRef chain within this same
+    /// assembly's metadata - is literally named "DbContext". This is intentionally shallow (it
+    /// cannot see DbContext types defined in referenced assemblies, generic base type
+    /// instantiations, or types loaded via reflection-only tricks) but is enough to deprioritize
+    /// the overwhelming majority of non-DbContext builds (test projects, tools, unrelated APIs)
+    /// in a large monorepo without paying the cost of loading every candidate into an
+    /// AssemblyLoadContext just to rank them. Returns false (never throws) for anything that
+    /// can't be read as a valid .NET assembly.</summary>
+    private static bool ProbablyContainsDbContext(string assemblyPath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(assemblyPath);
+            using var peReader = new PEReader(stream);
+            if (!peReader.HasMetadata)
+            {
+                return false;
+            }
+
+            var reader = peReader.GetMetadataReader();
+            foreach (var typeDefHandle in reader.TypeDefinitions)
+            {
+                var typeDef = reader.GetTypeDefinition(typeDefHandle);
+                if (IsOrDerivesFromDbContext(reader, typeDef, depth: 0))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsOrDerivesFromDbContext(MetadataReader reader, TypeDefinition typeDef, int depth)
+    {
+        // Bound recursion: a legitimate DbContext base chain is a handful of types deep at most,
+        // but a pathological/corrupt assembly could in principle reference a self-cycle.
+        if (depth > 16)
+        {
+            return false;
+        }
+
+        var baseTypeHandle = typeDef.BaseType;
+        if (baseTypeHandle.IsNil)
+        {
+            return false;
+        }
+
+        var baseTypeName = baseTypeHandle.Kind switch
+        {
+            HandleKind.TypeReference => reader.GetString(reader.GetTypeReference((TypeReferenceHandle)baseTypeHandle).Name),
+            HandleKind.TypeDefinition => reader.GetString(reader.GetTypeDefinition((TypeDefinitionHandle)baseTypeHandle).Name),
+            _ => null,
+        };
+
+        if (baseTypeName == "DbContext")
+        {
+            return true;
+        }
+
+        // The base type is only further inspectable if it's itself defined in this same
+        // assembly's metadata (a TypeReference to another assembly can't be walked further
+        // without loading that assembly too, which this best-effort scan intentionally avoids).
+        if (baseTypeHandle.Kind == HandleKind.TypeDefinition)
+        {
+            return IsOrDerivesFromDbContext(reader, reader.GetTypeDefinition((TypeDefinitionHandle)baseTypeHandle), depth + 1);
+        }
+
+        return false;
+    }
 
     private static Version TargetFrameworkVersion(string targetFramework)
     {
