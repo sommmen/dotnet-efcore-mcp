@@ -21,13 +21,18 @@ public sealed class SqliteTestDatabase : IDisposable
 
     public string ConnectionString { get; }
 
-    public ConnectionRegistryEntry ToRegistryEntry(string name = "TestConnection", int commandTimeoutSeconds = 30) => new()
+    public ConnectionRegistryEntry ToRegistryEntry(
+        string name = "TestConnection",
+        int commandTimeoutSeconds = 30,
+        ConnectionAccessMode accessMode = ConnectionAccessMode.ReadOnly,
+        EnvironmentType environment = EnvironmentType.Unspecified) => new()
     {
         Name = name,
         Provider = DatabaseProvider.Sqlite,
         ConnectionString = ConnectionString,
-        AccessMode = ConnectionAccessMode.ReadOnly,
+        AccessMode = accessMode,
         CommandTimeoutSeconds = commandTimeoutSeconds,
+        Environment = environment,
     };
 
     public void Dispose()

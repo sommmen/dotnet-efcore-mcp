@@ -5,10 +5,11 @@
 Code: `src/DotnetEfCoreMcp.Server/Querying` (rewritten) + new `src/DotnetEfCoreMcp.Server/Compilation` ·
 Tests: `tests/DotnetEfCoreMcp.Server.Tests/Querying` + new `tests/DotnetEfCoreMcp.Server.Tests/Compilation`
 
-> **Status: planning only.** This document describes the target architecture and a phased
-> rollout. No implementation exists yet. It supersedes the Dynamic-LINQ design in
-> [Query execution](./query-execution.md) once built, and removes the `System.Linq.Dynamic.Core`
-> package entirely (see [Package removal](#package-removal)).
+> **Status: in progress.** The Roslyn compilation pipeline (`Compilation/`) and its executor
+> (`Querying/RoslynQueryExecutor.cs`) are implemented and covered by tests, but the Dynamic-LINQ
+> path in [Query execution](./query-execution.md) remains the default `run_query` engine during
+> migration; `System.Linq.Dynamic.Core` has not yet been removed (see
+> [Package removal](#package-removal)).
 
 ## Why
 
@@ -143,16 +144,25 @@ Compilation inputs:
     copies the target assembly resolves against, which `TargetAssemblyLoadContext`'s existing
     "shared assembly" allowlist already guarantees (see the class's doc comment on why
     `DbContext` type identity must match).
-  - A small, explicit BCL allowlist: `System.Private.CoreLib`, `System.Runtime`,
-    `System.Linq`, `System.Linq.Expressions`, `System.Collections`, `System.ObjectModel`. This is
-    intentionally **not** "every assembly this process has loaded" — see the exclusions below.
+  - A small, explicit BCL allowlist (`QueryCompiler.BuiltInReferenceAssemblyNames`):
+    `System.Private.CoreLib`, `System.Runtime`, `System.Linq`, `System.Linq.Queryable`,
+    `System.Linq.Expressions`, `System.Collections`, `System.ObjectModel`,
+    `System.ComponentModel.TypeConverter` (required because `DbSet<T>` implements
+    `IListSource`). This is intentionally **not** "every assembly this process has loaded" — see
+    the exclusions below.
   - Deliberately **excluded by default**: `System.IO*`, `System.Net*`, `System.Diagnostics.Process`,
-    `System.Reflection.Emit*`, `System.Runtime.Loader`, `System.Threading` beyond what
-    `System.Private.CoreLib` already exposes. A query author who is not given a
+    `System.Reflection.Emit*`, `System.Runtime.Loader`. A query author who is not given a
     `MetadataReference` to `System.Net.Http.dll` cannot call it — omission is enforced entirely by
     absence from the reference list; the compiler will fail to bind the identifier, which
     produces an ordinary (sanitized) compile diagnostic, not a runtime exception. This is a compile-
     time control, cheaper and more reliable than trying to sandbox already-running IL.
+  - **Assembly omission alone is not sufficient**, and is backstopped by a semantic check (see
+    [Safety model](#safety-model)): several of the types the reference-omission list above is
+    meant to block — notably `System.IO.File` (defined in the reference-assembly-pack copy of
+    `System.Runtime`) and `System.Reflection.Emit.AssemblyBuilder` (defined directly inside
+    `System.Private.CoreLib`) — are physically implemented in assemblies that must always be
+    referenced for *any* query to compile. Omitting an assembly reference cannot exclude a type
+    that lives inside an assembly you cannot omit.
   - This list is server-side configuration
     (`QueryCompilation:AdditionalReferenceAssemblyNames`, empty by default), not caller-suppliable
     — a request can never add references. This mirrors the existing "no per-request override of
@@ -309,13 +319,28 @@ kept boundary earns its place.
   via the reference list.
 
 **Kept as hard boundaries (still enforced, and why):**
-- **The reference list stays curated and non-caller-overridable.** This is the single most
-  important control left, because it's a compile-time containment mechanism, not a runtime one —
-  `System.IO`, `System.Net`, `System.Diagnostics.Process`, and reflection-emit stay unreachable
-  because nothing exposes their assemblies to the compiler, not because we scan the query text for
-  forbidden calls. Text-scanning approaches are trivially bypassed (string concatenation, `Type.GetType`
-  with a full assembly-qualified name, etc.); assembly-reference containment is not, because the
-  compiler simply cannot bind an identifier whose declaring assembly was never supplied.
+- **The reference list stays curated and non-caller-overridable**, as defense-in-depth: assemblies
+  that are cleanly excludable (`System.Net.Http`, `System.Diagnostics.Process`'s own assembly,
+  etc.) never even get supplied to the compiler as a `MetadataReference`, so nothing exposes them.
+- **A semantic, symbol-level namespace check backstops the reference list**
+  (`QueryCompiler.EnsureNoSandboxedNamespaceUsage`), because assembly omission alone cannot exclude
+  types that are physically defined inside an always-required core assembly. After a successful
+  emit, the compiler walks every identifier resolved within the **user-authored** region of the
+  generated source (the compiler-generated wrapper scaffolding is skipped, using
+  `GeneratedUserQuerySource.QueryHeaderLineCount` to find where user text starts) and resolves each
+  to its `ISymbol` via the `SemanticModel`. Any symbol whose containing namespace starts with
+  `System.IO`, `System.Net`, `System.Diagnostics`, `System.Reflection.Emit`,
+  `System.Runtime.Loader`, `System.Runtime.InteropServices`, or `System.Threading` (excluding the
+  allowed `System.Threading.Tasks` subtree, needed for the generated wrapper's own
+  `SaveChangesAsync` overrides) causes compilation to fail with the same sanitized
+  `QueryExecutionException` used for ordinary binding errors — the query author sees "could not be
+  compiled," not a stack trace or a distinct "blocked API" signal. This is what actually stops
+  `System.IO.File.ReadAllText(...)` and `System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(...)`,
+  neither of which the reference list alone can exclude. Text-scanning the raw query string was
+  considered and rejected in favor of this approach: naive text scanning is trivially bypassed
+  (string concatenation, `Type.GetType` with a fully-qualified name, etc.), whereas resolving
+  actual bound symbols via the semantic model is not, because it reflects what the compiler itself
+  determined the identifier refers to.
 - **`unsafe` stays hard-disabled** (`allowUnsafe: false`) — this is the one language feature that
   can defeat reference-list containment (arbitrary memory access can, with enough effort, forge
   references to types/methods never referenced), so it is the one thing this plan does *not*
@@ -353,6 +378,36 @@ otherwise undermine that control.
   reference notes' example — this was not possible at all under the Dynamic-LINQ model and is a
   direct example of the "whole area of things" the user is asking to unlock.
 
+### Result-shaping scope: only `IQueryable` results are shaped into rows
+
+`RoslynQueryExecutor.ShapeResultAsync` only performs its capped materialize-and-project pipeline
+(row shaping, `Take`-cap enforcement, timeout-aware execution) when the compiled query's return
+value is an `IQueryable`. Every other return value — including a plain `IEnumerable` produced by an
+operator with no SQL translation (`Zip`, most notably; also `Enumerable`-only overloads reached
+after an explicit `AsEnumerable()`/`ToList()`), an already-materialized list, or a genuine scalar
+like `int`/`bool`/`string` — is returned as-is through the `QueryResult.Scalar` slot with
+`IsScalar = true`.
+
+This was a deliberate decision, not an oversight:
+
+- `IQueryable.Expression` gives `GetEffectiveTake` an expression tree to search for a user-supplied
+  `Take(n)` call, so the cap in `QueryExecutionOptions.MaxTake`/`DefaultTake` can be applied via
+  provider translation *before* the database is asked to produce any rows. A plain `IEnumerable` has
+  no expression tree — by the time `ShapeResultAsync` sees it, if it's driven by an iterator it may
+  already be too late to bound how much work executing it does, and if it's already a realized
+  collection it has already been fully materialized without a cap at all. Neither case can be capped
+  consistently with how `IQueryable` results are capped.
+- Query authors who want `Zip`/other non-translatable-operator output shaped into rows can end the
+  query with `.ToList()` (or any other terminal operator) and read the result via the `Scalar` slot;
+  the object is still fully returned to the caller, just not row-shaped. This mirrors how LINQPad
+  itself dumps the raw object graph for non-`IQueryable` results rather than pretending they're
+  paged query results.
+- Because of this, the `DbContext context` parameter that `ShapeResultAsync` used to accept was
+  unused (row shaping only needs the `IQueryable`'s own `Provider`) and has been removed.
+
+See `RoslynQueryExecutorTests.ExecuteAsync_Zip_PairsTwoRootsPositionally` for a test that exercises
+and pins this behavior.
+
 ## Migration / rollout plan
 
 1. **Add the new compilation pipeline alongside the existing one**, behind an internal
@@ -380,7 +435,11 @@ otherwise undermine that control.
    statement modes), the removed `Join`/`GroupJoin`/`SelectMany`/`Zip` restriction (now lifted),
    the reference-list safety model, and the `GetType()` behavioral note. Update
    `DEVELOPMENT.md`'s one-line description of the Query execution module (currently "Safe
-   Dynamic-LINQ query translation...") accordingly.
+   Dynamic-LINQ query translation...") accordingly. **Done for the opt-in state**: both docs now
+   cross-reference the `Roslyn` engine and this plan; a full rewrite of `query-execution.md`'s
+   grammar section to describe the new engine as the primary path is still deferred until step 4
+   (flip the default) actually happens, to avoid documenting behavior most callers don't yet get
+   by default.
 
 ### Package removal
 

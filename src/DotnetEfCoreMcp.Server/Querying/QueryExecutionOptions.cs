@@ -3,6 +3,21 @@ namespace DotnetEfCoreMcp.Server.Querying;
 /// <summary>Server-wide limits enforced on every query, regardless of what the caller requests.</summary>
 public sealed class QueryExecutionOptions
 {
+    /// <summary>Which engine <c>run_query</c> uses to execute the caller's query. See
+    /// <c>docs/development/roslyn-user-query.md</c>; defaults to <see cref="QueryEngine.DynamicLinq"/>
+    /// during the migration so the two engines can be validated side by side before the default
+    /// flips.</summary>
+    public QueryEngine Engine { get; init; } = QueryEngine.DynamicLinq;
+
+    /// <summary>Whether a compiled <see cref="QueryEngine.Roslyn"/> query is allowed to call
+    /// <c>SaveChanges()</c>/<c>SaveChangesAsync()</c> (directly or via tracked entities). Defaults
+    /// to <c>false</c> so <c>run_query</c> stays read-only by default even under the Roslyn
+    /// engine; even when <c>true</c>, the generated query context still refuses to save unless the
+    /// active connection is also non-production <see cref="Connections.ConnectionAccessMode.ReadWrite"/>
+    /// - mirrors the gating shape used for <c>EntityMutations:Enabled</c>. Has no effect under
+    /// <see cref="QueryEngine.DynamicLinq"/>, which cannot express mutations at all.</summary>
+    public bool AllowMutationsInRunQuery { get; init; }
+
     /// <summary>Absolute maximum number of rows any sequence query can return.</summary>
     public int MaxTake { get; init; } = 200;
 
