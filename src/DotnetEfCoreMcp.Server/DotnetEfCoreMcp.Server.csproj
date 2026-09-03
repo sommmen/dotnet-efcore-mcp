@@ -35,8 +35,15 @@
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
 
     <!-- Safe, injection-resistant query DSL execution (parameters passed positionally, never
-         string-concatenated into the predicate). -->
+         string-concatenated into the predicate). Superseded by the Roslyn-compiled UserQuery
+         engine (see docs/development/roslyn-user-query.md); kept side-by-side behind the
+         QueryExecution:Engine toggle until the new engine is the sole default. -->
     <PackageReference Include="System.Linq.Dynamic.Core" Version="1.7.4" />
+
+    <!-- Compiles caller LINQ queries as real C# (LINQPad-style UserQuery), rooted at the target
+         DbContext, instead of parsing a restricted expression-string DSL. See
+         docs/development/roslyn-user-query.md. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
 
   <ItemGroup>

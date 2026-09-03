@@ -21,6 +21,8 @@ public sealed class EfCoreMcpTools(
     ConnectionRegistry connectionRegistry,
     SchemaCache schemaCache,
     QueryExecutor queryExecutor,
+    RoslynQueryExecutor roslynQueryExecutor,
+    QueryExecutionOptions queryExecutionOptions,
     RawSqlExecutionOptions rawSqlExecutionOptions,
     SqlQueryExecutor sqlQueryExecutor,
     IToolResultFormatter resultFormatter,
@@ -28,20 +30,77 @@ public sealed class EfCoreMcpTools(
 {
 
     [McpServerTool(Name = "list_assembly_candidates"), Description(
-        "Discovers compiled project assemblies under a workspace, ordered by the recommended selection. " +
-        "Debug outputs are preferred over other configurations and Release. Pass any returned assemblyPath to load_assembly to switch targets.")]
+        "Discovers compiled project assemblies under a workspace, ordered by the recommended selection: " +
+        "assemblies whose metadata suggests they contain a DbContext-derived type are ranked first, then " +
+        "Debug outputs are preferred over other configurations and Release, then newest/highest-TFM as " +
+        "tie-breakers. Pass any returned assemblyPath to load_assembly to switch targets. In monorepos with " +
+        "many projects/build configurations, results are grouped per project by default (one representative " +
+        "candidate per project, with an otherBuildsOfThisProject count) - set includeAllBuilds to true to see " +
+        "every Configuration/TFM combination individually. Use pathFilter (a case-insensitive substring match " +
+        "against each candidate's projectPath) to narrow results to a specific area of the workspace, e.g. " +
+        "pathFilter: \"MyApp.Data\" instead of grepping the full output.")]
     public string ListAssemblyCandidates(
-        [Description("Absolute path to the workspace or repository to inspect.")] string workspacePath)
-        => Execute("list_assembly_candidates", () => ListAssemblyCandidatesCore(workspacePath));
+        [Description("Absolute path to the workspace or repository to inspect.")] string workspacePath,
+        [Description("Optional case-insensitive substring to filter candidates by their projectPath (e.g. a project or folder name). Omit to return all projects.")] string? pathFilter = null,
+        [Description("When false (default), only one representative candidate per project is returned (the preferred build, or the best match if pathFilter narrows to that project), with otherBuildsOfThisProject noting how many other Configuration/TFM builds exist. Set to true to list every build of every project individually.")] bool includeAllBuilds = false)
+        => Execute("list_assembly_candidates", () => ListAssemblyCandidatesCore(workspacePath, pathFilter, includeAllBuilds));
 
-    private string ListAssemblyCandidatesCore(string workspacePath)
+    private string ListAssemblyCandidatesCore(string workspacePath, string? pathFilter, bool includeAllBuilds)
     {
         try
         {
             var candidates = assemblyDiscovery.Discover(workspacePath);
+
+            if (!string.IsNullOrWhiteSpace(pathFilter))
+            {
+                candidates = candidates
+                    .Where(candidate => candidate.ProjectPath.Contains(pathFilter, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+            }
+
+            var totalCandidateCount = candidates.Count;
+
+            if (!includeAllBuilds)
+            {
+                // Collapse to one representative per project (the discovery service already
+                // orders candidates with the most useful build of each project first), so a
+                // monorepo with hundreds of Configuration/TFM combinations doesn't force the
+                // caller to scroll past dozens of near-duplicate entries for the same project to
+                // find the ones that matter.
+                var otherBuildCounts = candidates
+                    .GroupBy(candidate => candidate.ProjectPath, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.Count() - 1, StringComparer.OrdinalIgnoreCase);
+
+                candidates = candidates
+                    .GroupBy(candidate => candidate.ProjectPath, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .ToArray();
+
+                return resultFormatter.Format(new
+                {
+                    workspacePath = Path.GetFullPath(workspacePath),
+                    pathFilter,
+                    totalCandidateCount,
+                    candidates = candidates.Select(candidate => new
+                    {
+                        assemblyPath = candidate.AssemblyPath,
+                        projectPath = candidate.ProjectPath,
+                        configuration = candidate.Configuration,
+                        targetFramework = candidate.TargetFramework,
+                        lastWriteTimeUtc = candidate.LastWriteTimeUtc,
+                        isPreferred = candidate.IsPreferred,
+                        likelyContainsDbContext = candidate.LikelyContainsDbContext,
+                        otherBuildsOfThisProject = otherBuildCounts[candidate.ProjectPath],
+                    }),
+                    hint = "Each project is represented by a single recommended build. Set includeAllBuilds to true to list every Configuration/TFM combination.",
+                });
+            }
+
             return resultFormatter.Format(new
             {
                 workspacePath = Path.GetFullPath(workspacePath),
+                pathFilter,
+                totalCandidateCount,
                 candidates = candidates.Select(candidate => new
                 {
                     assemblyPath = candidate.AssemblyPath,
@@ -50,6 +109,7 @@ public sealed class EfCoreMcpTools(
                     targetFramework = candidate.TargetFramework,
                     lastWriteTimeUtc = candidate.LastWriteTimeUtc,
                     isPreferred = candidate.IsPreferred,
+                    likelyContainsDbContext = candidate.LikelyContainsDbContext,
                 }),
             });
         }
@@ -201,15 +261,26 @@ public sealed class EfCoreMcpTools(
         CancellationToken cancellationToken = default)
         => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, cancellationToken));
 
+    private async Task<QueryResult> ExecuteDynamicLinqAsync(Type contextType, ConnectionRegistryEntry entry, string query, CancellationToken cancellationToken)
+    {
+        using var context = CreateContext(contextType, entry);
+        return await queryExecutor.ExecuteAsync(context, new QueryRequest { Query = query }, entry.CommandTimeoutSeconds, cancellationToken);
+    }
+
     private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, CancellationToken cancellationToken)
     {
         var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
-        using var context = CreateContext(contextType, entry);
-
         try
         {
-            var result = await queryExecutor.ExecuteAsync(context, new QueryRequest { Query = query }, entry.CommandTimeoutSeconds, cancellationToken);
+            var result = queryExecutionOptions.Engine switch
+            {
+                QueryEngine.DynamicLinq => await ExecuteDynamicLinqAsync(contextType, entry, query, cancellationToken),
+                QueryEngine.Roslyn => await roslynQueryExecutor.ExecuteAsync(
+                    RequireLoadedAssembly(), contextType, entry, ResolveEffectiveProvider(contextType, entry),
+                    new QueryRequest { Query = query }, cancellationToken),
+                _ => throw new InvalidOperationException($"Unsupported query engine '{queryExecutionOptions.Engine}'.")
+            };
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
@@ -234,7 +305,14 @@ public sealed class EfCoreMcpTools(
     {
         if (!rawSqlExecutionOptions.Enabled)
         {
-            throw new McpException("Raw SQL execution is disabled. Enable RawSqlExecution:Enabled in server-side configuration to use this tool.");
+            throw new McpException(
+                "Raw SQL execution is disabled by default as a safety guard. To enable it, set " +
+                "RawSqlExecution:Enabled to true in the server's configuration (appsettings.json, an " +
+                "environment variable such as DOTNETEFCOREMCP_RawSqlExecution__Enabled=true, or user-secrets) " +
+                "and restart the MCP server process - this cannot be toggled per-request or per-session from " +
+                "an MCP client. Even when enabled, run_sql_query still refuses Production connections and " +
+                "requires a ReadWrite connection, so consider whether run_query (structured, always-on, " +
+                "read-only LINQ-style querying) already covers your need before enabling raw SQL.");
         }
 
         var contextType = ResolveContextType(contextName);
@@ -261,7 +339,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (QueryExecutionException ex)
         {
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSqlQueryError(ex));
         }
     }
 
@@ -360,7 +438,42 @@ public sealed class EfCoreMcpTools(
     private McpException CreateUnexpectedToolException(string operation, Exception exception)
     {
         logger.LogError(exception, "Unexpected error invoking MCP tool {ToolName}", operation);
-        return new McpException($"{operation} failed: {exception.GetType().Name}: {exception.Message}");
+
+        var hint = DescribeIfAssemblyIdentitySplit(exception);
+        var message = hint is null
+            ? $"{operation} failed: {exception.GetType().Name}: {exception.Message}"
+            : $"{operation} failed: {exception.GetType().Name}: {exception.Message}\n\n{hint}";
+        return new McpException(message);
+    }
+
+    /// <summary>Recognizes the small family of exceptions ("field/method not found", "type could not be
+    /// loaded", "could not load file or assembly") that .NET throws when code in the isolated target
+    /// <see cref="AssemblyLoadContext"/> touches a type from an assembly that is loaded twice - once in
+    /// the default context (shared by the server and, transitively, EF Core) and once as a second,
+    /// type-identity-incompatible copy inside the target's own context - instead of resolving to a
+    /// single shared copy. This is a server-side <c>TargetAssemblyLoadContext.SharedAssemblyNames</c>
+    /// configuration gap, not a problem with the target project, but the raw CLR exception message
+    /// (e.g. "Field not found: 'Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.CommandExecuting'")
+    /// gives no hint of that, sending anyone debugging it down the wrong path entirely. Returns
+    /// <see langword="null"/> for exceptions unrelated to this pattern so their message is left untouched.</summary>
+    private static string? DescribeIfAssemblyIdentitySplit(Exception exception)
+    {
+        if (exception is not (MissingFieldException or MissingMethodException or TypeLoadException
+            or TypeInitializationException or FileLoadException))
+        {
+            return null;
+        }
+
+        return "This looks like an assembly load context (ALC) type-identity mismatch inside the MCP " +
+            "server, not a problem with the target project: the target assembly was loaded into an " +
+            "isolated ALC that ended up with its own separate copy of a dependency the shared EF Core " +
+            "assemblies also reference (for example Microsoft.Extensions.Logging.Abstractions), instead " +
+            "of sharing the server's copy. That produces two type-incompatible copies of the same type, " +
+            "which surfaces as a confusing \"field/method not found\" or \"could not load\" error even " +
+            "though the member genuinely exists. If this keeps happening for a specific dependency, it " +
+            "usually means that assembly's simple name needs to be added to " +
+            "TargetAssemblyLoadContext.SharedAssemblyNames in the MCP server itself; retrying or " +
+            "reloading the assembly will not help.";
     }
 
     private LoadedAssemblyHandle RequireLoadedAssembly()
@@ -429,6 +542,19 @@ public sealed class EfCoreMcpTools(
 
     private const string GenericQueryRecoveryHint =
         "verify entity and property names with get_schema, validate Dynamic LINQ syntax, and consult server logs if the problem persists.";
+
+    /// <summary>Adds actionable next-step guidance to raw SQL execution failures, similar in
+    /// spirit to <see cref="FormatQueryError"/> for the structured run_query tool. Raw SQL errors
+    /// are frequently just the provider's native error message (e.g. a SQL syntax error or a
+    /// missing table/column), which is easy to misdiagnose as "the tool is broken" without a
+    /// pointer back toward get_schema/list_contexts.</summary>
+    private static string FormatSqlQueryError(QueryExecutionException exception)
+    {
+        var cause = exception.InnerException?.Message?.Trim();
+        return string.IsNullOrEmpty(cause)
+            ? $"{exception.Message} Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists."
+            : $"{exception.Message} Cause: {cause} Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists.";
+    }
 
     /// <summary>Turns a <see cref="DbContextScanResult"/>'s type-load diagnostics into
     /// client-facing warning strings, adding an explicit "zero DbContexts found" warning when the

@@ -1,5 +1,6 @@
 ﻿using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tools;
@@ -41,6 +42,9 @@ builder.Services.AddSingleton<SchemaCache>();
 // tightened per-deployment without a code change, while still defaulting to safe values if unset.
 builder.Services.AddSingleton(builder.Configuration.GetSection("QueryExecution").Get<QueryExecutionOptions>() ?? new QueryExecutionOptions());
 builder.Services.AddSingleton<QueryExecutor>();
+builder.Services.AddSingleton(builder.Configuration.GetSection("QueryCompilation").Get<QueryCompilationOptions>() ?? new QueryCompilationOptions());
+builder.Services.AddSingleton<QueryCompiler>();
+builder.Services.AddSingleton<RoslynQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("RawSqlExecution").Get<RawSqlExecutionOptions>() ?? new RawSqlExecutionOptions());
 builder.Services.AddSingleton<SqlQueryExecutor>();
 

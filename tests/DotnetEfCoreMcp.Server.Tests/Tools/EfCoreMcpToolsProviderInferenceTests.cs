@@ -1,4 +1,5 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
@@ -40,6 +41,8 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
             new ConnectionRegistry(configuration),
             new SchemaCache(),
             new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
+            new RoslynQueryExecutor(new QueryExecutionOptions(), new QueryCompiler(new QueryCompilationOptions())),
+            new QueryExecutionOptions(),
             resolvedRawSqlOptions,
             new SqlQueryExecutor(resolvedRawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new ToonToolResultFormatter(),
@@ -81,6 +84,8 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
 
         Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RawSqlExecution:Enabled", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("restart", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

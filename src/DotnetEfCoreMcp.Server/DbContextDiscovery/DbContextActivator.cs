@@ -26,6 +26,35 @@ namespace DotnetEfCoreMcp.Server.DbContextDiscovery;
 /// configured provider, the override will fail or behave unpredictably. This is a known MVP
 /// limitation - contexts using those paths should be registered with a provider matching what
 /// their own <c>OnConfiguring</c>/factory actually uses.</summary>
+/// <summary>Identifies which of <see cref="DbContextActivator"/>'s four supported construction
+/// paths a target <see cref="DbContext"/> type uses, distinguishing the generic- vs. non-generic-
+/// options constructor cases that <see cref="DbContextDiscovery.DbContextConstructionKind"/>
+/// intentionally collapses into a single <c>OptionsConstructor</c> value for MCP client reporting.
+/// This finer split matters to callers that need to *emit code* for a different, related type
+/// (e.g. a Roslyn-compiled <c>UserQuery_{token} : TContext</c> subclass - see
+/// docs/development/roslyn-user-query.md), because the constructor parameter type they must
+/// generate/pass differs between the two: <c>DbContextOptions&lt;TContext&gt;</c> vs. the
+/// non-generic <c>DbContextOptions</c>.</summary>
+public enum DbContextConstructorShape
+{
+    /// <summary>Constructor accepting <c>DbContextOptions&lt;TContext&gt;</c>.</summary>
+    GenericOptions,
+
+    /// <summary>Constructor accepting the non-generic <c>DbContextOptions</c>.</summary>
+    NonGenericOptions,
+
+    /// <summary>No options-accepting constructor, but an <c>IDesignTimeDbContextFactory&lt;TContext&gt;</c>
+    /// implementation exists alongside the context.</summary>
+    DesignTimeFactory,
+
+    /// <summary>Only a parameterless constructor exists; the context configures itself via
+    /// <c>OnConfiguring</c>.</summary>
+    Parameterless,
+
+    /// <summary>None of the above construction paths are available.</summary>
+    Unsupported,
+}
+
 public static class DbContextActivator
 {
     private const BindingFlags AnyInstanceCtor = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
@@ -36,20 +65,19 @@ public static class DbContextActivator
     /// method never infers on its own.</param>
     public static DbContext CreateInstance(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider)
     {
-        var genericOptionsType = typeof(DbContextOptions<>).MakeGenericType(contextType);
-        var genericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [genericOptionsType], modifiers: null);
-        if (genericOptionsCtor is not null)
+        var kind = DetermineConstructorShape(contextType);
+        if (kind == DbContextConstructorShape.GenericOptions)
         {
+            var genericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions<>).MakeGenericType(contextType)], modifiers: null)!;
             var options = CreateGenericOptions(contextType, entry, provider);
             return Invoke(genericOptionsCtor, contextType, [options]);
         }
 
-        var nonGenericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions)], modifiers: null);
-        if (nonGenericOptionsCtor is not null)
+        if (kind == DbContextConstructorShape.NonGenericOptions)
         {
-            var builder = new DbContextOptionsBuilder();
-            ConfigureProvider(builder, entry, provider);
-            return Invoke(nonGenericOptionsCtor, contextType, [builder.Options]);
+            var nonGenericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions)], modifiers: null)!;
+            var options = BuildOptions(contextType, entry, provider);
+            return Invoke(nonGenericOptionsCtor, contextType, [options]);
         }
 
         var factoryType = DbContextScanner.FindDesignTimeFactoryType(contextType);
@@ -106,11 +134,24 @@ public static class DbContextActivator
         }
     }
 
-    private static object CreateGenericOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider)
+    /// <summary>Builds a <c>DbContextOptions&lt;TContext&gt;</c> instance (boxed as <see cref="object"/>
+    /// since <paramref name="contextType"/> is only known at runtime) for <paramref name="contextType"/>.
+    /// Public so callers building a *different* type that requires the same generically-typed options
+    /// (e.g. a Roslyn-compiled <c>UserQuery_{token} : TContext</c> class emitting a constructor
+    /// parameter typed as <c>DbContextOptions&lt;TContext&gt;</c> - see
+    /// docs/development/roslyn-user-query.md) can reuse this instead of duplicating the
+    /// <see cref="BindingFlags.DeclaredOnly"/> reflection dance below. Only valid when
+    /// <see cref="DetermineConstructorShape"/> returns <see cref="DbContextConstructorShape.GenericOptions"/>
+    /// - for <see cref="DbContextConstructorShape.NonGenericOptions"/> use <see cref="BuildOptions"/>
+    /// instead, which returns the non-generic type that shape's constructor actually requires.</summary>
+    /// <param name="configureAdditional">Optional extra configuration applied after the provider is
+    /// set up, e.g. <c>b => b.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)</c>.</param>
+    public static object CreateGenericOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Action<DbContextOptionsBuilder>? configureAdditional = null)
     {
         var builderType = typeof(DbContextOptionsBuilder<>).MakeGenericType(contextType);
         var builder = (DbContextOptionsBuilder)Activator.CreateInstance(builderType)!;
         ConfigureProvider(builder, entry, provider);
+        configureAdditional?.Invoke(builder);
 
         // DbContextOptionsBuilder<TContext> re-declares `Options` with `new` to narrow its return
         // type; without DeclaredOnly, GetProperty("Options") sees both the base and derived
@@ -118,6 +159,58 @@ public static class DbContextActivator
         // member declared directly on builderType, i.e. the narrowed, generically-typed one.
         var optionsProperty = builderType.GetProperty("Options", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)!;
         return optionsProperty.GetValue(builder)!;
+    }
+
+    /// <summary>Determines which of the four construction paths a target <see cref="DbContext"/>
+    /// type supports, without actually constructing it. Used by callers (e.g. the Roslyn-compiled
+    /// query engine, see docs/development/roslyn-user-query.md) that need to know, ahead of time,
+    /// what constructor shape to generate/invoke for a type they don't control - mirrors the same
+    /// probing order <see cref="CreateInstance"/> itself uses.</summary>
+    public static DbContextConstructorShape DetermineConstructorShape(Type contextType)
+    {
+        if (contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions<>).MakeGenericType(contextType)], modifiers: null) is not null)
+        {
+            return DbContextConstructorShape.GenericOptions;
+        }
+
+        if (contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions)], modifiers: null) is not null)
+        {
+            return DbContextConstructorShape.NonGenericOptions;
+        }
+
+        if (DbContextScanner.FindDesignTimeFactoryType(contextType) is not null)
+        {
+            return DbContextConstructorShape.DesignTimeFactory;
+        }
+
+        if (contextType.GetConstructor(AnyInstanceCtor, binder: null, Type.EmptyTypes, modifiers: null) is not null)
+        {
+            return DbContextConstructorShape.Parameterless;
+        }
+
+        return DbContextConstructorShape.Unsupported;
+    }
+
+    /// <summary>Builds a server-controlled, non-generic <see cref="DbContextOptions"/> instance for
+    /// <paramref name="contextType"/>, the same way <see cref="CreateInstance"/> does for its
+    /// <see cref="DbContextConstructorShape.NonGenericOptions"/> path. Exposed so callers that
+    /// construct a *different* type deriving from <paramref name="contextType"/> (e.g. a
+    /// Roslyn-compiled <c>UserQuery_{token} : TContext</c> class - see
+    /// docs/development/roslyn-user-query.md) can reuse the exact same provider-configuration logic
+    /// instead of duplicating <see cref="ConfigureProvider"/>'s provider switch. Only valid for
+    /// context types whose <see cref="DetermineConstructorShape"/> is
+    /// <see cref="DbContextConstructorShape.NonGenericOptions"/> - callers must check that first;
+    /// for <see cref="DbContextConstructorShape.GenericOptions"/> use <see cref="CreateGenericOptions"/>
+    /// instead, and design-time-factory / parameterless contexts configure themselves and have no
+    /// server-built options to layer <paramref name="configureAdditional"/> onto.</summary>
+    /// <param name="configureAdditional">Optional extra configuration applied after the provider is
+    /// set up, e.g. <c>b => b.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)</c>.</param>
+    public static DbContextOptions BuildOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Action<DbContextOptionsBuilder>? configureAdditional = null)
+    {
+        var builder = new DbContextOptionsBuilder();
+        ConfigureProvider(builder, entry, provider);
+        configureAdditional?.Invoke(builder);
+        return builder.Options;
     }
 
     private static void ConfigureProvider(DbContextOptionsBuilder builder, ConnectionRegistryEntry entry, DatabaseProvider provider)
@@ -138,7 +231,14 @@ public static class DbContextActivator
         }
     }
 
-    private static void OverrideConnectionString(DbContext instance, ConnectionRegistryEntry entry, Type contextType, DatabaseProvider provider)
+    /// <summary>Forces <paramref name="instance"/> to use the server-registered connection string,
+    /// overriding whatever provider/connection its own construction path (design-time factory or
+    /// parameterless constructor + OnConfiguring) set up. Internal (not private) so <see
+    /// cref="Querying.RoslynQueryExecutor"/> can apply the same override to its Roslyn-compiled
+    /// <c>UserQuery_{token}</c> subclasses of parameterless-shape contexts, which construct via
+    /// <see cref="Activator.CreateInstance(Type, object?[]?)"/> directly rather than through this
+    /// class's <see cref="CreateInstance"/>.</summary>
+    internal static void OverrideConnectionString(DbContext instance, ConnectionRegistryEntry entry, Type contextType, DatabaseProvider provider)
     {
         try
         {

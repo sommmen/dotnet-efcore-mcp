@@ -39,7 +39,7 @@ scripts manually. P1 #11 makes that structured.
   `__EFMigrationsHistory`; see "Read-only safety" below. `generate_migration_script` produces
   SQL text only — it never opens a transaction, executes `Migrate()`, or calls `SaveChanges`.
 - Connection gating: `generate_migration_script` is restricted to non-production,
-  `ReadWrite`-capable development connections, mirroring `run_sql_execute` gating
+  `ReadWrite`-capable development connections, mirroring `run_sql_query` gating
   (`RawSqlExecution:Enabled` is not consulted here; a separate `Migrations:Enabled` flag — see
   below — gates the script-generation tool instead). Production and `ReadOnly` connections
   are always rejected.

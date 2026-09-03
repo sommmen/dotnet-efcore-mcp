@@ -32,9 +32,11 @@ The server parses exactly one expression (an optional trailing semicolon is acce
 
 No terminal call is required — `run_query` always materializes the resulting sequence (or scalar) server-side and applies deterministic key ordering plus an automatic take cap, so LINQPad-style fragments like `Orders.Where(o => o.Number == "123NL")` work without an explicit `.ToList()`/`.ToListAsync()`/`.FirstOrDefault()`. Adding a terminal element operator (`FirstOrDefault`, `Single`, etc.) or an explicit `Take(n)` is still honored and simply narrows the result.
 
-`Join`, `GroupJoin`, `SelectMany`, and `Zip` are **not supported**. This is a hard limitation of System.Linq.Dynamic.Core's string parser: those operators need two simultaneously-scoped lambda parameters (or a delegate shape the parser cannot resolve against `Queryable`'s generic method overloads), which the dynamic string-expression parser cannot represent no matter the syntax used. Use a navigation-property predicate instead (e.g. `Orders.Where(o => o.Customer.Name == "Alice")`), or use `Concat`/`Union`/`Except`/`Intersect` for cross-DbSet set operations — other public `DbSet<T>` properties on the context (e.g. `Customers`) can be referenced by name from within a query rooted at a different DbSet, for example `Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))`.
+`Join`, `GroupJoin`, `SelectMany`, and `Zip` are **not supported by the default `DynamicLinq` engine**. This is a hard limitation of System.Linq.Dynamic.Core's string parser: those operators need two simultaneously-scoped lambda parameters (or a delegate shape the parser cannot resolve against `Queryable`'s generic method overloads), which the dynamic string-expression parser cannot represent no matter the syntax used. Use a navigation-property predicate instead (e.g. `Orders.Where(o => o.Customer.Name == "Alice")`), or use `Concat`/`Union`/`Except`/`Intersect` for cross-DbSet set operations — other public `DbSet<T>` properties on the context (e.g. `Customers`) can be referenced by name from within a query rooted at a different DbSet, for example `Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))`. The opt-in Roslyn engine (`QueryExecution:Engine = "Roslyn"`) removes this limitation entirely — see [Roslyn-compiled `UserQuery`](./roslyn-user-query.md) for its status and rollout plan.
 
-Execution is always `AsNoTracking`, subject to the selected connection's command timeout and server cancellation. Root primary-key ordering supplies deterministic ordering for un-ordered root sequences. Sequence results receive the configured default page when no `Take` is supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated. translated SQL, aggregate queries remain server-side, and preview builds the same SQL without executing it.## Proposed open work — P0 #2: `run_query` continuation indicator
+Execution is always `AsNoTracking`, subject to the selected connection's command timeout and server cancellation. Root primary-key ordering supplies deterministic ordering for un-ordered root sequences. Sequence results receive the configured default page when no `Take` is supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated.
+
+## Proposed open work — P0 #2: `run_query` continuation indicator
 
 Extend sequence `QueryResult` values and their `run_query` responses with `hasMoreRows`. For a
 positive effective take, it is `true` only if at least one row remains after applying the final sequence
@@ -59,8 +61,14 @@ the new field.
 - [x] Enforce a query timeout (command timeout / cancellation token) to avoid runaway queries
 - [x] Reject or restrict unsafe query shapes (e.g. arbitrary raw SQL, unbounded `.Include()` graphs) unless explicitly allowlisted
   - `run_sql_query` is disabled by default and must be explicitly enabled through
-    `RawSqlExecution:Enabled`. It is independently rejected for production and non-`ReadWrite`
-    connections, even when globally enabled. `include` entries are validated against the entity's
+    `RawSqlExecution:Enabled`, then the MCP server must be restarted; it cannot be enabled by an
+    MCP request or session. The disabled-tool response gives configuration examples for
+    `appsettings.json`, `DOTNETEFCOREMCP_RawSqlExecution__Enabled=true`, and user-secrets, and
+    directs callers to the always-on read-only `run_query` alternative where appropriate. It is
+    independently rejected for production and non-`ReadWrite` connections, even when globally
+    enabled. Raw SQL execution failures retain their sanitized provider message and add a
+    `Cause` when available plus a next step to check `get_schema`, verify `@p0`-style placeholders,
+    and consult server logs. `include` entries are validated against the entity's
     actual navigation property names (rejecting anything else), and the resulting projection is
     hard-capped to exactly one level of navigation depth regardless of what is requested — there
     is no way to request a deeper/unbounded graph.

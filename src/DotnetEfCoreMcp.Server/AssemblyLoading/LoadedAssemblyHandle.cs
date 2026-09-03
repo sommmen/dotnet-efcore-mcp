@@ -33,6 +33,21 @@ public sealed class LoadedAssemblyHandle
     /// dependencies could all be located.</summary>
     public IReadOnlyList<string> DependencyDiagnostics => _context.DependencyDiagnostics;
 
+    /// <summary>File-system paths of every assembly loaded into this target's context so far (the
+    /// target assembly itself plus its non-shared dependencies). Used by the Roslyn query compiler
+    /// to build a curated <c>MetadataReference</c> list for compiling user-authored queries against
+    /// this exact target - see <c>docs/development/roslyn-user-query.md</c>.</summary>
+    public IReadOnlyCollection<string> LoadedAssemblyPaths => _context.LoadedAssemblyPaths;
+
+    /// <summary>The target's own <see cref="AssemblyLoadContext"/>, exposed internally so the
+    /// Roslyn query compiler's per-request <c>CompiledQueryLoadContext</c> can fall back to it when
+    /// resolving assemblies the compiled query assembly references but that are not in the shared
+    /// default context (mirroring the "reuse the already-resolved dependency set" design in
+    /// <c>docs/development/roslyn-user-query.md</c>). Not exposed publicly for the same reason
+    /// <see cref="CreateWeakContextReference"/> exists instead of a public <c>Context</c> property:
+    /// long-lived external references to a collectible context would defeat unloading.</summary>
+    internal TargetAssemblyLoadContext Context => _context;
+
     /// <summary>Begins unloading the assembly's <see cref="AssemblyLoadContext"/>. This is
     /// asynchronous with respect to the CLR's GC - the memory isn't necessarily reclaimed the
     /// instant this call returns.</summary>

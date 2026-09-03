@@ -13,40 +13,18 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// NuGet-cache and shared-framework assets <see cref="AssemblyDependencyResolver"/> cannot see.</summary>
 internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
 {
-    /// <summary>Assembly (simple) names that MUST resolve to the copy already loaded in the
-    /// default load context rather than a second copy loaded from the target project's own
-    /// output folder. Without this, reflection checks like <c>typeof(DbContext).IsAssignableFrom</c>
-    /// would fail even for a real DbContext type, because the target's copy of
-    /// Microsoft.EntityFrameworkCore.dll would produce a *different*, type-identity-incompatible
-    /// <see cref="Type"/> for <c>DbContext</c> than the one our server code references. Sharing
-    /// these assemblies assumes the target project's EF Core major version is compatible with the
-    /// server's own referenced EF Core version (both net10.0 / EF Core 10.x for this MVP); a
-    /// mismatched major version is out of scope and will likely surface as a
-    /// <see cref="System.IO.FileLoadException"/> or <see cref="MissingMethodException"/> at
-    /// construction time rather than being detected up front.</summary>
-    private static readonly HashSet<string> SharedAssemblyNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Microsoft.EntityFrameworkCore",
-        "Microsoft.EntityFrameworkCore.Abstractions",
-        "Microsoft.EntityFrameworkCore.Relational",
-        "Microsoft.EntityFrameworkCore.Sqlite",
-        "Microsoft.EntityFrameworkCore.SqlServer",
-        "Microsoft.AspNetCore.Identity",
-        "Microsoft.AspNetCore.Identity.EntityFrameworkCore",
-        "Microsoft.Extensions.Identity.Core",
-        "Microsoft.Extensions.Identity.Stores",
-        "Microsoft.Data.Sqlite",
-        "SQLitePCLRaw.core",
-        "SQLitePCLRaw.provider.e_sqlite3",
-        "SQLitePCLRaw.batteries_v2",
-        "Npgsql",
-        "Npgsql.EntityFrameworkCore.PostgreSQL",
-        "System.Linq.Dynamic.Core",
-        "Microsoft.Extensions.Logging.Abstractions",
-    };
-
     private readonly AssemblyDependencyResolver _resolver;
     private readonly TargetDependencyProbe _probe;
+
+    // Every path this context has itself loaded from disk (the main assembly plus any
+    // non-shared dependency resolved via _resolver/_probe). Populated only by
+    // LoadAssemblyFromStream, so it always reflects exactly what was loaded *into this context*
+    // - shared assemblies resolved by returning null from Load() (and therefore satisfied by the
+    // default context) are deliberately excluded, since those already have a MetadataReference
+    // available through the server's own PackageReference-restored copies. A thread-safe
+    // collection is used because AssemblyLoadContext.Load can be re-entered (e.g. resolving one
+    // dependency's own dependencies) while another thread is concurrently probing the target.
+    private readonly System.Collections.Concurrent.ConcurrentBag<string> _loadedAssemblyPaths = new();
 
     public TargetAssemblyLoadContext(string mainAssemblyPath, string name)
         : base(name, isCollectible: true)
@@ -61,6 +39,15 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     /// time.</summary>
     public IReadOnlyList<string> DependencyDiagnostics => _probe.Diagnostics;
 
+    /// <summary>File-system paths of every assembly actually loaded into this context so far (the
+    /// main target assembly plus any non-shared dependency resolved for it), in no particular
+    /// order and without duplicates. Used to build a curated <c>MetadataReference</c> list for
+    /// compiling user-authored queries against this exact target - see
+    /// <c>docs/development/roslyn-user-query.md</c>. Does not include assemblies satisfied by the
+    /// default load context (see <see cref="SharedAssemblyNames"/>); callers needing those already
+    /// have a same-identity copy available via the server's own package references.</summary>
+    public IReadOnlyCollection<string> LoadedAssemblyPaths => _loadedAssemblyPaths;
+
     /// <summary>Reads an assembly (and optional symbols) from disk into a stream and loads it into
     /// this context. The file streams are disposed immediately after loading, so the build output
     /// is never locked by this context and MSBuild can freely replace it between rebuilds.</summary>
@@ -68,20 +55,26 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     {
         using var assemblyStream = File.OpenRead(assemblyPath);
         var symbolPath = Path.ChangeExtension(assemblyPath, ".pdb");
+        Assembly assembly;
         if (!File.Exists(symbolPath))
         {
-            return LoadFromStream(assemblyStream);
+            assembly = LoadFromStream(assemblyStream);
+        }
+        else
+        {
+            using var symbolStream = File.OpenRead(symbolPath);
+            assembly = LoadFromStream(assemblyStream, symbolStream);
         }
 
-        using var symbolStream = File.OpenRead(symbolPath);
-        return LoadFromStream(assemblyStream, symbolStream);
+        _loadedAssemblyPaths.Add(assemblyPath);
+        return assembly;
     }
 
     public Assembly LoadMainAssembly(string assemblyPath) => LoadAssemblyFromStream(assemblyPath);
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
-        if (assemblyName.Name is not null && SharedAssemblyNames.Contains(assemblyName.Name))
+        if (assemblyName.Name is not null && SharedFrameworkAssemblyNames.Value.Contains(assemblyName.Name))
         {
             // Returning null here delegates resolution to the default load context, where the
             // server's own PackageReference-restored copy is already loaded.

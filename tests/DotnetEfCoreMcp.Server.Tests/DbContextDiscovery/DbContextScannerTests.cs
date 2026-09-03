@@ -10,7 +10,7 @@ namespace DotnetEfCoreMcp.Server.Tests.DbContextDiscovery;
 public sealed class DbContextScannerTests
 {
     [Fact]
-    public void FindDbContextTypes_DiscoversAllThreeFixtureContexts()
+    public void FindDbContextTypes_DiscoversAllFiveFixtureContexts()
     {
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
@@ -21,7 +21,9 @@ public sealed class DbContextScannerTests
         Assert.Contains("SampleAppDbContext", names);
         Assert.Contains("LegacyOnConfiguringDbContext", names);
         Assert.Contains("FactoryOnlyDbContext", names);
-        Assert.Equal(3, scan.Descriptors.Count);
+        Assert.Contains("WarningsConfiguredDbContext", names);
+        Assert.Contains("NonGenericOptionsDbContext", names);
+        Assert.Equal(5, scan.Descriptors.Count);
         Assert.Empty(scan.TypeLoadWarnings);
     }
 
