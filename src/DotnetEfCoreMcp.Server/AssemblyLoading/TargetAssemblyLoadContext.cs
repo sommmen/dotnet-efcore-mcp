@@ -42,6 +42,7 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         "Npgsql",
         "Npgsql.EntityFrameworkCore.PostgreSQL",
         "System.Linq.Dynamic.Core",
+        "Microsoft.Extensions.Logging.Abstractions",
     };
 
     private readonly AssemblyDependencyResolver _resolver;

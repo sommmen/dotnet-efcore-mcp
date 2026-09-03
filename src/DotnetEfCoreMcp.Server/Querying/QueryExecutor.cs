@@ -59,7 +59,15 @@ public sealed class QueryExecutor
         // Other public DbSets on the context are registered as additional named lambda parameters so that
         // set operators can reference a second DbSet by its property name
         // (e.g. `Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))`).
-        var otherDbSets = GetOtherDbSetProperties(context, rootName);
+        // Only DbSets actually mentioned in the query text are registered: contexts can expose hundreds of
+        // DbSets, and registering all of them as extra lambda parameters can force Dynamic LINQ's parser to
+        // emit a custom delegate type (once the parameter count exceeds the built-in Func<> arities) via
+        // Reflection.Emit into a non-collectible dynamic assembly, which cannot reference entity types loaded
+        // into this context's collectible AssemblyLoadContext (NotSupportedException). Filtering keeps the
+        // parameter count minimal and, incidentally, avoids that failure for the common case.
+        var otherDbSets = GetOtherDbSetProperties(context, rootName)
+            .Where(candidate => System.Text.RegularExpressions.Regex.IsMatch(expressionText, $@"\b{System.Text.RegularExpressions.Regex.Escape(candidate.Property.Name)}\b"))
+            .ToList();
         var lambda = ParseExpression(rootName, entityType, otherDbSets, expressionText);
         new QueryExpressionValidator(_options).Validate(lambda.Body);
 

@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>DotnetEfCoreMcp.Server</RootNamespace>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantGlobalization>false</InvariantGlobalization>
     <UserSecretsId>dotnet-efcore-mcp-server</UserSecretsId>
   </PropertyGroup>
 
