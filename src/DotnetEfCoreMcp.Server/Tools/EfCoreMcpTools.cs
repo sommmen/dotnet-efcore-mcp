@@ -3,6 +3,7 @@ using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
+using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
@@ -28,6 +29,8 @@ public sealed class EfCoreMcpTools(
     QueryExecutionOptions queryExecutionOptions,
     RawSqlExecutionOptions rawSqlExecutionOptions,
     SqlQueryExecutor sqlQueryExecutor,
+    MigrationsOptions migrationsOptions,
+    MigrationInspector migrationInspector,
     IToolResultFormatter resultFormatter,
     ToolDiagnosticsOptions toolDiagnosticsOptions,
     ILogger<EfCoreMcpTools> logger,
@@ -433,6 +436,112 @@ public sealed class EfCoreMcpTools(
         catch (QueryExecutionException ex)
         {
             throw new McpException(FormatSqlQueryError(ex));
+        }
+    }
+
+    [McpServerTool(Name = "list_migrations"), Description(
+        "Inspects Entity Framework Core migration state for a DbContext: which migrations are known to the " +
+        "migration assembly, which are applied (per __EFMigrationsHistory), and which are pending. Always " +
+        "available (read-only, no DDL/DML) except for Production connections, which are rejected. When the " +
+        "target database is unreachable, databaseExists is false and every known migration is reported pending " +
+        "with appliedStateAvailable set to false rather than presenting metadata as applied state.")]
+    public Task<string> ListMigrations(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("list_migrations", () => ListMigrationsCore(contextName, connectionName, cancellationToken));
+
+    private async Task<string> ListMigrationsCore(string contextName, string? connectionName, CancellationToken cancellationToken)
+    {
+        var contextType = ResolveContextType(contextName);
+        var entry = ResolveConnection(connectionName);
+        if (entry.IsProduction)
+        {
+            throw new McpException("Migration inspection is not permitted for production connections.");
+        }
+
+        var provider = ResolveEffectiveProvider(contextType, entry);
+        using var context = CreateContext(contextType, entry);
+        try
+        {
+            var result = await migrationInspector.InspectAsync(context, entry, provider, cancellationToken);
+            return resultFormatter.Format(new
+            {
+                contextName = contextType.Name,
+                connectionName = entry.Name,
+                appliedMigrations = result.AppliedMigrations,
+                pendingMigrations = result.PendingMigrations,
+                databaseExists = result.DatabaseExists,
+                appliedStateAvailable = result.AppliedStateAvailable,
+            });
+        }
+        catch (MigrationInspectionException ex)
+        {
+            throw new McpException(ex.Message);
+        }
+    }
+
+    [McpServerTool(Name = "generate_migration_script"), Description(
+        "Generates a preview SQL migration script between two migration IDs via IMigrator.GenerateScript. This " +
+        "is a preview only: the script is never executed, no transaction is opened, and the database is never " +
+        "mutated. Unavailable unless Migrations:Enabled is explicitly set to true on the server; always rejected " +
+        "for Production and ReadOnly connections. The generated SQL is capped server-side and truncated at a " +
+        "best-effort statement boundary when it exceeds the cap.")]
+    public Task<string> GenerateMigrationScript(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Migration ID to script from (exclusive). Omit or pass \"0\" to script from the beginning of history.")] string? fromMigration = null,
+        [Description("Migration ID to script to (inclusive). Omit to script through the latest known migration.")] string? toMigration = null,
+        [Description("If true (default), generate a script safe to run on an already-applied database (__EFMigrationsHistory-guarded). Not every provider supports idempotent scripts.")] bool idempotent = true,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("generate_migration_script", () => GenerateMigrationScriptCore(contextName, connectionName, fromMigration, toMigration, idempotent, cancellationToken));
+
+    private async Task<string> GenerateMigrationScriptCore(string contextName, string? connectionName, string? fromMigration, string? toMigration, bool idempotent, CancellationToken cancellationToken)
+    {
+        if (!migrationsOptions.Enabled)
+        {
+            throw new McpException(
+                "Migration script generation is disabled by default as a safety guard. To enable it, set " +
+                "Migrations:Enabled to true in the server's configuration (appsettings.json, an environment " +
+                "variable such as DOTNETEFCOREMCP_Migrations__Enabled=true, or user-secrets) and restart the MCP " +
+                "server process - this cannot be toggled per-request or per-session from an MCP client. Even " +
+                "when enabled, generate_migration_script still refuses Production and ReadOnly connections, so " +
+                "consider whether list_migrations (always-on, read-only inspection) already covers your need " +
+                "before enabling script generation.");
+        }
+
+        var contextType = ResolveContextType(contextName);
+        var entry = ResolveConnection(connectionName);
+        if (entry.IsProduction)
+        {
+            throw new McpException("Migration script generation is not permitted for production connections.");
+        }
+
+        if (entry.AccessMode != ConnectionAccessMode.ReadWrite)
+        {
+            throw new McpException("Migration script generation requires a ReadWrite connection.");
+        }
+
+        using var context = CreateContext(contextType, entry);
+        try
+        {
+            var request = new MigrationScriptRequest { FromMigration = fromMigration, ToMigration = toMigration, Idempotent = idempotent };
+            var result = await migrationInspector.GenerateScriptAsync(context, entry, request, cancellationToken);
+            return resultFormatter.Format(new
+            {
+                contextName = contextType.Name,
+                connectionName = entry.Name,
+                fromMigration,
+                toMigration,
+                idempotent,
+                sql = result.Sql,
+                truncated = result.Truncated,
+                migrationCount = result.MigrationCount,
+            });
+        }
+        catch (MigrationInspectionException ex)
+        {
+            throw new McpException(ex.Message);
         }
     }
 

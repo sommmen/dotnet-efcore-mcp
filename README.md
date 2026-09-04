@@ -347,6 +347,30 @@ acceptable.
 queries the database — constructing the `DbContext` object at all (even for schema-only
 purposes) requires a real connection string/provider to build its `DbContextOptions`.
 
+`list_migrations` is always-on, read-only inspection (no DDL/DML, never mutates the target
+database): it reports which migrations the assembly knows about, which are recorded as applied
+in `__EFMigrationsHistory`, and which are pending. When the target database is unreachable,
+`databaseExists` is `false`, every known migration is reported pending, and
+`appliedStateAvailable` is `false` rather than presenting metadata as confirmed applied state.
+It is rejected only for production connections.
+
+`generate_migration_script` previews the SQL EF Core's `IMigrator.GenerateScript` would produce
+between two migration IDs — it never executes the script, opens a transaction, or calls
+`SaveChanges`. It is disabled by default; enable it (and restart the server, the same as
+`RawSqlExecution:Enabled`) with:
+
+```powershell
+dotnet user-secrets set "Migrations:Enabled" "true"
+# Or for the current process:
+$env:DOTNETEFCOREMCP_MIGRATIONS__ENABLED = "true"
+```
+
+Even when enabled, it is rejected for production and `ReadOnly` connections. The returned script
+is capped at `Migrations:MaxScriptLength` characters (100,000 by default) and truncated at a
+best-effort statement boundary, with `truncated` set to `true` when that happens. Not every
+provider supports idempotent scripts (for example, SQLite does not); retry with
+`idempotent: false` if `generate_migration_script` reports that limitation.
+
 ## Security
 
 Because this server can execute arbitrary queries against a real database on behalf of an agent, security is a first-class concern, not an afterthought. See the [Connection management](./docs/development/connections.md) and [Query execution](./docs/development/query-execution.md) module guides for the implemented safeguards (connection string storage, query allowlisting/read-only enforcement, result limits, auditing).

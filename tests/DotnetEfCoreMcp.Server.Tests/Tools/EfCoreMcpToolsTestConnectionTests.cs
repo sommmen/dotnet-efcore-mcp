@@ -3,6 +3,7 @@ using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
+using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
@@ -32,6 +33,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
+        var migrationsOptions = new MigrationsOptions();
 
         assemblyLoader = new AssemblyLoaderService();
         return new EfCoreMcpTools(
@@ -45,6 +47,8 @@ public sealed class EfCoreMcpToolsTestConnectionTests
             new QueryExecutionOptions(),
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
+            migrationsOptions,
+            new MigrationInspector(migrationsOptions, NullLogger<MigrationInspector>.Instance),
             new JsonToolResultFormatter(),
             new ToolDiagnosticsOptions(),
             NullLogger<EfCoreMcpTools>.Instance,
@@ -126,6 +130,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
+        var migrationsOptions = new MigrationsOptions();
         var assemblyLoader = new AssemblyLoaderService();
         var tools = new EfCoreMcpTools(
             assemblyLoader,
@@ -138,6 +143,8 @@ public sealed class EfCoreMcpToolsTestConnectionTests
             new QueryExecutionOptions(),
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
+            migrationsOptions,
+            new MigrationInspector(migrationsOptions, NullLogger<MigrationInspector>.Instance),
             new JsonToolResultFormatter(),
             new ToolDiagnosticsOptions(),
             NullLogger<EfCoreMcpTools>.Instance,
