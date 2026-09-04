@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.Loader;
 
 namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 
@@ -108,6 +109,12 @@ public sealed class AssemblyLoaderService
         var fullPath = Path.GetFullPath(assemblyPath);
         ValidateAllowedRoots(fullPath, additionalAllowedRoots);
 
+        // Normalized once here (rather than re-derived later) so it can be carried on the handle
+        // for ResolveMigrationsAssembly to re-apply against this same target's narrowing.
+        var normalizedAdditionalAllowedRoots = additionalAllowedRoots is { Count: > 0 }
+            ? NormalizeRoots(additionalAllowedRoots)
+            : null;
+
         if (!File.Exists(fullPath))
         {
             throw new AssemblyLoadFailedException(
@@ -171,7 +178,7 @@ public sealed class AssemblyLoaderService
                 throw new AssemblyLoadFailedException($"Failed to load '{fullPath}': {ex.Message}", ex);
             }
 
-            handle = new LoadedAssemblyHandle(context, assembly, fullPath, DateTimeOffset.UtcNow);
+            handle = new LoadedAssemblyHandle(context, assembly, fullPath, DateTimeOffset.UtcNow, normalizedAdditionalAllowedRoots);
             _targets[resolvedName] = new TargetEntry(handle, fileInfo.LastWriteTimeUtc, autoReloadOverride);
 
             previous?.Handle.Unload();
@@ -181,6 +188,139 @@ public sealed class AssemblyLoaderService
         // FileSystemWatcher) can't deadlock by calling back into this service.
         AssemblyLoaded?.Invoke(new AssemblyLoadedEventArgs(resolvedName, handle));
         return handle;
+    }
+
+    /// <summary>Resolves <paramref name="migrationsAssembly"/> - a simple assembly name (e.g.
+    /// <c>"OPG.AuthApi"</c>) or a path to a compiled DLL - into an <see cref="Assembly"/> loaded
+    /// into the same <see cref="System.Runtime.Loader.AssemblyLoadContext"/> as
+    /// <paramref name="handle"/>'s main target assembly. Loading into the same context is required
+    /// so EF Core's migration-to-<see cref="Microsoft.EntityFrameworkCore.DbContext"/> matching
+    /// (which compares <see cref="Type"/> references, not names) succeeds regardless of whether the
+    /// migrations live alongside the context or in a separate assembly.
+    ///
+    /// A simple name is resolved the same way the loaded target's own dependencies are (via the
+    /// target's <c>AssemblyDependencyResolver</c>/<c>TargetDependencyProbe</c> against its own
+    /// .deps.json) - this covers the common case where the migrations assembly is already a
+    /// project or package reference of the loaded target (e.g. a web API project that references a
+    /// shared data-access library and is itself the assembly passed to <see cref="Load"/>). A value
+    /// that looks like a path is instead loaded explicitly by file, subject to the same
+    /// <c>AssemblyLoader:AllowedRoots</c> containment check as <see cref="Load"/>, since it is
+    /// another arbitrary-file-load primitive.</summary>
+    /// <exception cref="AssemblyLoadFailedException">
+    /// The name could not be resolved as a dependency of the loaded target, the path is outside the
+    /// configured allowed roots, or the file does not exist or fails to load.
+    /// </exception>
+    public Assembly ResolveMigrationsAssembly(LoadedAssemblyHandle handle, string migrationsAssembly)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentException.ThrowIfNullOrWhiteSpace(migrationsAssembly);
+
+        var looksLikePath =
+            migrationsAssembly.Contains(Path.DirectorySeparatorChar) ||
+            migrationsAssembly.Contains(Path.AltDirectorySeparatorChar) ||
+            migrationsAssembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+
+        // Loading into handle.Context mutates that context's loaded-assembly set, which can race
+        // with a concurrent Load()/Unload() on this service (e.g. a reload replacing the handle's
+        // underlying context while this method is still using it). Serializing on the same _gate
+        // used by every other mutating member closes that window.
+        lock (_gate)
+        {
+            if (!looksLikePath)
+            {
+                Assembly resolved;
+                try
+                {
+                    resolved = handle.Context.LoadFromAssemblyName(new AssemblyName(migrationsAssembly));
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException or ArgumentException)
+                {
+                    // ArgumentException covers malformed simple-name input (e.g. an invalid
+                    // assembly name format) thrown by the AssemblyName constructor itself, not
+                    // just failures from the subsequent load - both must be redacted the same way
+                    // rather than escaping as an unhandled exception to the tool caller.
+                    throw new AssemblyLoadFailedException(
+                        $"Migrations assembly '{migrationsAssembly}' could not be resolved as a dependency of the currently loaded target assembly ('{handle.AssemblyPath}'). " +
+                        "If it is not a project or package reference of the loaded assembly, pass its compiled DLL path instead.",
+                        ex);
+                }
+
+                // TargetAssemblyLoadContext.Load(...) returns null for a dependency it cannot
+                // resolve itself, which makes the base AssemblyLoadContext fall back to probing
+                // the default load context / already-loaded assemblies and can "succeed" with an
+                // assembly loaded outside handle.Context entirely (e.g. a same-named assembly the
+                // MCP server host itself has loaded). Treat that as a resolution failure rather
+                // than silently returning an assembly EF Core cannot correctly associate with the
+                // migrations/DbContext types loaded in the target's own context.
+                if (AssemblyLoadContext.GetLoadContext(resolved) != handle.Context)
+                {
+                    throw new AssemblyLoadFailedException(
+                        $"Migrations assembly '{migrationsAssembly}' resolved to an assembly outside the loaded target's assembly context ('{handle.AssemblyPath}'). " +
+                        "This typically means it is not actually a dependency of the loaded target assembly. Pass its compiled DLL path instead, or add it as a real dependency of the target.");
+                }
+
+                return resolved;
+            }
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(migrationsAssembly);
+            }
+            catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+            {
+                // Path.GetFullPath throws for invalid characters, unsupported formats, and
+                // excessively long paths - redact these the same way as every other malformed
+                // input to this method rather than letting a raw framework exception escape to
+                // the tool caller.
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly path '{migrationsAssembly}' is not a valid file path.", ex);
+            }
+
+            if (_allowedRoots.Count > 0 && !MatchesAnyRoot(fullPath, _allowedRoots))
+            {
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly path '{fullPath}' is outside the configured allowed roots. Configure `AssemblyLoader:AllowedRoots` to include this location, or point at an assembly under an already-allowed root.");
+            }
+
+            // Mirror ValidateAllowedRoots' two-tier check: the handle's own target may have been
+            // registered with a narrower AllowedRoots override (AssemblyTargetOptions.AllowedRoots),
+            // which must be enforced here too - otherwise a migrations assembly could be loaded from
+            // any server-wide allowed root even for a target deliberately scoped to a subset.
+            if (handle.AdditionalAllowedRoots is { Count: > 0 } additionalAllowedRoots &&
+                !MatchesAnyRoot(fullPath, additionalAllowedRoots))
+            {
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly path '{fullPath}' is outside this target's configured allowed roots.");
+            }
+
+            if (!File.Exists(fullPath))
+            {
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly not found at '{fullPath}'. Build the target project first (e.g. `dotnet build`) and point at its bin/<Configuration>/<TFM>/*.dll output.");
+            }
+
+            try
+            {
+                return handle.Context.LoadAdditionalAssembly(fullPath);
+            }
+            catch (AssemblyLoadFailedException)
+            {
+                // Already carries a safe, specific message (e.g. a same-name/different-path
+                // collision) - propagate as-is instead of re-wrapping with a generic one.
+                throw;
+            }
+            catch (BadImageFormatException ex)
+            {
+                throw new AssemblyLoadFailedException(
+                    $"'{fullPath}' is not a valid managed assembly, or targets an incompatible platform/bitness for this process.",
+                    ex);
+            }
+            catch (Exception ex)
+            {
+                throw new AssemblyLoadFailedException($"Failed to load migrations assembly '{fullPath}': {ex.Message}", ex);
+            }
+        }
     }
 
     /// <summary>Resolves the loaded assembly for <paramref name="targetName"/>.
@@ -318,8 +458,18 @@ public sealed class AssemblyLoaderService
         }
     }
 
+    // File systems are case-insensitive on Windows/macOS but case-sensitive on Linux. Using
+    // OrdinalIgnoreCase unconditionally would let a path that differs from an allowed root only
+    // in casing pass this containment check on Linux even though the OS itself would treat it as
+    // a distinct (and potentially unapproved) location - i.e. a casing-based bypass of the
+    // AllowedRoots restriction on arbitrary DLL loading.
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
     private static bool MatchesAnyRoot(string fullPath, IReadOnlyList<string> roots) =>
-        roots.Any(root => fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+        roots.Any(root => fullPath.StartsWith(root, PathComparison));
 
     private static IReadOnlyList<string> NormalizeRoots(IReadOnlyList<string> roots) =>
         roots

@@ -59,6 +59,7 @@ Inspects EF Core migration state for a `DbContext`.
 |---|---|---|
 | `contextName` | `string` | CLR type name of the `DbContext`, as returned by `list_contexts`. |
 | `connectionName?` | `string` | Logical connection name from the registry. If omitted, the active connection is used. |
+| `migrationsAssembly?` | `string` | Simple assembly name or DLL path to use as the EF Core migrations assembly, when migrations live in a different assembly than `contextName`'s `DbContext`. See "Split-assembly migration discovery" below. |
 
 Returns:
 
@@ -99,6 +100,7 @@ Produces an idempotent SQL migration script, scoped between two migration IDs.
 | `fromMigration?` | `string` | Migration ID to script from (exclusive). `null`/`0` means "from the beginning of history". |
 | `toMigration?` | `string` | Migration ID to script to (inclusive). Defaults to the latest migration. |
 | `idempotent?` | `boolean` | If `true`, generate a script safe to run on an already-applied database (`__EFMigrationsHistory`-guarded). Defaults to `true`. |
+| `migrationsAssembly?` | `string` | Simple assembly name or DLL path to use as the EF Core migrations assembly, when migrations live in a different assembly than `contextName`'s `DbContext`. See "Split-assembly migration discovery" below. |
 
 Returns:
 
@@ -133,6 +135,61 @@ Returns:
 - `IServiceCollection`/`DbContext` construction flows through the same `CreateContext` path
   used by `run_query`/`get_schema`, so migration inspection reuses the existing
   `ConnectionRegistry` and provider configuration — no new context factory.
+
+## Split-assembly migration discovery
+
+> **P1 #11a — implemented.** Code: [`AssemblyLoaderService.ResolveMigrationsAssembly`](../../src/DotnetEfCoreMcp.Server/AssemblyLoading/AssemblyLoaderService.cs) ·
+> [`TargetAssemblyLoadContext.LoadAdditionalAssembly`](../../src/DotnetEfCoreMcp.Server/AssemblyLoading/TargetAssemblyLoadContext.cs) ·
+> [`DbContextActivator`](../../src/DotnetEfCoreMcp.Server/DbContextDiscovery/DbContextActivator.cs) ·
+> Tests: [`Migrations/SplitAssemblyMigrationDiscoveryTests.cs`](../../tests/DotnetEfCoreMcp.Server.Tests/Migrations/SplitAssemblyMigrationDiscoveryTests.cs).
+
+Some solutions keep EF Core migrations in a different assembly than the `DbContext` type —
+for example `AuthDbContext` defined in `OPG.DAL` while its migrations live in `OPG.AuthApi`.
+By default, EF Core assumes the migrations live in the assembly that defines the `DbContext`
+(or the startup assembly), so `list_migrations`/`generate_migration_script` would otherwise
+report zero known migrations for these contexts. The optional `migrationsAssembly` parameter
+on both tools resolves this by configuring EF Core's `.MigrationsAssembly(Assembly)` (the
+type-safe, by-object overload — never the by-name `.MigrationsAssembly(string)` overload) with
+an explicitly resolved `Assembly` instance.
+
+**Resolution rules**, applied by `AssemblyLoaderService.ResolveMigrationsAssembly`:
+
+- If `migrationsAssembly` looks like a path (contains a directory separator or ends in
+  `.dll`), it is resolved as a file path, gated by the same `AssemblyLoader:AllowedRoots`
+  allow-list used by `load_assembly` — a path outside the configured roots is rejected with a
+  redacted error, never loaded.
+- Otherwise, it is treated as a simple assembly name and resolved as a *dependency of the
+  already-loaded context assembly* via that assembly's `AssemblyDependencyResolver`
+  (`.deps.json`) — i.e. the migrations assembly must be a package/project reference reachable
+  from the loaded target, the same way `Assembly.Load(AssemblyName)` would resolve it at
+  runtime for that target.
+- In both cases the resolved assembly is loaded into the *same* `AssemblyLoadContext` as the
+  active `load_assembly` target (via `TargetAssemblyLoadContext.LoadAdditionalAssembly`,
+  idempotent by simple name). This is required because EF Core associates a migration with its
+  `DbContext` by CLR `Type` reference equality (`[DbContext(typeof(MyContext))]`); if the
+  context type were loaded twice into two different load contexts, the migration would not be
+  recognized as belonging to it.
+- Failures (path outside `AllowedRoots`, file not found, or name not resolvable as a
+  dependency) surface as `McpException`s, matching every other assembly-loading failure path.
+  As with `load_assembly`, the message may echo back the offending path itself (so the caller
+  can see what was rejected and why), but never connection strings, parameter values, or other
+  provider-internal details — see [Connection management](./connections.md) for what "redacted"
+  means in this codebase.
+
+**Scope — supported ("reverse") direction only.** The currently loaded `load_assembly` target
+must be (or reference) the assembly containing the `DbContext` type; `migrationsAssembly` then
+points at the *separate* assembly holding the migrations. This matches the motivating
+`opg-systems` scenario: load `OPG.DAL` (or an assembly that references it) as the target, then
+pass `migrationsAssembly: "OPG.AuthApi"` (or its DLL path) to `list_migrations`/
+`generate_migration_script`. The reverse arrangement — loading the migrations assembly as the
+primary `load_assembly` target and expecting the `DbContext` type to be discovered from one of
+*its* dependencies — is **not** supported, because `DbContextScanner.FindDbContextTypes` only
+scans the single loaded target assembly, not its dependency graph. Point `load_assembly` (or
+`list_contexts`) at the assembly that actually defines the `DbContext` type.
+
+When `migrationsAssembly` is omitted, behavior is unchanged from before P1 #11a: EF Core's
+default migrations-assembly convention applies, and `list_migrations` faithfully reports zero
+known migrations for a context whose migrations live elsewhere.
 
 ## Script truncation
 

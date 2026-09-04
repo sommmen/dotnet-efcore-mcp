@@ -541,10 +541,11 @@ public sealed class EfCoreMcpTools(
     public Task<string> ListMigrations(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Simple name or DLL path of the assembly containing the migrations, when they live in a different assembly than the DbContext type. Omit when migrations are in the same assembly as the DbContext (the default). A simple name is resolved as a dependency of the currently loaded target assembly; a path is loaded explicitly, subject to the same AssemblyLoader:AllowedRoots restriction as load_assembly.")] string? migrationsAssembly = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("list_migrations", () => ListMigrationsCore(contextName, connectionName, cancellationToken));
+        => ExecuteAsync("list_migrations", () => ListMigrationsCore(contextName, connectionName, migrationsAssembly, cancellationToken));
 
-    private async Task<string> ListMigrationsCore(string contextName, string? connectionName, CancellationToken cancellationToken)
+    private async Task<string> ListMigrationsCore(string contextName, string? connectionName, string? migrationsAssembly, CancellationToken cancellationToken)
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry);
@@ -553,8 +554,9 @@ public sealed class EfCoreMcpTools(
             throw new McpException("Migration inspection is not permitted for production connections.");
         }
 
+        var resolvedMigrationsAssembly = ResolveMigrationsAssembly(migrationsAssembly);
         var provider = ResolveEffectiveProvider(contextType, entry);
-        using var context = CreateContext(contextType, entry);
+        using var context = CreateContext(contextType, entry, resolvedMigrationsAssembly);
         try
         {
             var result = await migrationInspector.InspectAsync(context, entry, provider, cancellationToken);
@@ -586,10 +588,11 @@ public sealed class EfCoreMcpTools(
         [Description("Migration ID to script from (exclusive). Omit or pass \"0\" to script from the beginning of history.")] string? fromMigration = null,
         [Description("Migration ID to script to (inclusive). Omit to script through the latest known migration.")] string? toMigration = null,
         [Description("If true (default), generate a script safe to run on an already-applied database (__EFMigrationsHistory-guarded). Not every provider supports idempotent scripts.")] bool idempotent = true,
+        [Description("Simple name or DLL path of the assembly containing the migrations, when they live in a different assembly than the DbContext type. Omit when migrations are in the same assembly as the DbContext (the default). A simple name is resolved as a dependency of the currently loaded target assembly; a path is loaded explicitly, subject to the same AssemblyLoader:AllowedRoots restriction as load_assembly.")] string? migrationsAssembly = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("generate_migration_script", () => GenerateMigrationScriptCore(contextName, connectionName, fromMigration, toMigration, idempotent, cancellationToken));
+        => ExecuteAsync("generate_migration_script", () => GenerateMigrationScriptCore(contextName, connectionName, fromMigration, toMigration, idempotent, migrationsAssembly, cancellationToken));
 
-    private async Task<string> GenerateMigrationScriptCore(string contextName, string? connectionName, string? fromMigration, string? toMigration, bool idempotent, CancellationToken cancellationToken)
+    private async Task<string> GenerateMigrationScriptCore(string contextName, string? connectionName, string? fromMigration, string? toMigration, bool idempotent, string? migrationsAssembly, CancellationToken cancellationToken)
     {
         if (!migrationsOptions.Enabled)
         {
@@ -615,7 +618,8 @@ public sealed class EfCoreMcpTools(
             throw new McpException("Migration script generation requires a ReadWrite connection.");
         }
 
-        using var context = CreateContext(contextType, entry);
+        var resolvedMigrationsAssembly = ResolveMigrationsAssembly(migrationsAssembly);
+        using var context = CreateContext(contextType, entry, resolvedMigrationsAssembly);
         try
         {
             var request = new MigrationScriptRequest { FromMigration = fromMigration, ToMigration = toMigration, Idempotent = idempotent };
@@ -1076,16 +1080,42 @@ public sealed class EfCoreMcpTools(
         return $"{reason} Choose one of these connection names: {choices}. Next step: call list_connections, then pass connectionName using a listed name.";
     }
 
-    private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry)
+    private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry, System.Reflection.Assembly? migrationsAssembly = null)
     {
         EnsureContextReachable(contextType, entry);
 
         var provider = ResolveEffectiveProvider(contextType, entry);
         try
         {
-            return DbContextActivator.CreateInstance(contextType, entry, provider);
+            return DbContextActivator.CreateInstance(contextType, entry, provider, migrationsAssembly);
         }
         catch (DbContextActivationException ex)
+        {
+            throw new McpException(ex.Message);
+        }
+    }
+
+    /// <summary>Resolves the optional <c>migrationsAssembly</c> tool parameter (a simple assembly
+    /// name or a path to a compiled DLL) into a loaded <see cref="System.Reflection.Assembly"/>
+    /// suitable for <see cref="DbContextActivator.CreateInstance"/>'s <c>migrationsAssembly</c>
+    /// parameter - used by <see cref="ListMigrations"/> and
+    /// <see cref="GenerateMigrationScript"/> to support migrations that live in a different
+    /// assembly than the <see cref="Microsoft.EntityFrameworkCore.DbContext"/> type. Returns
+    /// <c>null</c> unchanged when <paramref name="migrationsAssembly"/> is omitted, preserving the
+    /// existing same-assembly behavior.</summary>
+    private System.Reflection.Assembly? ResolveMigrationsAssembly(string? migrationsAssembly)
+    {
+        if (string.IsNullOrWhiteSpace(migrationsAssembly))
+        {
+            return null;
+        }
+
+        var handle = RequireLoadedAssembly();
+        try
+        {
+            return assemblyLoader.ResolveMigrationsAssembly(handle, migrationsAssembly);
+        }
+        catch (AssemblyLoadFailedException ex)
         {
             throw new McpException(ex.Message);
         }

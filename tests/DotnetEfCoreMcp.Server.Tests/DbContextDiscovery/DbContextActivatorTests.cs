@@ -52,6 +52,41 @@ public sealed class DbContextActivatorTests
     }
 
     [Fact]
+    public void CreateInstance_UnsupportedShapeContextWithMigrationsAssembly_ReportsNoSupportedConstructionPath()
+    {
+        // Regression test for a review finding: the migrationsAssembly-specific guard used to fire
+        // for *any* non-options constructor shape, including Unsupported (no options ctor, no
+        // design-time factory, no parameterless ctor). That produced a misleading message
+        // ("uses a design-time factory or parameterless constructor") for a context that has
+        // neither - masking the real problem, which is that the context has no supported
+        // construction path at all regardless of migrationsAssembly.
+        using var db = new SqliteTestDatabase();
+
+        var exception = Assert.Throws<DbContextActivationException>(() =>
+            DbContextActivator.CreateInstance(
+                typeof(UnsupportedShapeDbContext),
+                db.ToRegistryEntry(),
+                DatabaseProvider.Sqlite,
+                migrationsAssembly: typeof(UnsupportedShapeDbContext).Assembly));
+
+        Assert.Contains("no supported construction path", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("design-time factory or parameterless constructor", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A DbContext with none of the four constructible shapes
+    /// (<see cref="DbContextConstructorShape.GenericOptions"/>, <see cref="DbContextConstructorShape.NonGenericOptions"/>,
+    /// <see cref="DbContextConstructorShape.DesignTimeFactory"/>, <see cref="DbContextConstructorShape.Parameterless"/>) -
+    /// its only constructor takes an unrelated parameter, so <see cref="DbContextActivator.DetermineConstructorShape"/>
+    /// resolves it to <see cref="DbContextConstructorShape.Unsupported"/>.</summary>
+    private sealed class UnsupportedShapeDbContext : DbContext
+    {
+        public UnsupportedShapeDbContext(string unrelatedParameter)
+        {
+            _ = unrelatedParameter;
+        }
+    }
+
+    [Fact]
     public void CreateInstance_ConstructedContext_CanActuallyReadAndWriteTheRegisteredDatabase()
     {
         using var db = new SqliteTestDatabase();

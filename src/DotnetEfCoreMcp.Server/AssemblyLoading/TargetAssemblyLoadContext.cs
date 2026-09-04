@@ -26,6 +26,12 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     // dependency's own dependencies) while another thread is concurrently probing the target.
     private readonly System.Collections.Concurrent.ConcurrentBag<string> _loadedAssemblyPaths = new();
 
+    // Simple name -> the exact path it was loaded from, used by LoadAdditionalAssembly to detect
+    // when a caller requests a different DLL path that happens to share a simple name with
+    // something already loaded into this context (e.g. a same-named assembly at a different
+    // location) so that case can fail fast instead of silently substituting the wrong assembly.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadedAssemblyPathsByName = new(StringComparer.OrdinalIgnoreCase);
+
     public TargetAssemblyLoadContext(string mainAssemblyPath, string name)
         : base(name, isCollectible: true)
     {
@@ -67,10 +73,65 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         }
 
         _loadedAssemblyPaths.Add(assemblyPath);
+        if (assembly.GetName().Name is { } loadedSimpleName)
+        {
+            // TryAdd (not the indexer) so the *first* path a simple name was loaded from is the
+            // one collision detection compares against for the lifetime of this context. Using
+            // the indexer here would let any later load of the same simple name (e.g. a
+            // dependency resolved a second time via Load() below) silently overwrite the
+            // recorded path, defeating LoadAdditionalAssembly's same-name/different-path check.
+            _loadedAssemblyPathsByName.TryAdd(loadedSimpleName, assemblyPath);
+        }
+
         return assembly;
     }
 
     public Assembly LoadMainAssembly(string assemblyPath) => LoadAssemblyFromStream(assemblyPath);
+
+    /// <summary>Loads an assembly other than the main target assembly into this same context by
+    /// explicit file path - used to resolve a <c>migrationsAssembly</c> parameter that names a DLL
+    /// not already a resolvable dependency of the main target (see
+    /// <see cref="AssemblyLoaderService.ResolveMigrationsAssembly"/>). Idempotent: if an assembly
+    /// with the same simple name was already loaded into this context from the *same* path (e.g.
+    /// because it's a dependency of the main target, or a previous call already loaded it), the
+    /// existing instance is returned instead of loading a second, distinctly-identified copy - EF
+    /// Core matches migrations to a <see cref="DbContext"/> by <see cref="Type"/> reference
+    /// equality, so a second copy of the same assembly would silently fail to associate. If the
+    /// simple name instead collides with an assembly already loaded from a *different* path,
+    /// silently returning that unrelated assembly could produce wrong migrations, so this throws
+    /// instead.</summary>
+    /// <exception cref="AssemblyLoadFailedException">A same-named assembly is already loaded into
+    /// this context from a different path than <paramref name="assemblyPath"/>.</exception>
+    // File systems are case-insensitive on Windows/macOS but case-sensitive on Linux. Comparing
+    // paths with OrdinalIgnoreCase unconditionally would treat two distinct files on Linux that
+    // differ only in casing as "the same" path, silently substituting the wrong assembly instead
+    // of the fail-fast collision error below.
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+    public Assembly LoadAdditionalAssembly(string assemblyPath)
+    {
+        var simpleName = AssemblyName.GetAssemblyName(assemblyPath).Name;
+        if (simpleName is not null && _loadedAssemblyPathsByName.TryGetValue(simpleName, out var loadedFromPath))
+        {
+            if (!string.Equals(loadedFromPath, assemblyPath, PathComparison))
+            {
+                throw new AssemblyLoadFailedException(
+                    $"An assembly named '{simpleName}' is already loaded into this target from a different path ('{loadedFromPath}'). " +
+                    $"It cannot also be loaded from '{assemblyPath}' - use a distinctly-named assembly, or ensure the migrations assembly and the main target assembly's dependencies do not collide.");
+            }
+
+            var alreadyLoaded = Assemblies.FirstOrDefault(a => string.Equals(a.GetName().Name, simpleName, StringComparison.OrdinalIgnoreCase));
+            if (alreadyLoaded is not null)
+            {
+                return alreadyLoaded;
+            }
+        }
+
+        return LoadAssemblyFromStream(assemblyPath);
+    }
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
