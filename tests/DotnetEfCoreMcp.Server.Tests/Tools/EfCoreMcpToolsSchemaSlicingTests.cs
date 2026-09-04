@@ -200,6 +200,17 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
     }
 
     [Fact]
+    public void SearchSchema_DeclaresContextNameAsOptional()
+    {
+        var parameter = typeof(EfCoreMcpTools)
+            .GetMethod(nameof(EfCoreMcpTools.SearchSchema), new[] { typeof(string), typeof(string), typeof(int?) })?
+            .GetParameters()[0];
+
+        Assert.NotNull(parameter);
+        Assert.True(parameter!.HasDefaultValue, "The MCP tool metadata should mark contextName as optional so single-context assemblies can omit it.");
+    }
+
+    [Fact]
     public void SearchSchema_WhenSchemaWasNeverBuilt_ThrowsWithoutConstructingAContext()
     {
         var tools = CreateTools();
