@@ -329,6 +329,36 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void LoadAdditionalAssembly_WhenRequestedPathDiffersOnlyByCasingFromLoadedPath_BehaviorMatchesPlatformCaseSensitivity()
+    {
+        // Regression test for a review finding: the "same path as already loaded" check in
+        // LoadAdditionalAssembly compared paths with StringComparison.OrdinalIgnoreCase
+        // unconditionally. Windows/macOS file systems are case-insensitive, so a path differing
+        // only in casing from the already-loaded path IS the same file there and must return the
+        // existing instance. Linux file systems are case-sensitive, so the same casing difference
+        // refers to a distinct (non-existent, in this test) file and must fail closed with the
+        // collision error instead of silently substituting the already-loaded assembly.
+        var context = new TargetAssemblyLoadContext(FixturePaths.SplitContextAppDllPath, "reflection-probe");
+        context.LoadAdditionalAssembly(FixturePaths.SplitContextAppDllPath);
+
+        var differentlyCasedPath = FixturePaths.SplitContextAppDllPath == FixturePaths.SplitContextAppDllPath.ToUpperInvariant()
+            ? FixturePaths.SplitContextAppDllPath.ToLowerInvariant()
+            : FixturePaths.SplitContextAppDllPath.ToUpperInvariant();
+
+        if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+        {
+            var resolved = context.LoadAdditionalAssembly(differentlyCasedPath);
+            Assert.Equal("SplitContextApp", resolved.GetName().Name);
+        }
+        else
+        {
+            var exception = Assert.Throws<AssemblyLoadFailedException>(() =>
+                context.LoadAdditionalAssembly(differentlyCasedPath));
+            Assert.Contains("already loaded into this target from a different path", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
     public void ResolveMigrationsAssembly_WithInvalidPathCharacters_ThrowsRedactedErrorInsteadOfRawArgumentException()
     {
         // Regression test for a review finding: the path branch of ResolveMigrationsAssembly

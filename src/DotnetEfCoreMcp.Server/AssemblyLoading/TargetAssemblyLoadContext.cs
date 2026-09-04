@@ -102,12 +102,21 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     /// instead.</summary>
     /// <exception cref="AssemblyLoadFailedException">A same-named assembly is already loaded into
     /// this context from a different path than <paramref name="assemblyPath"/>.</exception>
+    // File systems are case-insensitive on Windows/macOS but case-sensitive on Linux. Comparing
+    // paths with OrdinalIgnoreCase unconditionally would treat two distinct files on Linux that
+    // differ only in casing as "the same" path, silently substituting the wrong assembly instead
+    // of the fail-fast collision error below.
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
     public Assembly LoadAdditionalAssembly(string assemblyPath)
     {
         var simpleName = AssemblyName.GetAssemblyName(assemblyPath).Name;
         if (simpleName is not null && _loadedAssemblyPathsByName.TryGetValue(simpleName, out var loadedFromPath))
         {
-            if (!string.Equals(loadedFromPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(loadedFromPath, assemblyPath, PathComparison))
             {
                 throw new AssemblyLoadFailedException(
                     $"An assembly named '{simpleName}' is already loaded into this target from a different path ('{loadedFromPath}'). " +
