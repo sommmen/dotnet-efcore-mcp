@@ -144,6 +144,81 @@ public sealed class AssemblyLoaderService
         return handle;
     }
 
+    /// <summary>Resolves <paramref name="migrationsAssembly"/> - a simple assembly name (e.g.
+    /// <c>"OPG.AuthApi"</c>) or a path to a compiled DLL - into an <see cref="Assembly"/> loaded
+    /// into the same <see cref="System.Runtime.Loader.AssemblyLoadContext"/> as
+    /// <paramref name="handle"/>'s main target assembly. Loading into the same context is required
+    /// so EF Core's migration-to-<see cref="Microsoft.EntityFrameworkCore.DbContext"/> matching
+    /// (which compares <see cref="Type"/> references, not names) succeeds regardless of whether the
+    /// migrations live alongside the context or in a separate assembly.
+    ///
+    /// A simple name is resolved the same way the loaded target's own dependencies are (via the
+    /// target's <c>AssemblyDependencyResolver</c>/<c>TargetDependencyProbe</c> against its own
+    /// .deps.json) - this covers the common case where the migrations assembly is already a
+    /// project or package reference of the loaded target (e.g. a web API project that references a
+    /// shared data-access library and is itself the assembly passed to <see cref="Load"/>). A value
+    /// that looks like a path is instead loaded explicitly by file, subject to the same
+    /// <c>AssemblyLoader:AllowedRoots</c> containment check as <see cref="Load"/>, since it is
+    /// another arbitrary-file-load primitive.</summary>
+    /// <exception cref="AssemblyLoadFailedException">
+    /// The name could not be resolved as a dependency of the loaded target, the path is outside the
+    /// configured allowed roots, or the file does not exist or fails to load.
+    /// </exception>
+    public Assembly ResolveMigrationsAssembly(LoadedAssemblyHandle handle, string migrationsAssembly)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentException.ThrowIfNullOrWhiteSpace(migrationsAssembly);
+
+        var looksLikePath =
+            migrationsAssembly.Contains(Path.DirectorySeparatorChar) ||
+            migrationsAssembly.Contains(Path.AltDirectorySeparatorChar) ||
+            migrationsAssembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+
+        if (!looksLikePath)
+        {
+            try
+            {
+                return handle.Context.LoadFromAssemblyName(new AssemblyName(migrationsAssembly));
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+            {
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly '{migrationsAssembly}' could not be resolved as a dependency of the currently loaded target assembly ('{handle.AssemblyPath}'). " +
+                    "If it is not a project or package reference of the loaded assembly, pass its compiled DLL path instead.",
+                    ex);
+            }
+        }
+
+        var fullPath = Path.GetFullPath(migrationsAssembly);
+
+        if (_allowedRoots.Count > 0 && !_allowedRoots.Any(root => fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new AssemblyLoadFailedException(
+                $"Migrations assembly path '{fullPath}' is outside the configured allowed roots. Configure `AssemblyLoader:AllowedRoots` to include this location, or point at an assembly under an already-allowed root.");
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            throw new AssemblyLoadFailedException(
+                $"Migrations assembly not found at '{fullPath}'. Build the target project first (e.g. `dotnet build`) and point at its bin/<Configuration>/<TFM>/*.dll output.");
+        }
+
+        try
+        {
+            return handle.Context.LoadAdditionalAssembly(fullPath);
+        }
+        catch (BadImageFormatException ex)
+        {
+            throw new AssemblyLoadFailedException(
+                $"'{fullPath}' is not a valid managed assembly, or targets an incompatible platform/bitness for this process.",
+                ex);
+        }
+        catch (Exception ex)
+        {
+            throw new AssemblyLoadFailedException($"Failed to load migrations assembly '{fullPath}': {ex.Message}", ex);
+        }
+    }
+
     /// <summary>Returns <c>true</c> if the currently loaded assembly's on-disk file has been
     /// modified (e.g. by a rebuild) since it was loaded, meaning a call to <see cref="Load"/> with
     /// the same path would pick up newer code.</summary>

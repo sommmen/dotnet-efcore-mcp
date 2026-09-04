@@ -63,21 +63,41 @@ public static class DbContextActivator
     /// either the connection's explicitly configured provider or one inferred from the target
     /// assembly's EF Core provider package reference. Resolution happens before this call; this
     /// method never infers on its own.</param>
-    public static DbContext CreateInstance(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider)
+    /// <param name="migrationsAssembly">When non-null, the EF Core relational
+    /// <c>MigrationsAssembly</c> option is configured to this assembly instead of
+    /// <paramref name="contextType"/>'s own assembly - used to support migrations that live in a
+    /// separate assembly from the <see cref="DbContext"/> type (e.g. a web API project referencing
+    /// a shared data-access library). Passed as a resolved <see cref="Assembly"/> object (never a
+    /// name/path string) so EF Core never triggers its own <c>Assembly.Load</c> - the assembly must
+    /// already be loaded into the same <see cref="System.Runtime.Loader.AssemblyLoadContext"/> as
+    /// <paramref name="contextType"/>, or migration discovery will silently find nothing (EF Core
+    /// matches migrations to a context by <see cref="Type"/> reference equality). Only supported
+    /// for the <see cref="DbContextConstructorShape.GenericOptions"/> and
+    /// <see cref="DbContextConstructorShape.NonGenericOptions"/> construction paths, since the
+    /// design-time-factory and parameterless paths configure their own options internally with no
+    /// supported way to override just the migrations assembly afterwards.</param>
+    public static DbContext CreateInstance(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Assembly? migrationsAssembly = null)
     {
         var kind = DetermineConstructorShape(contextType);
         if (kind == DbContextConstructorShape.GenericOptions)
         {
             var genericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions<>).MakeGenericType(contextType)], modifiers: null)!;
-            var options = CreateGenericOptions(contextType, entry, provider);
+            var options = CreateGenericOptions(contextType, entry, provider, migrationsAssembly: migrationsAssembly);
             return Invoke(genericOptionsCtor, contextType, [options]);
         }
 
         if (kind == DbContextConstructorShape.NonGenericOptions)
         {
             var nonGenericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions)], modifiers: null)!;
-            var options = BuildOptions(contextType, entry, provider);
+            var options = BuildOptions(contextType, entry, provider, migrationsAssembly: migrationsAssembly);
             return Invoke(nonGenericOptionsCtor, contextType, [options]);
+        }
+
+        if (migrationsAssembly is not null)
+        {
+            throw new DbContextActivationException(
+                $"'{contextType.FullName}' cannot be activated with a separate migrations assembly because it uses a design-time factory or parameterless constructor. " +
+                "Only DbContext types with a DbContextOptions<T> or DbContextOptions constructor support a migrations assembly override.");
         }
 
         var factoryType = DbContextScanner.FindDesignTimeFactoryType(contextType);
@@ -146,11 +166,12 @@ public static class DbContextActivator
     /// instead, which returns the non-generic type that shape's constructor actually requires.</summary>
     /// <param name="configureAdditional">Optional extra configuration applied after the provider is
     /// set up, e.g. <c>b => b.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)</c>.</param>
-    public static object CreateGenericOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Action<DbContextOptionsBuilder>? configureAdditional = null)
+    /// <param name="migrationsAssembly">See <see cref="CreateInstance"/>.</param>
+    public static object CreateGenericOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Action<DbContextOptionsBuilder>? configureAdditional = null, Assembly? migrationsAssembly = null)
     {
         var builderType = typeof(DbContextOptionsBuilder<>).MakeGenericType(contextType);
         var builder = (DbContextOptionsBuilder)Activator.CreateInstance(builderType)!;
-        ConfigureProvider(builder, entry, provider);
+        ConfigureProvider(builder, entry, provider, migrationsAssembly);
         configureAdditional?.Invoke(builder);
 
         // DbContextOptionsBuilder<TContext> re-declares `Options` with `new` to narrow its return
@@ -205,26 +226,39 @@ public static class DbContextActivator
     /// server-built options to layer <paramref name="configureAdditional"/> onto.</summary>
     /// <param name="configureAdditional">Optional extra configuration applied after the provider is
     /// set up, e.g. <c>b => b.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)</c>.</param>
-    public static DbContextOptions BuildOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Action<DbContextOptionsBuilder>? configureAdditional = null)
+    /// <param name="migrationsAssembly">See <see cref="CreateInstance"/>.</param>
+    public static DbContextOptions BuildOptions(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Action<DbContextOptionsBuilder>? configureAdditional = null, Assembly? migrationsAssembly = null)
     {
         var builder = new DbContextOptionsBuilder();
-        ConfigureProvider(builder, entry, provider);
+        ConfigureProvider(builder, entry, provider, migrationsAssembly);
         configureAdditional?.Invoke(builder);
         return builder.Options;
     }
 
-    private static void ConfigureProvider(DbContextOptionsBuilder builder, ConnectionRegistryEntry entry, DatabaseProvider provider)
+    private static void ConfigureProvider(DbContextOptionsBuilder builder, ConnectionRegistryEntry entry, DatabaseProvider provider, Assembly? migrationsAssembly = null)
     {
         switch (provider)
         {
             case DatabaseProvider.Sqlite:
-                builder.UseSqlite(entry.ConnectionString, o => o.CommandTimeout(entry.CommandTimeoutSeconds));
+                builder.UseSqlite(entry.ConnectionString, o =>
+                {
+                    o.CommandTimeout(entry.CommandTimeoutSeconds);
+                    if (migrationsAssembly is not null) o.MigrationsAssembly(migrationsAssembly);
+                });
                 break;
             case DatabaseProvider.SqlServer:
-                builder.UseSqlServer(entry.ConnectionString, o => o.CommandTimeout(entry.CommandTimeoutSeconds));
+                builder.UseSqlServer(entry.ConnectionString, o =>
+                {
+                    o.CommandTimeout(entry.CommandTimeoutSeconds);
+                    if (migrationsAssembly is not null) o.MigrationsAssembly(migrationsAssembly);
+                });
                 break;
             case DatabaseProvider.PostgreSql:
-                builder.UseNpgsql(entry.ConnectionString, o => o.CommandTimeout(entry.CommandTimeoutSeconds));
+                builder.UseNpgsql(entry.ConnectionString, o =>
+                {
+                    o.CommandTimeout(entry.CommandTimeoutSeconds);
+                    if (migrationsAssembly is not null) o.MigrationsAssembly(migrationsAssembly);
+                });
                 break;
             default:
                 throw new DbContextActivationException($"Provider '{provider}' is not supported.");

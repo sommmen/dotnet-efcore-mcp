@@ -16,6 +16,16 @@ public static class FixturePaths
 
     public static string IdentityAppDllPath => GetFixtureDllPath("IdentityApp", "IdentityApp.dll");
 
+    /// <summary>The DbContext-only half of the split-assembly fixture pair: contains
+    /// <c>SplitContextApp.SplitDbContext</c> but no migrations.</summary>
+    public static string SplitContextAppDllPath => GetFixtureDllPath("SplitContextApp", "SplitContextApp.dll");
+
+    /// <summary>The migrations-only half of the split-assembly fixture pair: contains an EF Core
+    /// migration for <c>SplitContextApp.SplitDbContext</c> (via ProjectReference) but no DbContext
+    /// of its own, simulating scenarios like <c>AuthDbContext</c> in <c>OPG.DAL</c> with migrations
+    /// in <c>OPG.AuthApi</c>.</summary>
+    public static string SplitMigrationsAppDllPath => GetFixtureDllPath("SplitMigrationsApp", "SplitMigrationsApp.dll");
+
     private static string GetFixtureDllPath(string fixtureName, string assemblyFileName)
     {
         foreach (var config in new[] { "Debug", "Release" })

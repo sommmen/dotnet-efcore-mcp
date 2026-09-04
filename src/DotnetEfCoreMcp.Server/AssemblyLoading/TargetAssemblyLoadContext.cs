@@ -72,6 +72,22 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
 
     public Assembly LoadMainAssembly(string assemblyPath) => LoadAssemblyFromStream(assemblyPath);
 
+    /// <summary>Loads an assembly other than the main target assembly into this same context by
+    /// explicit file path - used to resolve a <c>migrationsAssembly</c> parameter that names a DLL
+    /// not already a resolvable dependency of the main target (see
+    /// <see cref="AssemblyLoaderService.ResolveMigrationsAssembly"/>). Idempotent: if an assembly
+    /// with the same simple name is already loaded into this context (e.g. because it's a
+    /// dependency of the main target, or a previous call already loaded it), the existing instance
+    /// is returned instead of loading a second, distinctly-identitied copy - EF Core matches
+    /// migrations to a <see cref="DbContext"/> by <see cref="Type"/> reference equality, so a
+    /// second copy of the same assembly would silently fail to associate.</summary>
+    public Assembly LoadAdditionalAssembly(string assemblyPath)
+    {
+        var simpleName = AssemblyName.GetAssemblyName(assemblyPath).Name;
+        var alreadyLoaded = Assemblies.FirstOrDefault(a => string.Equals(a.GetName().Name, simpleName, StringComparison.Ordinal));
+        return alreadyLoaded ?? LoadAssemblyFromStream(assemblyPath);
+    }
+
     protected override Assembly? Load(AssemblyName assemblyName)
     {
         if (assemblyName.Name is not null && SharedFrameworkAssemblyNames.Value.Contains(assemblyName.Name))
