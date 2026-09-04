@@ -56,19 +56,29 @@ and is capped at 25. The response always reports `totalMatchCount` (before the c
 
 Both operations are implemented in `Schema/SchemaSlicer.cs` (`FindEntity`, `Search`) and route the
 cached schema through `ISchemaAccessPolicy` (`Schema/SchemaAccessPolicy.cs`) before entity lookup
-or matching. P0 #6 supplies no access policy — the default `NoOpSchemaAccessPolicy` is a no-op —
-but this seam lets a later evaluator (P0 #9) filter entities, properties, and relationships without
-altering either tool's public request or response shape. `Schema/SchemaSlicerTests.cs` and
-`Tools/EfCoreMcpToolsSchemaSlicingTests.cs` cover cache-only execution (including no context
-construction/database access), exact slice fidelity and unknown-name validation, search
-matching/order, default and maximum caps with `truncated`, invalid arguments, and forwarding
-through the policy seam.
+or matching. `NoOpSchemaAccessPolicy` remains the default when no connection is active. Once a
+connection is resolved, `ConnectionSchemaAccessPolicy` (P0 #9, see below) filters entities,
+properties, and relationships without altering either tool's public request or response shape.
+`Schema/SchemaSlicerTests.cs` and `Tools/EfCoreMcpToolsSchemaSlicingTests.cs` cover cache-only
+execution (including no context construction/database access), exact slice fidelity and
+unknown-name validation, search matching/order, default and maximum caps with `truncated`, invalid
+arguments, and forwarding through the policy seam.
 
-## Proposed open work — P0 #9: policy-filtered schema discovery
+## P0 #9: policy-filtered schema discovery
 
-Apply the per-connection `AccessPolicy` before any schema response is formed. `list_contexts` returns only contexts permitted for that connection. `get_schema`, `get_entity_schema`, and `search_schema` first authorize the requested context, then select only permitted entities; relationships, navigations, foreign keys, and property metadata that point to excluded entities are omitted rather than represented by dangling references. Unknown and denied context/entity requests use the same non-enumerating denial path, so cached schema data cannot reveal whether a denied name exists.
+The per-connection `AccessPolicy` (see [Connection management](./connections.md)) is applied
+before any schema response is formed. `list_contexts` returns only contexts reachable for the
+active connection. `get_schema`, `get_entity_schema`, and `search_schema` first authorize the
+requested context (`EnsureContextReachable`), then route the cached `SchemaDto` through a
+freshly-constructed `ConnectionSchemaAccessPolicy` (implementing `ISchemaAccessPolicy`) that
+selects only permitted entities; relationships, navigations, foreign keys, and property metadata
+that point to excluded entities are omitted rather than represented by dangling references. The
+shared `SchemaCache` entry is never mutated — the policy projects a fresh, filtered `SchemaDto`
+per request. Unknown and denied context/entity requests use the same non-enumerating denial path
+(`AccessPolicyDeniedException`/a "not found" result whose "known entities" hint is drawn only from
+the policy-filtered view), so cached schema data cannot reveal whether a denied name exists.
 
-Filtering is a view over the existing cache: it neither constructs a `DbContext` nor mutates a shared cached `SchemaDocument`. Apply filtering before search matching, result caps, truncation calculation, and entity lookup, so excluded names cannot influence matches, counts, or ordering. Focused tests prove a mixed-policy connection exposes only allowed contexts/entities and internally consistent relationships; denied/unknown requests do not disclose model names; and a broader allow selector wins over a conflicting deny selector.
+Filtering is a view over the existing cache: it neither constructs a `DbContext` nor mutates a shared cached `SchemaDocument`. `SchemaSlicer.FindEntity`/`Search` apply the policy before entity lookup, search matching, result caps, and truncation calculation, so excluded names cannot influence matches, counts, or ordering. Focused tests (`Schema/ConnectionSchemaAccessPolicyTests.cs`, `Tools/EfCoreMcpToolsAccessPolicyTests.cs`) prove a mixed-policy connection exposes only allowed contexts/entities and internally consistent relationships; denied/unknown requests do not disclose model names; and a broader allow selector wins over a conflicting deny selector.
 
 ## Proposed open work — P1 #10: enrich schema metadata
 

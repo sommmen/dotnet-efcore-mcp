@@ -144,6 +144,8 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
                 ["Connections:SchemaTests:Provider"] = "Sqlite",
                 ["Connections:SchemaTests:AccessMode"] = "ReadOnly",
                 ["Connections:SchemaTests:Environment"] = "Development",
+                ["Connections:SchemaTests:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
+                ["Connections:SchemaTests:AccessPolicy:AllowContexts:1"] = "SampleApp.FactoryOnlyDbContext",
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();

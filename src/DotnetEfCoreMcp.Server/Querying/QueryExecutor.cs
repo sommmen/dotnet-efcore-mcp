@@ -116,7 +116,12 @@ public sealed class QueryExecutor
         }
     }
 
-    private static (string Root, string Expression) NormalizeAndGetRoot(string? query, int maxQueryLength)
+    /// <summary>Trims and validates a raw LINQPad-style query and extracts the leading DbSet property
+    /// name it is rooted at. Made <c>internal</c> (rather than <c>private</c>) so
+    /// <c>EfCoreMcpTools.RunQueryCore</c> can extract the same root name to enforce entity-level
+    /// access policy (P0 #9) before either query engine dispatches, without duplicating this parsing
+    /// logic.</summary>
+    internal static (string Root, string Expression) NormalizeAndGetRoot(string? query, int maxQueryLength)
     {
         var value = query?.Trim();
         if (maxQueryLength <= 0) throw new InvalidOperationException("Query execution option MaxQueryLength must be positive.");

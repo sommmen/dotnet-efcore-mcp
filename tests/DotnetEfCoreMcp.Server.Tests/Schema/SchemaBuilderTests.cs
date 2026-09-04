@@ -101,6 +101,13 @@ public sealed class SchemaBuilderTests
             Name = "Unreachable",
             Provider = Server.Connections.DatabaseProvider.Sqlite,
             ConnectionString = $"Data Source={neverCreatedPath}",
+            AccessPolicy = new Server.Connections.ConnectionAccessPolicy
+            {
+                AllowContexts = [],
+                DenyContexts = [],
+                AllowEntities = [],
+                DenyEntities = [],
+            },
         };
 
         using var context = DbContextActivator.CreateInstance(descriptor.ClrType, entry, DatabaseProvider.Sqlite);
