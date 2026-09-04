@@ -178,16 +178,51 @@ Concretely:
 - The one-shot `QueryHost/Program.cs` path is **kept** unmodified as the default entry point;
   the persistent loop is a **new command-line mode** (e.g. `QueryHost.dll --persistent`) so
   `OutOfProcessRoslynQueryExecutor`'s existing one-shot callers are entirely unaffected.
+- **Self-terminating idle timeout (defense in depth)**: the persistent worker does not rely
+  solely on the pool manager to retire it. It tracks its own last-activity timestamp and exits
+  on its own (e.g. after 2× `QueryExecution:PoolIdleTimeoutSeconds`, so the pool manager's own
+  idle recycling — §4.3 — is normally the one that fires first) if it receives no request in
+  that window. This protects host OS resources even if the parent MCP server process crashes,
+  is killed without a clean shutdown, or otherwise loses track of a worker it spawned — an
+  orphaned pooled `dotnet` process must never be able to sit around indefinitely.
 
 ### 4.3 Pool manager (new type, e.g. `QueryHostPool` in `DotnetEfCoreMcp.Server/Querying`)
 
 - **Keying**: one sub-pool per `(target assembly full path, target assembly last-write-time
   UTC)`. A rebuild of the target app naturally invalidates its sub-pool key, so a stale worker
-  is never handed a query against a newer build.
-- **Sizing**: small and bounded — e.g. 1 warm idle worker per key by default, configurable max
-  (e.g. `QueryExecution:PoolMaxWorkersPerTarget`, default 1–2). This is a *latency-hiding* pool,
-  not a concurrency-scaling pool; the goal is "the next query doesn't pay cold-start," not "serve
-  N queries in parallel."
+  is never handed a query against a newer build. Because the key includes the *full absolute
+  path*, this also does the right thing across git worktrees or multiple checkouts of the same
+  repo — each worktree's target assembly resolves to a different path and therefore a distinct,
+  non-shared sub-pool; there is no risk of a worker warmed for one worktree's build being handed
+  a query meant for another's.
+- **Sizing and a global cap**: bounded **per key** (e.g. 1 warm idle worker per key by default,
+  configurable via `QueryExecution:PoolMaxWorkersPerTarget`, default 1–2) *and* bounded
+  **globally across all keys** within one server process (e.g.
+  `QueryExecution:PoolMaxTotalWorkers`, default e.g. 8). The per-key cap alone is not enough:
+  a single long-running MCP server session that touches many distinct target apps (or many
+  stale builds of the same app, each with a different last-write-time key) could otherwise
+  accumulate an unbounded number of idle warm processes over time. This is a *latency-hiding*
+  pool, not a concurrency-scaling pool; the goal is "the next query doesn't pay cold-start," not
+  "serve N queries in parallel."
+- **Backpressure when the global cap is reached**: a checkout that would exceed
+  `PoolMaxTotalWorkers` does **not** fail the query. It falls back to spawning a plain
+  non-pooled one-shot worker for that call (same behavior as today's `OutOfProcess` mode) and,
+  if needed, evicts the least-recently-used idle worker from another key to make room for a
+  *new* pooled worker the next time that key is used. Denying or queuing the caller's request
+  outright would turn a latency optimization into a new failure mode, which defeats the point;
+  degrading to today's baseline latency for the overflow case is always safe.
+- **Multi-instance / multi-worktree deployments**: the pool lives entirely in-process within one
+  MCP server instance and has no cross-process coordination. If multiple MCP server instances
+  run concurrently against the same or different target apps — a realistic scenario for this
+  project, since parallel agent sessions are commonly run from separate git worktrees, each
+  starting its own MCP server — each instance maintains its **own independent pool** up to its
+  own `PoolMaxTotalWorkers`. Total system-wide pooled-worker count is therefore
+  `PoolMaxTotalWorkers × (number of concurrently running MCP server instances)`, not a
+  system-wide bound. The default `PoolMaxTotalWorkers` should stay conservative (e.g. single
+  digits) specifically because of this multiplicative effect; a true system-wide bound (e.g. a
+  named OS semaphore or lock file shared across instances) is a possible future enhancement but
+  is out of scope for the initial rollout — call this out explicitly wherever
+  `PoolMaxTotalWorkers` is documented so operators running several instances size it accordingly.
 - **Checkout/checkin**: `ExecuteAsync` checks out an idle warm worker if one exists for the key
   (send request, await response — now ~80ms instead of ~1.8s); if none is idle, spawn a **new**
   persistent worker on demand (first query on that worker pays the same ~1.8–3s cold cost as
@@ -210,11 +245,16 @@ Concretely:
 
 1. Ship behind `QueryExecution:Mode=Pooled`, default `Auto` unchanged (still `OutOfProcess`).
 2. Add config: `QueryExecution:PoolMaxWorkersPerTarget` (default small, e.g. 2),
+   `QueryExecution:PoolMaxTotalWorkers` (default small, e.g. 8 — see the global-cap and
+   multi-instance notes in §4.3; operators running several MCP server instances/worktrees
+   concurrently should size this down accordingly),
    `QueryExecution:PoolMaxQueriesPerWorker` (default e.g. 50),
-   `QueryExecution:PoolIdleTimeoutSeconds` (default e.g. 300).
+   `QueryExecution:PoolIdleTimeoutSeconds` (default e.g. 300; the worker's own self-terminating
+   idle timeout, §4.2, defaults to 2× this value).
 3. Document in [Query execution](query-execution.md) alongside the existing `Mode` table, with an
-   explicit callout of the isolation tradeoffs from §3 above so operators can make an informed
-   choice.
+   explicit callout of the isolation tradeoffs from §3 above, the global/per-instance worker
+   caps, and the multi-instance (multiple concurrent MCP servers/worktrees) caveat from §4.3, so
+   operators can make an informed choice.
 4. Once field experience (or CI soak testing) shows recycling/timeout handles hangs and memory
    growth acceptably, consider flipping `Auto` to prefer `Pooled` — a later, separate decision,
    not part of this initial rollout.
@@ -238,6 +278,16 @@ Extend the pattern already used in
   recycle boundary.
 - **Target-rebuild invalidation**: after "rebuilding" the target assembly (touching its
   last-write time), the next call does not reuse a worker warmed against the old build.
+- **Worktree isolation**: two "target apps" that are actually the same repo checked out at two
+  different paths (i.e. two git worktrees) get independent sub-pools and never share a worker,
+  even if their assembly contents are byte-for-byte identical.
+- **Global cap and backpressure**: with `PoolMaxTotalWorkers` set to a small test value (e.g. 2)
+  and more distinct target-app keys in play than that, verify the pool never exceeds the cap,
+  overflow calls still succeed (via one-shot fallback rather than failing or hanging), and an
+  LRU idle worker is evicted to make room for a newly-requested key.
+- **Worker self-termination**: a persistent worker that is orphaned (e.g. its stdin pipe is
+  closed without an explicit shutdown request, simulating a crashed pool manager) exits on its
+  own once its self-terminating idle timeout elapses, rather than running indefinitely.
 - **Shutdown**: pool disposes/kills all outstanding workers cleanly when the server itself shuts
   down (no orphaned `dotnet` processes left behind — a real risk worth an explicit test given
   child-process lifetime bugs are easy to introduce).
