@@ -30,7 +30,7 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     // when a caller requests a different DLL path that happens to share a simple name with
     // something already loaded into this context (e.g. a same-named assembly at a different
     // location) so that case can fail fast instead of silently substituting the wrong assembly.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadedAssemblyPathsByName = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadedAssemblyPathsByName = new(StringComparer.OrdinalIgnoreCase);
 
     public TargetAssemblyLoadContext(string mainAssemblyPath, string name)
         : base(name, isCollectible: true)

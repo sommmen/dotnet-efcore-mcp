@@ -136,6 +136,29 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void ResolveMigrationsAssembly_WhenNameResolvesOutsideTargetContext_ThrowsInsteadOfReturningWrongAssembly()
+    {
+        // Regression test for a review finding: TargetAssemblyLoadContext.Load(...) returns null
+        // for any simple name it cannot resolve as a genuine dependency of the loaded target (it
+        // is neither a recognized shared-framework name nor listed in SplitMigrationsApp's own
+        // dependency graph). When that happens, the base AssemblyLoadContext.LoadFromAssemblyName
+        // machinery falls back to whatever is already loaded into the *default* load context -
+        // here, the currently executing test assembly itself, since xunit always loads test
+        // assemblies into AssemblyLoadContext.Default. Without an explicit post-load context
+        // check, ResolveMigrationsAssembly would "succeed" by silently returning an assembly that
+        // was never actually loaded into handle.Context, breaking EF Core's migrations/DbContext
+        // type matching. It must instead fail closed.
+        var testAssemblyName = typeof(SplitAssemblyMigrationDiscoveryTests).Assembly.GetName().Name!;
+        var assemblyLoader = new AssemblyLoaderService();
+        var handle = assemblyLoader.Load(FixturePaths.SplitMigrationsAppDllPath);
+
+        var exception = Assert.Throws<AssemblyLoadFailedException>(
+            () => assemblyLoader.ResolveMigrationsAssembly(handle, testAssemblyName));
+
+        Assert.Contains("outside the loaded target's assembly context", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ListMigrations_WithoutMigrationsAssembly_FindsNoMigrationsInContextOnlyAssembly()
     {
         var tools = CreateTools();
@@ -264,6 +287,26 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
         var pathsByName = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)pathsByNameField.GetValue(context)!;
 
         Assert.Equal(FixturePaths.SplitContextAppDllPath, pathsByName["SplitContextApp"]);
+    }
+
+    [Fact]
+    public void LoadedAssemblyPathsByName_UsesCaseInsensitiveComparer_ConsistentWithPathCollisionCheck()
+    {
+        // Regression test for a review finding: the simple-name-to-path map previously used the
+        // case-sensitive StringComparer.Ordinal, inconsistent with the case-insensitive path
+        // comparison LoadAdditionalAssembly already applies (StringComparison.OrdinalIgnoreCase)
+        // and with .NET's own case-insensitive simple-name binding conventions. A same-name
+        // collision differing only by casing must still be detected rather than silently missed.
+        var context = new TargetAssemblyLoadContext(FixturePaths.SplitContextAppDllPath, "reflection-probe");
+        var pathsByNameField = typeof(TargetAssemblyLoadContext).GetField(
+            "_loadedAssemblyPathsByName",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var pathsByName = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)pathsByNameField.GetValue(context)!;
+
+        pathsByName["SplitContextApp"] = FixturePaths.SplitContextAppDllPath;
+
+        Assert.True(pathsByName.TryGetValue("splitcontextapp", out var loadedFromPath));
+        Assert.Equal(FixturePaths.SplitContextAppDllPath, loadedFromPath);
     }
 
     [Fact]

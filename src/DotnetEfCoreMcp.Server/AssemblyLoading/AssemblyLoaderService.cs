@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.Loader;
 
 namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 
@@ -227,9 +228,10 @@ public sealed class AssemblyLoaderService
         {
             if (!looksLikePath)
             {
+                Assembly resolved;
                 try
                 {
-                    return handle.Context.LoadFromAssemblyName(new AssemblyName(migrationsAssembly));
+                    resolved = handle.Context.LoadFromAssemblyName(new AssemblyName(migrationsAssembly));
                 }
                 catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException or ArgumentException)
                 {
@@ -242,6 +244,22 @@ public sealed class AssemblyLoaderService
                         "If it is not a project or package reference of the loaded assembly, pass its compiled DLL path instead.",
                         ex);
                 }
+
+                // TargetAssemblyLoadContext.Load(...) returns null for a dependency it cannot
+                // resolve itself, which makes the base AssemblyLoadContext fall back to probing
+                // the default load context / already-loaded assemblies and can "succeed" with an
+                // assembly loaded outside handle.Context entirely (e.g. a same-named assembly the
+                // MCP server host itself has loaded). Treat that as a resolution failure rather
+                // than silently returning an assembly EF Core cannot correctly associate with the
+                // migrations/DbContext types loaded in the target's own context.
+                if (AssemblyLoadContext.GetLoadContext(resolved) != handle.Context)
+                {
+                    throw new AssemblyLoadFailedException(
+                        $"Migrations assembly '{migrationsAssembly}' resolved to an assembly outside the loaded target's assembly context ('{handle.AssemblyPath}'). " +
+                        "This typically means it is not actually a dependency of the loaded target assembly. Pass its compiled DLL path instead, or add it as a real dependency of the target.");
+                }
+
+                return resolved;
             }
 
             var fullPath = Path.GetFullPath(migrationsAssembly);
