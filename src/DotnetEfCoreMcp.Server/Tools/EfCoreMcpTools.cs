@@ -219,7 +219,7 @@ public sealed class EfCoreMcpTools(
         "for a DbContext in the currently loaded target assembly. Use nextPage when hasMore is true.")]
     public string GetSchema(
         [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
-        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("One-based entity page number. Defaults to 1.")] int page = 1,
         [Description("Number of entities per page. Defaults to 25 and is capped at 100.")] int pageSize = 25,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null)
@@ -352,7 +352,7 @@ public sealed class EfCoreMcpTools(
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
-        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, cancellationToken));
@@ -402,7 +402,7 @@ public sealed class EfCoreMcpTools(
     public Task<string> RunSqlQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("Raw SQL command text. Use @p0, @p1, ... for values rather than embedding them in this string.")] string sql,
-        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("Positional parameter values referenced by SQL placeholders @p0, @p1, ...")] object?[]? parameters = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         CancellationToken cancellationToken = default)
@@ -458,7 +458,7 @@ public sealed class EfCoreMcpTools(
         "with appliedStateAvailable set to false rather than presenting metadata as applied state.")]
     public Task<string> ListMigrations(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("list_migrations", () => ListMigrationsCore(contextName, connectionName, cancellationToken));
 
@@ -500,7 +500,7 @@ public sealed class EfCoreMcpTools(
         "best-effort statement boundary when it exceeds the cap.")]
     public Task<string> GenerateMigrationScript(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("Migration ID to script from (exclusive). Omit or pass \"0\" to script from the beginning of history.")] string? fromMigration = null,
         [Description("Migration ID to script to (inclusive). Omit to script through the latest known migration.")] string? toMigration = null,
         [Description("If true (default), generate a script safe to run on an already-applied database (__EFMigrationsHistory-guarded). Not every provider supports idempotent scripts.")] bool idempotent = true,
@@ -812,22 +812,58 @@ public sealed class EfCoreMcpTools(
 
     private static string FormatQueryError(QueryExecutionException exception)
     {
+        var message = exception.Message;
+
+        if (message.Contains("could not be compiled", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{message} Next step: Fix the reported compile error(s) in the query expression (Roslyn execution mode accepts full C# syntax rooted at a DbSet property) and retry.";
+        }
+
+        if (message.Contains("compilation timed out", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{message} Next step: Simplify the query or increase the server's QueryExecution:CompileTimeoutSeconds setting, then retry.";
+        }
+
+        if (message.Contains("cannot be used with the Roslyn query engine", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{message} Next step: Add a public parameterless constructor or a DbContextOptions<T> constructor to the DbContext, or ask the server operator to switch QueryExecution:Engine to DynamicLinq.";
+        }
+
+        if (message.Contains("QueryExecution:OutOfProcessHostPath", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("out-of-process query host was not found", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("out-of-process query host is missing its dependency file", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("runtime configuration file for out-of-process query execution", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{message} Next step: This is a server-side configuration problem with the out-of-process query host, not a problem with the query itself; ask the server operator to check the QueryExecution:OutOfProcessHostPath setting and the target project's build output.";
+        }
+
+        if (message.Contains("out-of-process query host failed to execute the query", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{message} Next step: The query host process exited unexpectedly while executing the query; the detail above (if any) is the host's captured stderr - consult server logs for the full stack trace if it is not conclusive.";
+        }
+
+        if (message.Contains("out-of-process query host returned an invalid response", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("out-of-process query host did not return a result", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{message} Next step: This indicates a protocol-level failure between the server and the query host rather than a problem with the query; consult server logs and retry.";
+        }
+
         var cause = exception.InnerException?.Message?.Trim();
         if (string.IsNullOrEmpty(cause))
-            return $"{exception.Message} Next step: {GenericQueryRecoveryHint}";
+            return $"{message} Next step: {GenericQueryRecoveryHint}";
 
         if (cause.Contains("RowLimitingOperationWithoutOrderByWarning", StringComparison.OrdinalIgnoreCase) ||
             (cause.Contains("Skip", StringComparison.OrdinalIgnoreCase) && cause.Contains("Take", StringComparison.OrdinalIgnoreCase)))
         {
-            return $"{exception.Message} Cause: {cause} Next step: Add a deterministic orderBy expression whenever using skip or take, then retry the query.";
+            return $"{message} Cause: {cause} Next step: Add a deterministic orderBy expression whenever using skip or take, then retry the query.";
         }
 
         if (cause.Contains("Globalization Invariant Mode is not supported", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{exception.Message} Cause: {cause} Next step: Enable ICU/globalization support in the target .NET runtime or container, then retry the query.";
+            return $"{message} Cause: {cause} Next step: Enable ICU/globalization support in the target .NET runtime or container, then retry the query.";
         }
 
-        return $"{exception.Message} Next step: {GenericQueryRecoveryHint}";
+        return $"{message} Next step: {GenericQueryRecoveryHint}";
     }
 
     private const string GenericQueryRecoveryHint =
@@ -883,6 +919,17 @@ public sealed class EfCoreMcpTools(
         {
             if (string.IsNullOrWhiteSpace(connectionName))
             {
+                // Mirrors ResolveContextType's disambiguation behavior: silently resolving to
+                // "whichever connection happens to be active" is safe only when there is exactly
+                // one candidate. With two or more registered connections, guessing risks silently
+                // running against the wrong database/environment, so require an explicit choice.
+                if (connectionRegistry.ConnectionNames.Count > 1)
+                {
+                    throw new McpException(BuildConnectionSelectionError(
+                        connectionRegistry.ConnectionNames,
+                        "`connectionName` is required because more than one connection is registered."));
+                }
+
                 var active = connectionRegistry.ActiveConnection;
                 if (active is null)
                 {
@@ -891,11 +938,20 @@ public sealed class EfCoreMcpTools(
                 return active;
             }
 
-            return connectionRegistry.Get(connectionName);        }
+            return connectionRegistry.Get(connectionName);
+        }
         catch (UnknownConnectionException ex)
         {
             throw new McpException(ex.Message);
         }
+    }
+
+    private static string BuildConnectionSelectionError(IReadOnlyCollection<string> connectionNames, string reason)
+    {
+        var choices = connectionNames.Count == 0
+            ? "(none)"
+            : string.Join(", ", connectionNames.OrderBy(name => name, StringComparer.Ordinal));
+        return $"{reason} Choose one of these connection names: {choices}. Next step: call list_connections, then pass connectionName using a listed name.";
     }
 
     private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry)
@@ -938,7 +994,7 @@ public sealed class EfCoreMcpTools(
         "redacted status (healthy/failed/timedOut).")]
     public Task<string> TestConnection(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("test_connection", () => TestConnectionCore(contextName, connectionName, cancellationToken));
 
@@ -983,7 +1039,7 @@ public sealed class EfCoreMcpTools(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("CLR type name of the entity to insert.")] string entity,
         [Description("Values for writable scalar properties.")] Dictionary<string, JsonElement> values,
-        [Description("Logical connection name from the server registry. If omitted, the active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("insert_entity", () => MutateEntityCore(contextName, entity, EntityMutationOperation.Insert, null, values, null, connectionName, cancellationToken));
 
@@ -996,7 +1052,7 @@ public sealed class EfCoreMcpTools(
         [Description("Complete primary-key values by exact property name.")] Dictionary<string, JsonElement> key,
         [Description("Non-empty values for writable scalar properties to change.")] Dictionary<string, JsonElement> values,
         [Description("Original values for every concurrency-token property, when required.")] Dictionary<string, JsonElement>? concurrency = null,
-        [Description("Logical connection name from the server registry. If omitted, the active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("update_entity", () => MutateEntityCore(contextName, entity, EntityMutationOperation.Update, key, values, concurrency, connectionName, cancellationToken));
 
@@ -1008,7 +1064,7 @@ public sealed class EfCoreMcpTools(
         [Description("CLR type name of the entity to delete.")] string entity,
         [Description("Complete primary-key values by exact property name.")] Dictionary<string, JsonElement> key,
         [Description("Original values for every concurrency-token property, when required.")] Dictionary<string, JsonElement>? concurrency = null,
-        [Description("Logical connection name from the server registry. If omitted, the active connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("delete_entity", () => MutateEntityCore(contextName, entity, EntityMutationOperation.Delete, key, null, concurrency, connectionName, cancellationToken));
 
