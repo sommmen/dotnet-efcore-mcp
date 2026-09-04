@@ -36,7 +36,10 @@ standard output. Connection strings travel only in that request, not on the proc
 The first implementation supports Roslyn query execution and serialized sequence/scalar results;
 it intentionally does not yet include a compatibility fingerprint or long-lived host process.
 
-For design background, see [Query execution alternatives](query-execution-alternatives.md).
+For design background, see [Query execution alternatives](query-execution-alternatives.md). For
+measured latency characteristics of out-of-process execution and a pooling design to reduce
+per-query cost, see [Out-of-process query host latency: findings and a pooling
+design](query-execution-host-pooling.md).
 
 ## Consumer-visible failures
 
