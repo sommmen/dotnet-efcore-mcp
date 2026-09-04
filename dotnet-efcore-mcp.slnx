@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/DotnetEfCoreMcp.Server/DotnetEfCoreMcp.Server.csproj" />
+    <Project Path="src/DotnetEfCoreMcp.QueryHost/DotnetEfCoreMcp.QueryHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/DotnetEfCoreMcp.Server.Tests/DotnetEfCoreMcp.Server.Tests.csproj" />
