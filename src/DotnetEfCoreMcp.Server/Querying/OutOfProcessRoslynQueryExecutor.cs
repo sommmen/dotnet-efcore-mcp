@@ -84,13 +84,30 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
         }
         catch (OperationCanceledException)
         {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            KillIfRunning(process);
             throw;
         }
-        catch (QueryExecutionException) { throw; }
+        catch (QueryExecutionException)
+        {
+            KillIfRunning(process);
+            throw;
+        }
         catch (Exception ex)
         {
+            KillIfRunning(process);
             throw new QueryExecutionException("Unable to execute the query in the out-of-process query host.", ex);
+        }
+    }
+
+    private static void KillIfRunning(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process has already exited between the check and the kill attempt.
         }
     }
 
