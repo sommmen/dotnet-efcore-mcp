@@ -5,5 +5,6 @@ public enum QueryExecutionMode
 {
     InProcess,
     OutOfProcess,
+    Pooled,
     Auto,
 }

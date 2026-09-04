@@ -48,6 +48,9 @@ builder.Services.AddSingleton(builder.Configuration.GetSection("QueryCompilation
 builder.Services.AddSingleton<QueryCompiler>();
 builder.Services.AddSingleton<RoslynQueryExecutor>();
 builder.Services.AddSingleton<OutOfProcessRoslynQueryExecutor>();
+builder.Services.AddSingleton<QueryHostPool>();
+builder.Services.AddHostedService(services => services.GetRequiredService<QueryHostPool>());
+builder.Services.AddSingleton<PooledOutOfProcessRoslynQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("RawSqlExecution").Get<RawSqlExecutionOptions>() ?? new RawSqlExecutionOptions());
 builder.Services.AddSingleton<SqlQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("Migrations").Get<MigrationsOptions>() ?? new MigrationsOptions());

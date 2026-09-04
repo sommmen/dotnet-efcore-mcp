@@ -28,7 +28,7 @@ Each module has its own implementation checklist, design decisions, and notes:
 | [Connection management](./docs/development/connections.md) | Server-side connection registry, secret storage, provider allowlisting (security-sensitive). |
 | [Schema / model discovery](./docs/development/schema-discovery.md) | Building and caching an agent-friendly serialization of the EF Core model. |
 | [Query execution](./docs/development/query-execution.md) | Safe Dynamic-LINQ query translation, read-only enforcement, result limits. |
-| [Out-of-process query host pooling](./docs/development/query-execution-host-pooling.md) | Investigation findings on out-of-process `run_query` latency (dominated by per-query Roslyn compilation, not process startup) and a proposed bounded worker-pool design; not yet implemented. |
+| [Out-of-process query host pooling](./docs/development/query-execution-host-pooling.md) | Design background and implementation notes for the opt-in bounded pooled out-of-process `run_query` host (`QueryExecution:Mode=Pooled`). |
 | [Roslyn-compiled `UserQuery`](./docs/development/roslyn-user-query.md) | In-progress rewrite: LINQPad-style `UserQuery : TDbContext` compiled with Roslyn. Implemented and covered by tests behind an opt-in `Engine` toggle; not yet the default, and `System.Linq.Dynamic.Core` has not yet been removed. |
 | [MCP tool surface](./docs/development/mcp-tools.md) | The `list_contexts` / `get_schema` / `run_query` / `run_sql_query` / `load_assembly` tools and their exposure decisions. |
 | [Migration inspection](./docs/development/migrations.md) | Planned P1 #11: structured `list_migrations`/`generate_migration_script` tooling. |
