@@ -300,6 +300,7 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
 | `run_query` | `contextName: string`, `query: string`, `connectionName?: string` | Root DbSet name, scalar-or-sequence result, effective sequence page size, and safely projected rows |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
+| `test_connection` | `contextName: string`, `connectionName?: string` | Redacted connection-health diagnostic: context name, resolved connection name, provider, environment, and a `healthy`/`failed`/`timedOut` status. Never returns query rows, schema, or a connection string, and never changes the active connection |
 
 `query` is a [Dynamic LINQ](https://dynamic-linq.net/) expression rooted at an exact, public
 `DbSet<T>` property name on the selected context, such as

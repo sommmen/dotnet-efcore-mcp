@@ -10,6 +10,7 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 - [x] `list_contexts` — list discovered `DbContext` types available from the currently loaded assembly
 - [x] `get_schema` — return the model/schema for a given context
 - [x] `run_query` — execute a read-only LINQPad-style query expression against a selected context
+- [x] `test_connection` — run a bounded, redacted connection-health diagnostic for a given context/connection
 
 ## P0 #1 — LINQPad-style `run_query`
 
@@ -86,28 +87,37 @@ must make this non-execution guarantee explicit. Focused tool tests should cover
 forwarding to the shared builder, successful SQL serialization, sanitized validation/provider failures,
 and prove that a preview does not execute a command or touch a connection.
 
-## Proposed open work — P0 #5: `test_connection` diagnostics
+## P0 #5 — `test_connection` diagnostics
 
-Add `test_connection` with required `contextName: string` and optional `connectionName: string`.
-The optional name follows the existing active-connection behavior; resolution remains server-registry
-only and fail closed. The tool must pass the resolved entry's command timeout and the MCP
-`CancellationToken` to a bounded provider connection-health operation. It returns a compact,
-redacted result with the context name, logical connection name, provider, environment classification,
-and a stable status such as `healthy`, `failed`, `timedOut`, or `cancelled`; do not return query rows,
-schema, raw configuration, or timing-sensitive provider details.
+`test_connection` takes a required `contextName: string` and optional `connectionName: string`. The
+optional name follows the existing active-connection behavior; resolution goes through the same
+`ResolveConnection` fail-closed path as `get_schema` and `run_query` (explicit name, active-connection
+fallback, or an `McpException` for an unknown or inactive connection - no code path accepts a raw
+connection string). It returns a compact, redacted result with the context name, logical connection
+name, provider, environment classification, and a stable status: `healthy`, `failed`, or `timedOut`.
+It never returns query rows, schema, raw configuration, or connection strings.
 
-The description and implementation must state that this is a non-mutating connectivity diagnostic:
-it does not accept raw connection strings, run caller SQL, change the active connection, or write to
-the database. Context construction, unknown/inactive connections, provider failures, timeout, and
-cancellation must all surface as actionable MCP outcomes without leaking provider exception text,
-inner exceptions, stack traces, credentials, hosts, database names, or connection strings. Only safe
-logical identifiers and the stable status may be logged or included in output.
+It is a non-mutating connectivity diagnostic: it constructs the requested `DbContext`, forwards the
+resolved entry's `CommandTimeoutSeconds` and the MCP `CancellationToken` to
+`ConnectionHealthChecker.CheckAsync`, and disposes the context immediately after the probe completes.
+It never runs caller SQL, calls `SaveChanges`, or changes the active connection. Caller cancellation
+propagates as a thrown `OperationCanceledException` rather than a status value; an internal timeout
+(the command timeout plus `QueryExecutionOptions.CancellationMargin`) instead yields the `timedOut`
+status; any provider failure yields `failed`. Only safe identifiers (context name, connection name,
+provider, environment, status, elapsed time) are logged - provider exception text, inner exceptions,
+stack traces, credentials, hosts, database names, and connection strings are never logged or returned.
+See [`ConnectionHealthChecker`](../../src/DotnetEfCoreMcp.Server/Connections/ConnectionHealthChecker.cs)
+for the bounded probe/timeout/cancellation classification logic.
 
-Focused tool-surface tests should verify required/optional parameter binding and active-connection
-fallback; forwarding of registry timeout and cancellation; serialization of the redacted success
-payload; generic, redacted failures; and the `timedOut` and `cancelled` outcomes. Pair them with
-connection-layer tests for context disposal, non-mutation, registry-only resolution, and each failure
-classification described in [Connection management](./connections.md#proposed-open-work--p0-5-test_connection-diagnostics).
+Focused tool-surface tests
+([`EfCoreMcpToolsTestConnectionTests`](../../tests/DotnetEfCoreMcp.Server.Tests/Tools/EfCoreMcpToolsTestConnectionTests.cs))
+cover required/optional parameter binding and active-connection fallback, the unknown- and
+no-active-connection error paths, the redacted success and failure payload shapes, and cancellation
+propagation. Connection-layer tests
+([`ConnectionHealthCheckerTests`](../../tests/DotnetEfCoreMcp.Server.Tests/Connections/ConnectionHealthCheckerTests.cs))
+cover the `healthy`/`failed`/`timedOut` classifications and cancellation in isolation, without a real
+slow provider, via an internal probe-delegate overload. See
+[Connection management](./connections.md) for the registry-level design.
 
 ## Proposed open work — P0 #6: schema slicing/search
 
