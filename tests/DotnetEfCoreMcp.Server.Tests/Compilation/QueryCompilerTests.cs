@@ -95,6 +95,27 @@ public sealed class QueryCompilerTests
             () => compiler.CompileAsync(source, handle, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task CompileAsync_TargetDbContextDerivesFromIdentityDbContext_CompilesSuccessfully()
+    {
+        // Regression test for a bug found while live-testing run_query's Roslyn engine against
+        // OPG Platform's CommerceDbContext (which derives from IdentityDbContext<TUser, ...>).
+        // GetReferences previously only added MetadataReferences for the target's own
+        // LoadedAssemblyPaths, which deliberately excludes SharedFrameworkAssemblyNames entries
+        // like Microsoft.AspNetCore.Identity.EntityFrameworkCore (see that type's doc comment).
+        // Every single query against such a context failed to compile - not just ones that
+        // reference Identity types directly - because the base class itself couldn't bind.
+        var service = new AssemblyLoaderService();
+        var handle = service.Load(FixturePaths.IdentityAppDllPath);
+        var contextType = handle.Assembly.GetType("IdentityApp.IdentityAppDbContext", throwOnError: true)!;
+        var source = UserQuerySourceGenerator.Generate(contextType, "Orders.Count()", "compileidentity1");
+        var compiler = new QueryCompiler(new QueryCompilationOptions());
+
+        var compiled = await compiler.CompileAsync(source, handle, CancellationToken.None);
+
+        Assert.NotEmpty(compiled.Pe);
+    }
+
     [Theory]
     [InlineData("System.IO.File.ReadAllText(\"C:/secrets.txt\")", "compileboundaryio1")]
     [InlineData("new System.Net.Http.HttpClient()", "compileboundarynet1")]

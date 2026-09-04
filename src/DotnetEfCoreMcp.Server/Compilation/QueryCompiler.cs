@@ -217,6 +217,24 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         AddAssemblyPath(typeof(QueryExecutionException).Assembly, paths);
         AddAssemblyPath(typeof(Microsoft.EntityFrameworkCore.DbContext).Assembly, paths);
 
+        // A target DbContext's own base class or public surface can reach types from any assembly
+        // in SharedFrameworkAssemblyNames (e.g. IdentityDbContext<...> pulls in
+        // Microsoft.AspNetCore.Identity.EntityFrameworkCore) even when the target project's own
+        // build output does not carry a copy of it as a non-shared dependency (LoadedAssemblyPaths
+        // only tracks assemblies TargetAssemblyLoadContext itself loaded from disk - shared
+        // assemblies are deliberately excluded, see TargetAssemblyLoadContext.LoadedAssemblyPaths).
+        // Without this, compiling a UserQuery subclass of such a context fails with "is defined in
+        // an assembly that is not referenced" for every single query, not just ones referencing the
+        // shared type directly - the type appears in the DbContext's own inherited member surface.
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var name = assembly.GetName().Name;
+            if (name is not null && SharedFrameworkAssemblyNames.Value.Contains(name))
+            {
+                AddAssemblyPath(assembly, paths);
+            }
+        }
+
         foreach (var name in options.AdditionalReferenceAssemblyNames)
         {
             var assembly = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a =>

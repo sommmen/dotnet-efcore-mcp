@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>IdentityApp</RootNamespace>
+    <!-- Reproduces OPG Platform's CommerceDbContext shape: a DbContext whose *base class* (not its
+         own query surface) reaches Microsoft.AspNetCore.Identity.EntityFrameworkCore, a
+         SharedFrameworkAssemblyNames entry. TargetAssemblyLoadContext.LoadedAssemblyPaths
+         deliberately excludes shared assemblies (they resolve via the default ALC instead), so
+         QueryCompiler.GetReferences must add them itself - see QueryCompilerTests for the
+         regression this fixture exists to cover. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>
