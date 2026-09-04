@@ -10,6 +10,7 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 - [x] `list_contexts` — list discovered `DbContext` types available from the currently loaded assembly
 - [x] `get_schema` — return the model/schema for a given context
 - [x] `run_query` — execute a read-only LINQPad-style query expression against a selected context
+- [x] `test_connection` — run a bounded, redacted connection-health diagnostic for a given context/connection
 - [x] `insert_entity` — insert a metadata-validated entity through a non-production `ReadWrite` connection
 - [x] `update_entity` — update a metadata-validated entity through a non-production `ReadWrite` connection
 - [x] `delete_entity` — delete a metadata-validated entity through a non-production `ReadWrite` connection
@@ -35,20 +36,19 @@ This is not permission to execute arbitrary C# on the server. The tool accepts o
 
 An opt-in `QueryExecution:Engine = "Roslyn"` setting routes `run_query` through a Roslyn-compiled `UserQuery : TDbContext` pipeline instead, implemented and covered by tests but not yet the default; see [Roslyn-compiled `UserQuery`](./roslyn-user-query.md) for its design and rollout status.
 
-## P0 #2 — `run_query` continuation indicator
+## Proposed open work — P0 #2: `run_query` continuation indicator
 
-`hasMoreRows: boolean` is present on every successful **sequence-returning** `run_query` response. It
-reports whether another row matches after the effective `skip` and effective `take` window; it does
-not add a row to `rows`, change `rowCount`, or expose a total count. `take: 0` returns no rows and
-`hasMoreRows: false` without probing or materializing a row. Terminal scalar aggregates have no page
-window; their `hasMoreRows` is always `false`.
+Add `hasMoreRows: boolean` to successful **sequence-returning** `run_query` responses. It reports
+whether another row matches after the effective `skip` and effective `take` window; it does not add a
+row to `rows`, change `rowCount`, or expose a total count. The MCP response contract should explicitly
+say that `take: 0` returns no rows and `hasMoreRows: false`, rather than probing or materializing a row.
+Terminal scalar aggregates have no page window and return no `hasMoreRows` signal.
 
-`QueryExecutor` retrieves no more than one sentinel row beyond the effective take for positive takes,
-using the existing filtered, ordered, skipped query (`MaterializeWithContinuationAsync`, shared by the
-`DynamicLinq` and `Roslyn` engines). The sentinel is removed before projection and the result is
-constructed with the flag; clamping and read-only behavior are unchanged. Executor tests cover an
-empty result, an exact effective take, an extra row (over-limit), a clamped take, nonzero skip, and
-`take: 0`.
+Implement this in `QueryExecutor` by retrieving no more than one sentinel row beyond the effective
+take for positive takes, using the existing filtered, ordered, skipped query. Remove the sentinel
+before projection and construct the result with the new flag; retain the current clamping and
+read-only behavior. Add tool binding/serialization coverage plus executor tests for an empty result,
+an exact effective take, an extra row, a clamped take, nonzero skip, and `take: 0`.
 - [x] `run_sql_query` — execute explicitly enabled raw SQL only against development `ReadWrite` connections
 - [x] `load_assembly` (or startup-only configuration) — point the server at a project's build output
   - Implemented as both: an optional `TargetAssemblyPath` startup config value AND a
@@ -92,63 +92,56 @@ must make this non-execution guarantee explicit. Focused tool tests should cover
 forwarding to the shared builder, successful SQL serialization, sanitized validation/provider failures,
 and prove that a preview does not execute a command or touch a connection.
 
-## Proposed open work — P0 #5: `test_connection` diagnostics
+## P0 #5 — `test_connection` diagnostics
 
-Add `test_connection` with required `contextName: string` and optional `connectionName: string`.
-The optional name follows the existing active-connection behavior; resolution remains server-registry
-only and fail closed. The tool must pass the resolved entry's command timeout and the MCP
-`CancellationToken` to a bounded provider connection-health operation. It returns a compact,
-redacted result with the context name, logical connection name, provider, environment classification,
-and a stable status such as `healthy`, `failed`, `timedOut`, or `cancelled`; do not return query rows,
-schema, raw configuration, or timing-sensitive provider details.
+`test_connection` takes a required `contextName: string` and optional `connectionName: string`. The
+optional name follows the existing active-connection behavior; resolution goes through the same
+`ResolveConnection` fail-closed path as `get_schema` and `run_query` (explicit name, active-connection
+fallback, or an `McpException` for an unknown or inactive connection - no code path accepts a raw
+connection string). It returns a compact, redacted result with the context name, logical connection
+name, provider, environment classification, and a stable status: `healthy`, `failed`, or `timedOut`.
+It never returns query rows, schema, raw configuration, or connection strings.
 
-The description and implementation must state that this is a non-mutating connectivity diagnostic:
-it does not accept raw connection strings, run caller SQL, change the active connection, or write to
-the database. Context construction, unknown/inactive connections, provider failures, timeout, and
-cancellation must all surface as actionable MCP outcomes without leaking provider exception text,
-inner exceptions, stack traces, credentials, hosts, database names, or connection strings. Only safe
-logical identifiers and the stable status may be logged or included in output.
+It is a non-mutating connectivity diagnostic: it constructs the requested `DbContext`, forwards the
+resolved entry's `CommandTimeoutSeconds` and the MCP `CancellationToken` to
+`ConnectionHealthChecker.CheckAsync`, and disposes the context immediately after the probe completes.
+It never runs caller SQL, calls `SaveChanges`, or changes the active connection. Caller cancellation
+propagates as a thrown `OperationCanceledException` rather than a status value; an internal timeout
+(the command timeout plus `QueryExecutionOptions.CancellationMargin`) instead yields the `timedOut`
+status; any provider failure yields `failed`. Only safe identifiers (context name, connection name,
+provider, environment, status, elapsed time) are logged - provider exception text, inner exceptions,
+stack traces, credentials, hosts, database names, and connection strings are never logged or returned.
+See [`ConnectionHealthChecker`](../../src/DotnetEfCoreMcp.Server/Connections/ConnectionHealthChecker.cs)
+for the bounded probe/timeout/cancellation classification logic.
 
-Focused tool-surface tests should verify required/optional parameter binding and active-connection
-fallback; forwarding of registry timeout and cancellation; serialization of the redacted success
-payload; generic, redacted failures; and the `timedOut` and `cancelled` outcomes. Pair them with
-connection-layer tests for context disposal, non-mutation, registry-only resolution, and each failure
-classification described in [Connection management](./connections.md#proposed-open-work--p0-5-test_connection-diagnostics).
+Focused tool-surface tests
+([`EfCoreMcpToolsTestConnectionTests`](../../tests/DotnetEfCoreMcp.Server.Tests/Tools/EfCoreMcpToolsTestConnectionTests.cs))
+cover required/optional parameter binding and active-connection fallback, the unknown- and
+no-active-connection error paths, the redacted success and failure payload shapes, and cancellation
+propagation. Connection-layer tests
+([`ConnectionHealthCheckerTests`](../../tests/DotnetEfCoreMcp.Server.Tests/Connections/ConnectionHealthCheckerTests.cs))
+cover the `healthy`/`failed`/`timedOut` classifications and cancellation in isolation, without a real
+slow provider, via an internal probe-delegate overload. See
+[Connection management](./connections.md) for the registry-level design.
 
-## P0 #6 — schema slicing/search
+## Proposed open work — P0 #6: schema slicing/search
 
-Added `get_entity_schema(entityName: string, contextName?: string)` and
-`search_schema(contextName?: string, query: string, maxResults?: number)`. Both are read-only and
+Add `get_entity_schema(contextName: string, entityName: string)` and
+`search_schema(contextName: string, query: string, maxResults?: number)`. Both are read-only and
 cache-only: after resolving `contextName`, they operate solely on the schema already held by
-`SchemaCache`; they never create a context, connect to a provider, or rediscover EF metadata. If
-nothing is cached yet for the resolved context (i.e. `get_schema` was never called for it), both
-tools throw a validation error directing the caller to call `get_schema` first, rather than
-building the schema themselves.
+`SchemaCache`; they must not create a context, connect to a provider, or rediscover EF metadata.
 
-`get_entity_schema` returns the complete cached entity definition (`EntityTypeSchema`, the same
-shape used by `get_schema`'s `entities`) for an exact, case-sensitive entity name; an unknown name
-throws with the known entity names listed. `search_schema` returns compact
-entity/property/relationship match summaries (`entityName`, `entityNameMatched`,
-`matchingProperties`, `matchingRelationships`) rather than full entities — callers follow up with
-`get_entity_schema` for a complete slice. Search is a case-insensitive substring match against
-entity names, property names, and relationship (navigation) names, and is deterministically ordered
-by entity name; `query` must be non-empty. Its result count (`maxResults`) defaults to 10 and cannot
-exceed 25, with invalid counts (including `<= 0`) rejected. The response always reports
-`totalMatchCount` (the number of matching entities before the cap) and `truncated` (whether
-`totalMatchCount` exceeds the number of returned matches).
+`get_entity_schema` returns the complete cached entity definition for an exact entity name.
+`search_schema` returns compact entity/property/relationship match summaries rather than full
+entities. Search is case-insensitive and deterministic; `query` must be non-empty. Its result count
+defaults to 10 and cannot exceed 25, with invalid counts rejected. Return `truncated` whenever more
+matches exist than the effective limit.
 
-The cached schema is passed through `ISchemaAccessPolicy` (`Schema/SchemaAccessPolicy.cs`) before
-slicing or searching. P0 #6 does not implement authorization — the default
-`NoOpSchemaAccessPolicy` returns the schema unchanged — but this seam lets a future
-per-connection access-policy evaluator (P0 #9) filter the visible entities, properties, and
-relationships without changing either tool's public request/response shape.
-
-Implemented in `Schema/SchemaSlicer.cs` (`FindEntity`, `Search`) and `Schema/SchemaCache.TryGet`
-(a read-only lookup distinct from `GetOrBuild`, so the tools can detect a cache miss instead of
-building the schema). See `Schema/SchemaSlicerTests.cs` for cache-only slicing/search coverage
-(slice fidelity, unknown names, matching/order, caps and `truncated`, policy-seam forwarding) and
-`Tools/EfCoreMcpToolsSchemaSlicingTests.cs` for MCP binding/forwarding coverage (cache-miss
-behavior, compact match shape, invalid input, context selection).
+Pass the cached schema through a policy-ready selector before slicing or searching. P0 #6 does not
+implement authorization, but this seam must permit a future access-policy evaluator to filter the
+visible entities, properties, and relationships without changing the two public contracts. Add
+focused MCP binding/forwarding tests plus schema tests for cache-only behavior, slice fidelity,
+unknown names, matching/order, caps and `truncated`, invalid input, and policy-seam forwarding.
 
 ## Proposed open work — P0 #7: query complexity limits beyond row count
 

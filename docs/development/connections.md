@@ -59,35 +59,19 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
   - Production is forced to `ReadOnly`, never auto-selected, and requires an explicit
     `allowProduction: true` acknowledgement in `swap_connection`. A production-only
     registry starts with no active connection.
-
-## Proposed open work — P0 #5: `test_connection` diagnostics
-
-Add `test_connection` as a narrowly scoped, server-side connection-health diagnostic. Its contract
-is `contextName: string` plus optional `connectionName: string`; when omitted, resolve the active
-connection using the same fail-closed path as `get_schema` and `run_query`. It returns a small,
-stable diagnostic payload containing the requested context name, resolved logical connection name,
-provider, configured environment classification, and a success/failure classification. It must not
-return database data, schema, configuration values, or a connection string.
-
-The implementation must resolve only a registry entry and construct only the requested `DbContext`;
-it must never take an arbitrary client-supplied connection string, change the active connection,
-execute user SQL, call `SaveChanges`, or mutate database state. Existing production safeguards stay
-in force: production entries are server configured and require explicit selection through
-`swap_connection` before an omitted connection name can resolve to one.
-
-Run the provider health check with both the MCP cancellation token and the resolved entry's command
-timeout. Cancellation must propagate as cancellation rather than being converted to a misleading
-healthy or provider-failure result. A timeout must end the attempt promptly, dispose the context and
-any connection resources, and produce the tool's stable timeout classification. Do not introduce an
-unbounded connection attempt or a diagnostic-specific timeout that bypasses registry policy.
-
-Diagnostic failures are untrusted provider output. Log only safe identifiers (context name, logical
-connection name, provider, environment, classification, and elapsed time) and return an actionable,
-generic message/classification. Never expose connection strings, credentials, hosts, database names,
-provider exception text, inner-exception chains, or stack traces in logs or MCP output. Focused tests
-should cover a successful check; unknown and inactive connection resolution; context construction
-failure; timeout; caller cancellation; resource disposal; non-mutation; and redaction for all failure
-paths.
+- [x] Add `test_connection` as a narrowly scoped, server-side connection-health diagnostic
+  - `ConnectionHealthChecker` runs a single bounded `DbContext.Database.CanConnectAsync` probe,
+    linking the MCP `CancellationToken` with a timeout derived from the resolved entry's
+    `CommandTimeoutSeconds` plus `QueryExecutionOptions.CancellationMargin` (the same
+    defense-in-depth shape used by query execution). Genuine caller cancellation propagates as
+    `OperationCanceledException`; the internal timeout instead yields the `TimedOut` status, and any
+    provider failure yields `Failed` - neither ever surfaces the underlying exception. The
+    `test_connection` MCP tool resolves the connection through the existing fail-closed
+    `ResolveConnection` path (explicit name, active-connection fallback, or `McpException` for
+    unknown/inactive connections), constructs only the requested `DbContext`, and returns a redacted
+    payload (context name, connection name, provider, environment, status) with only safe
+    identifiers logged. It never accepts a raw connection string, executes user SQL, calls
+    `SaveChanges`, or changes the active connection.
 
 ## Proposed open work — P0 #9: per-connection context/entity access policy
 

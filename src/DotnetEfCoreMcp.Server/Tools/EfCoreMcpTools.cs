@@ -742,6 +742,53 @@ public sealed class EfCoreMcpTools(
 
         return inferred;
     }
+
+    [McpServerTool(Name = "test_connection"), Description(
+        "Runs a bounded, read-only connectivity probe against a registered connection: resolves the connection " +
+        "registry entry and constructs the requested DbContext, then checks whether the provider accepts a " +
+        "connection within the connection's configured command timeout. Never executes user SQL, never changes " +
+        "the active connection, and never returns connection strings or provider error details - only a " +
+        "redacted status (healthy/failed/timedOut).")]
+    public Task<string> TestConnection(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("test_connection", () => TestConnectionCore(contextName, connectionName, cancellationToken));
+
+    private async Task<string> TestConnectionCore(string contextName, string? connectionName, CancellationToken cancellationToken)
+    {
+        var contextType = ResolveContextType(contextName);
+        var entry = ResolveConnection(connectionName);
+        var provider = ResolveEffectiveProvider(contextType, entry);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        ConnectionHealthStatus status;
+        using (var context = CreateContext(contextType, entry))
+        {
+            status = await ConnectionHealthChecker.CheckAsync(context, entry.CommandTimeoutSeconds, queryExecutionOptions.CancellationMargin, cancellationToken);
+        }
+        stopwatch.Stop();
+
+        logger.LogInformation(
+            "test_connection completed. Context={ContextName} Connection={ConnectionName} Provider={Provider} Environment={Environment} Status={Status} ElapsedMs={ElapsedMs}",
+            contextType.Name, entry.Name, provider, entry.Environment, status, stopwatch.ElapsedMilliseconds);
+
+        return resultFormatter.Format(new
+        {
+            contextName = contextType.Name,
+            connectionName = entry.Name,
+            provider = provider.ToString(),
+            environment = entry.Environment.ToString(),
+            status = status switch
+            {
+                ConnectionHealthStatus.Healthy => "healthy",
+                ConnectionHealthStatus.Failed => "failed",
+                ConnectionHealthStatus.TimedOut => "timedOut",
+                _ => throw new InvalidOperationException($"Unsupported connection health status '{status}'."),
+            },
+        });
+    }
+
     [McpServerTool(Name = "insert_entity"), Description(
         "Inserts one metadata-validated entity into a Development ReadWrite connection. This destructive tool is " +
         "disabled unless EntityMutations:Enabled is explicitly true; it always rejects Production and ReadOnly connections.")]
