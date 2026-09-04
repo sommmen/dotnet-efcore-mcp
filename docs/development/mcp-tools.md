@@ -32,19 +32,20 @@ This is not permission to execute arbitrary C# on the server. The tool accepts o
 
 An opt-in `QueryExecution:Engine = "Roslyn"` setting routes `run_query` through a Roslyn-compiled `UserQuery : TDbContext` pipeline instead, implemented and covered by tests but not yet the default; see [Roslyn-compiled `UserQuery`](./roslyn-user-query.md) for its design and rollout status.
 
-## Proposed open work — P0 #2: `run_query` continuation indicator
+## P0 #2 — `run_query` continuation indicator
 
-Add `hasMoreRows: boolean` to successful **sequence-returning** `run_query` responses. It reports
-whether another row matches after the effective `skip` and effective `take` window; it does not add a
-row to `rows`, change `rowCount`, or expose a total count. The MCP response contract should explicitly
-say that `take: 0` returns no rows and `hasMoreRows: false`, rather than probing or materializing a row.
-Terminal scalar aggregates have no page window and return no `hasMoreRows` signal.
+`hasMoreRows: boolean` is present on every successful **sequence-returning** `run_query` response. It
+reports whether another row matches after the effective `skip` and effective `take` window; it does
+not add a row to `rows`, change `rowCount`, or expose a total count. `take: 0` returns no rows and
+`hasMoreRows: false` without probing or materializing a row. Terminal scalar aggregates have no page
+window; their `hasMoreRows` is always `false`.
 
-Implement this in `QueryExecutor` by retrieving no more than one sentinel row beyond the effective
-take for positive takes, using the existing filtered, ordered, skipped query. Remove the sentinel
-before projection and construct the result with the new flag; retain the current clamping and
-read-only behavior. Add tool binding/serialization coverage plus executor tests for an empty result,
-an exact effective take, an extra row, a clamped take, nonzero skip, and `take: 0`.
+`QueryExecutor` retrieves no more than one sentinel row beyond the effective take for positive takes,
+using the existing filtered, ordered, skipped query (`MaterializeWithContinuationAsync`, shared by the
+`DynamicLinq` and `Roslyn` engines). The sentinel is removed before projection and the result is
+constructed with the flag; clamping and read-only behavior are unchanged. Executor tests cover an
+empty result, an exact effective take, an extra row (over-limit), a clamped take, nonzero skip, and
+`take: 0`.
 - [x] `run_sql_query` — execute explicitly enabled raw SQL only against development `ReadWrite` connections
 - [x] `load_assembly` (or startup-only configuration) — point the server at a project's build output
   - Implemented as both: an optional `TargetAssemblyPath` startup config value AND a
