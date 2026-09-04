@@ -2,10 +2,7 @@
 
 [← Back to Development Guide](../../DEVELOPMENT.md)
 
-Code: TBC (planned) · Tests: `tests/DotnetEfCoreMcp.Server.Tests/Mutations`
-
-> **P1 #12 — Structured entity mutations.** This page documents the intended contract only;
-> no implementation exists yet.
+Code: [`src/DotnetEfCoreMcp.Server/Mutations`](../../src/DotnetEfCoreMcp.Server/Mutations) · Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Mutations`](../../tests/DotnetEfCoreMcp.Server.Tests/Mutations)
 
 ## Goal
 

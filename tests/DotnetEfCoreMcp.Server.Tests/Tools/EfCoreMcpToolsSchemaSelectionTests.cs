@@ -2,7 +2,7 @@ using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
-using DotnetEfCoreMcp.Server.Migrations;
+using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
@@ -161,7 +161,9 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
             new MigrationInspector(new MigrationsOptions(), NullLogger<MigrationInspector>.Instance),
             resultFormatter ?? new JsonToolResultFormatter(),
             toolDiagnosticsOptions ?? new ToolDiagnosticsOptions(),
-            NullLogger<EfCoreMcpTools>.Instance);
+            NullLogger<EfCoreMcpTools>.Instance,
+            new EntityMutationsOptions(),
+            new EntityMutationExecutor(NullLogger<EntityMutationExecutor>.Instance));
     }
 
     private sealed class ThrowingResultFormatter : IToolResultFormatter

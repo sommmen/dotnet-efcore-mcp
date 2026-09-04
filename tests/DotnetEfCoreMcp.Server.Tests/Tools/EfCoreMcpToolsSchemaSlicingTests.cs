@@ -7,6 +7,7 @@ using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 using DotnetEfCoreMcp.Server.Tools;
+using DotnetEfCoreMcp.Server.Mutations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
@@ -262,6 +263,8 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
             new MigrationInspector(new MigrationsOptions(), NullLogger<MigrationInspector>.Instance),
             resultFormatter ?? new JsonToolResultFormatter(),
             toolDiagnosticsOptions ?? new ToolDiagnosticsOptions(),
-            NullLogger<EfCoreMcpTools>.Instance);
+            NullLogger<EfCoreMcpTools>.Instance,
+            new EntityMutationsOptions(),
+            new EntityMutationExecutor(NullLogger<EntityMutationExecutor>.Instance));
     }
 }
