@@ -184,11 +184,15 @@ persistent-host prototype, which reused the existing `RoslynQueryExecutor` uncha
 
 Concretely:
 
-- Extend `OutOfProcessQueryProtocol` with an explicit `shutdown` request variant (or a
-  `RequestId == null` sentinel) so the pool manager can cleanly retire a worker.
-- Keep the JSON payload shapes (`OutOfProcessQueryRequest`/`OutOfProcessQueryResponse`)
-  unchanged — only the framing changes from "one request, EOF" to "newline-delimited requests
-  until shutdown," so existing (de)serialization code is reused as-is.
+- Add an explicit `shutdown` request variant (or a `RequestId == null` sentinel) alongside the
+  existing `OutOfProcessQueryRequest`/`OutOfProcessQueryResponse` types in
+  `OutOfProcessQueryProtocol.cs`, so the pool manager can cleanly retire a worker. This is a
+  protocol change — a new message shape, not a purely additive one — so both host and executor
+  need to agree on `ProtocolVersion` before persistent mode is used.
+- Keep the JSON payload shape for normal queries (`OutOfProcessQueryRequest`/
+  `OutOfProcessQueryResponse`) unchanged — only the framing changes from "one request, EOF" to
+  "newline-delimited requests until shutdown," so existing query (de)serialization code is
+  reused as-is; only the new `shutdown` message and the loop/framing around it are new.
 - The one-shot `QueryHost/Program.cs` path is **kept** unmodified as the default entry point;
   the persistent loop is a **new command-line mode** (e.g. `QueryHost.dll --persistent`) so
   `OutOfProcessRoslynQueryExecutor`'s existing one-shot callers are entirely unaffected.
