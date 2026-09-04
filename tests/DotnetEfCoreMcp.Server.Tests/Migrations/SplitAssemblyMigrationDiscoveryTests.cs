@@ -126,6 +126,54 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void ResolveMigrationsAssembly_WithPathOutsideTargetsNarrowedAllowedRoots_ThrowsEvenWhenServerWideRootAllowsIt()
+    {
+        // The target is registered with a narrower AssemblyTargetOptions.AllowedRoots than the
+        // server-wide AssemblyLoader:AllowedRoots - proves ResolveMigrationsAssembly enforces the
+        // per-target narrowing carried on the handle, not just the server-wide list (a target
+        // scoped to one tenant/root must not be able to pull a migrations assembly from another
+        // server-wide-allowed root).
+        var contextAppRoot = Path.GetDirectoryName(FixturePaths.SplitContextAppDllPath)!;
+        var migrationsAppRoot = Path.GetDirectoryName(FixturePaths.SplitMigrationsAppDllPath)!;
+        var assemblyLoader = new AssemblyLoaderService(new AssemblyLoaderOptions
+        {
+            AllowedRoots = [contextAppRoot, migrationsAppRoot],
+        });
+        var handle = assemblyLoader.Load(
+            FixturePaths.SplitContextAppDllPath,
+            "narrowed",
+            new AssemblyTargetOptions { Path = FixturePaths.SplitContextAppDllPath, AllowedRoots = [contextAppRoot] });
+
+        var exception = Assert.Throws<AssemblyLoadFailedException>(() =>
+            assemblyLoader.ResolveMigrationsAssembly(handle, FixturePaths.SplitMigrationsAppDllPath));
+
+        Assert.Contains("outside this target's configured allowed roots", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ResolveMigrationsAssembly_WithPathInsideTargetsNarrowedAllowedRoots_Succeeds()
+    {
+        var contextAppRoot = Path.GetDirectoryName(FixturePaths.SplitContextAppDllPath)!;
+        var migrationsAppRoot = Path.GetDirectoryName(FixturePaths.SplitMigrationsAppDllPath)!;
+        var assemblyLoader = new AssemblyLoaderService(new AssemblyLoaderOptions
+        {
+            AllowedRoots = [contextAppRoot, migrationsAppRoot],
+        });
+        var handle = assemblyLoader.Load(
+            FixturePaths.SplitContextAppDllPath,
+            "narrowed",
+            new AssemblyTargetOptions
+            {
+                Path = FixturePaths.SplitContextAppDllPath,
+                AllowedRoots = [contextAppRoot, migrationsAppRoot],
+            });
+
+        var resolved = assemblyLoader.ResolveMigrationsAssembly(handle, FixturePaths.SplitMigrationsAppDllPath);
+
+        Assert.Equal("SplitMigrationsApp", resolved.GetName().Name);
+    }
+
+    [Fact]
     public async Task ListMigrations_WithUnresolvableMigrationsAssemblyName_ThrowsRedactedError()
     {
         var tools = CreateTools();

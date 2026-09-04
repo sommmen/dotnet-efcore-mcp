@@ -170,8 +170,11 @@ an explicitly resolved `Assembly` instance.
   context type were loaded twice into two different load contexts, the migration would not be
   recognized as belonging to it.
 - Failures (path outside `AllowedRoots`, file not found, or name not resolvable as a
-  dependency) surface as redacted `McpException`s, matching every other assembly-loading
-  failure path — no filesystem layout or dependency-resolution internals are echoed back.
+  dependency) surface as `McpException`s, matching every other assembly-loading failure path.
+  As with `load_assembly`, the message may echo back the offending path itself (so the caller
+  can see what was rejected and why), but never connection strings, parameter values, or other
+  provider-internal details — see [Connection management](./connections.md) for what "redacted"
+  means in this codebase.
 
 **Scope — supported ("reverse") direction only.** The currently loaded `load_assembly` target
 must be (or reference) the assembly containing the `DbContext` type; `migrationsAssembly` then

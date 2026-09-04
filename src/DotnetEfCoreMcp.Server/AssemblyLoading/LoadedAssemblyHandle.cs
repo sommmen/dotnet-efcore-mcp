@@ -14,12 +14,18 @@ public sealed class LoadedAssemblyHandle
 {
     private readonly TargetAssemblyLoadContext _context;
 
-    internal LoadedAssemblyHandle(TargetAssemblyLoadContext context, Assembly assembly, string assemblyPath, DateTimeOffset loadedAtUtc)
+    internal LoadedAssemblyHandle(
+        TargetAssemblyLoadContext context,
+        Assembly assembly,
+        string assemblyPath,
+        DateTimeOffset loadedAtUtc,
+        IReadOnlyList<string>? additionalAllowedRoots = null)
     {
         _context = context;
         Assembly = assembly;
         AssemblyPath = assemblyPath;
         LoadedAtUtc = loadedAtUtc;
+        AdditionalAllowedRoots = additionalAllowedRoots;
     }
 
     public Assembly Assembly { get; }
@@ -27,6 +33,16 @@ public sealed class LoadedAssemblyHandle
     public string AssemblyPath { get; }
 
     public DateTimeOffset LoadedAtUtc { get; }
+
+    /// <summary>This target's own narrowed <c>AllowedRoots</c> (already normalized to full paths
+    /// with a trailing separator), if it was registered with one via
+    /// <see cref="AssemblyTargetOptions.AllowedRoots"/>; <c>null</c> when only the server-wide
+    /// <c>AssemblyLoader:AllowedRoots</c> applies. Carried on the handle - rather than looked up
+    /// separately by target name - so later operations against an already-resolved handle (such as
+    /// <see cref="AssemblyLoaderService.ResolveMigrationsAssembly"/>) enforce the same per-target
+    /// narrowing that applied when the target was loaded, even though they only receive the handle,
+    /// not the target name.</summary>
+    internal IReadOnlyList<string>? AdditionalAllowedRoots { get; }
 
     /// <summary>Non-fatal problems found while preparing dependency resolution for this target
     /// (e.g. a shared framework the target needs that is not installed). Empty for a target whose

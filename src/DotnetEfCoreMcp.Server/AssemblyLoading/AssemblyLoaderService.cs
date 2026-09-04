@@ -108,6 +108,12 @@ public sealed class AssemblyLoaderService
         var fullPath = Path.GetFullPath(assemblyPath);
         ValidateAllowedRoots(fullPath, additionalAllowedRoots);
 
+        // Normalized once here (rather than re-derived later) so it can be carried on the handle
+        // for ResolveMigrationsAssembly to re-apply against this same target's narrowing.
+        var normalizedAdditionalAllowedRoots = additionalAllowedRoots is { Count: > 0 }
+            ? NormalizeRoots(additionalAllowedRoots)
+            : null;
+
         if (!File.Exists(fullPath))
         {
             throw new AssemblyLoadFailedException(
@@ -171,7 +177,7 @@ public sealed class AssemblyLoaderService
                 throw new AssemblyLoadFailedException($"Failed to load '{fullPath}': {ex.Message}", ex);
             }
 
-            handle = new LoadedAssemblyHandle(context, assembly, fullPath, DateTimeOffset.UtcNow);
+            handle = new LoadedAssemblyHandle(context, assembly, fullPath, DateTimeOffset.UtcNow, normalizedAdditionalAllowedRoots);
             _targets[resolvedName] = new TargetEntry(handle, fileInfo.LastWriteTimeUtc, autoReloadOverride);
 
             previous?.Handle.Unload();
@@ -236,10 +242,21 @@ public sealed class AssemblyLoaderService
 
             var fullPath = Path.GetFullPath(migrationsAssembly);
 
-            if (_allowedRoots.Count > 0 && !_allowedRoots.Any(root => fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+            if (_allowedRoots.Count > 0 && !MatchesAnyRoot(fullPath, _allowedRoots))
             {
                 throw new AssemblyLoadFailedException(
                     $"Migrations assembly path '{fullPath}' is outside the configured allowed roots. Configure `AssemblyLoader:AllowedRoots` to include this location, or point at an assembly under an already-allowed root.");
+            }
+
+            // Mirror ValidateAllowedRoots' two-tier check: the handle's own target may have been
+            // registered with a narrower AllowedRoots override (AssemblyTargetOptions.AllowedRoots),
+            // which must be enforced here too - otherwise a migrations assembly could be loaded from
+            // any server-wide allowed root even for a target deliberately scoped to a subset.
+            if (handle.AdditionalAllowedRoots is { Count: > 0 } additionalAllowedRoots &&
+                !MatchesAnyRoot(fullPath, additionalAllowedRoots))
+            {
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly path '{fullPath}' is outside this target's configured allowed roots.");
             }
 
             if (!File.Exists(fullPath))
