@@ -36,23 +36,24 @@ No terminal call is required — `run_query` always materializes the resulting s
 
 Execution is always `AsNoTracking`, subject to the selected connection's command timeout and server cancellation. Root primary-key ordering supplies deterministic ordering for un-ordered root sequences. Sequence results receive the configured default page when no `Take` is supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated.
 
-## Proposed open work — P0 #2: `run_query` continuation indicator
+## P0 #2 — `run_query` continuation indicator
 
-Extend sequence `QueryResult` values and their `run_query` responses with `hasMoreRows`. For a
+Sequence `QueryResult` values (and their `run_query` responses) carry `hasMoreRows`. For a
 positive effective take, it is `true` only if at least one row remains after applying the final sequence
 ordering and effective `skip`/`take` values. It is not a total-count indicator: `rows` and `rowCount`
 continue to contain at most the effective take rows, while the flag supports a subsequent query with an
 advanced `skip`. When no rows remain—or when the result has exactly the effective take rows—the flag
-is `false`. Terminal scalar aggregates have neither a page window nor `hasMoreRows`.
+is `false`. Terminal scalar aggregates have no page window; their `hasMoreRows` is always `false`.
 
-After filtering, ordering, and skipping, have the executor request `effectiveTake + 1` rows for a
-positive effective take. Treat the final row solely as a sentinel: set `hasMoreRows`, discard it,
-and project only the requested window. Do not execute the sentinel probe for `effectiveTake == 0`:
-`take: 0` must return `rows: []`, `rowCount: 0`, and `hasMoreRows: false`, including when matching
-rows exist. Preserve take clamping, cancellation/timeout behavior, and bounded projection. Add
-focused executor tests for empty results, fewer-than-take results, exact-take results, an extra row,
-clamped takes, skipped windows, and `take: 0`; add MCP binding/response serialization coverage for
-the new field.
+After filtering, ordering, and skipping, the executor requests `effectiveTake + 1` rows for a
+positive effective take (`QueryExecutor.MaterializeWithContinuationAsync`, shared by both the
+`DynamicLinq` and `Roslyn` engines). The final row, if present, is treated solely as a sentinel: it
+sets `hasMoreRows` and is discarded before projection, so only the requested window is returned. The
+sentinel probe is never executed for `effectiveTake == 0`: `take: 0` returns `rows: []`, `rowCount: 0`,
+and `hasMoreRows: false` without materializing or querying the database, even when matching rows exist.
+Take clamping, cancellation/timeout behavior, and bounded projection are unaffected. Focused executor
+tests cover empty results, exact-take results, an extra row (over-limit), clamped takes, skipped
+windows, and `take: 0`, across both query engines.
 - [x] Translate/execute the incoming query against the real `DbSet<T>` for the requested entity
 - [x] Enforce read-only execution by default (no `SaveChanges`, no tracked entities, `.AsNoTracking()`)
 - [x] Enforce a maximum result size / row limit and require pagination for larger result sets
