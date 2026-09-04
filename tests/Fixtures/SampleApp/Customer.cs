@@ -12,6 +12,8 @@ public class Customer
 
     public int Age { get; set; }
 
+    public int? Version { get; set; }
+
     public List<Order> Orders { get; set; } = new();
 
     /// <summary>Not part of the EF model on purpose - exercises that query result projection only

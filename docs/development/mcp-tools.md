@@ -10,6 +10,9 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 - [x] `list_contexts` — list discovered `DbContext` types available from the currently loaded assembly
 - [x] `get_schema` — return the model/schema for a given context
 - [x] `run_query` — execute a read-only LINQPad-style query expression against a selected context
+- [x] `insert_entity` — insert a metadata-validated entity through a non-production `ReadWrite` connection
+- [x] `update_entity` — update a metadata-validated entity through a non-production `ReadWrite` connection
+- [x] `delete_entity` — delete a metadata-validated entity through a non-production `ReadWrite` connection
 
 ## P0 #1 — LINQPad-style `run_query`
 
@@ -197,13 +200,13 @@ tests cover parameter binding, non-production gating, script truncation, redacte
 classification, and proof that scripting never enumerates a query, opens a connection, or
 mutates state.
 
-## Proposed open work — P1 #12: structured mutation tools
+## P1 #12 — structured mutation tools
 
-Add three structured, single-entity write tools — `insert_entity`, `update_entity`, and
-`delete_entity` — gated by a distinct `EntityMutations:Enabled` flag (default `false`) and
-restricted, like `generate_migration_script`, to non-production `ReadWrite` connections resolved
-only through the existing `ConnectionRegistry`/`DbContext` factory path. No tool accepts raw SQL,
-expressions, navigation graphs, or connection strings.
+The three structured, single-entity write tools — `insert_entity`, `update_entity`, and
+`delete_entity` — are gated by `EntityMutations:Enabled` (default `false`) and restricted to
+non-production `ReadWrite` connections resolved only through the existing
+`ConnectionRegistry`/`DbContext` factory path. No tool accepts raw SQL, expressions, navigation
+graphs, or connection strings.
 
 Each tool binds structured parameters (`entity`, `values` and/or `key`, optional `concurrency`,
 optional `connectionName`) and forwards them to a mutation executor that resolves the target

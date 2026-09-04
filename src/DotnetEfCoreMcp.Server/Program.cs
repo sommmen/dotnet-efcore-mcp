@@ -1,6 +1,7 @@
 ﻿using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.Compilation;
+using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tools;
@@ -47,6 +48,8 @@ builder.Services.AddSingleton<QueryCompiler>();
 builder.Services.AddSingleton<RoslynQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("RawSqlExecution").Get<RawSqlExecutionOptions>() ?? new RawSqlExecutionOptions());
 builder.Services.AddSingleton<SqlQueryExecutor>();
+builder.Services.AddSingleton(builder.Configuration.GetSection("EntityMutations").Get<EntityMutationsOptions>() ?? new EntityMutationsOptions());
+builder.Services.AddSingleton<EntityMutationExecutor>();
 // Diagnostic metadata is an explicit development-only opt-in. ToolDiagnosticsOptions additionally
 // refuses to enable it under any other host environment.
 builder.Services.AddSingleton(_ => ToolDiagnosticsOptions.CreateEffective(

@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
+using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using Microsoft.Extensions.Logging;
@@ -27,7 +29,9 @@ public sealed class EfCoreMcpTools(
     SqlQueryExecutor sqlQueryExecutor,
     IToolResultFormatter resultFormatter,
     ToolDiagnosticsOptions toolDiagnosticsOptions,
-    ILogger<EfCoreMcpTools> logger)
+    ILogger<EfCoreMcpTools> logger,
+    EntityMutationsOptions entityMutationsOptions,
+    EntityMutationExecutor entityMutationExecutor)
 {
 
     [McpServerTool(Name = "list_assembly_candidates"), Description(
@@ -647,5 +651,112 @@ public sealed class EfCoreMcpTools(
         }
 
         return inferred;
+    }
+    [McpServerTool(Name = "insert_entity"), Description(
+        "Inserts one metadata-validated entity into a Development ReadWrite connection. This destructive tool is " +
+        "disabled unless EntityMutations:Enabled is explicitly true; it always rejects Production and ReadOnly connections.")]
+    public Task<string> InsertEntity(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("CLR type name of the entity to insert.")] string entity,
+        [Description("Values for writable scalar properties.")] Dictionary<string, JsonElement> values,
+        [Description("Logical connection name from the server registry. If omitted, the active connection is used.")] string? connectionName = null,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("insert_entity", () => MutateEntityCore(contextName, entity, EntityMutationOperation.Insert, null, values, null, connectionName, cancellationToken));
+
+    [McpServerTool(Name = "update_entity"), Description(
+        "Updates one metadata-validated entity in a Development ReadWrite connection. This destructive tool is " +
+        "disabled unless EntityMutations:Enabled is explicitly true; it always rejects Production and ReadOnly connections.")]
+    public Task<string> UpdateEntity(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("CLR type name of the entity to update.")] string entity,
+        [Description("Complete primary-key values by exact property name.")] Dictionary<string, JsonElement> key,
+        [Description("Non-empty values for writable scalar properties to change.")] Dictionary<string, JsonElement> values,
+        [Description("Original values for every concurrency-token property, when required.")] Dictionary<string, JsonElement>? concurrency = null,
+        [Description("Logical connection name from the server registry. If omitted, the active connection is used.")] string? connectionName = null,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("update_entity", () => MutateEntityCore(contextName, entity, EntityMutationOperation.Update, key, values, concurrency, connectionName, cancellationToken));
+
+    [McpServerTool(Name = "delete_entity"), Description(
+        "Deletes one metadata-validated entity from a Development ReadWrite connection. This destructive tool is " +
+        "disabled unless EntityMutations:Enabled is explicitly true; it always rejects Production and ReadOnly connections.")]
+    public Task<string> DeleteEntity(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("CLR type name of the entity to delete.")] string entity,
+        [Description("Complete primary-key values by exact property name.")] Dictionary<string, JsonElement> key,
+        [Description("Original values for every concurrency-token property, when required.")] Dictionary<string, JsonElement>? concurrency = null,
+        [Description("Logical connection name from the server registry. If omitted, the active connection is used.")] string? connectionName = null,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("delete_entity", () => MutateEntityCore(contextName, entity, EntityMutationOperation.Delete, key, null, concurrency, connectionName, cancellationToken));
+
+    private async Task<string> MutateEntityCore(
+        string contextName,
+        string entity,
+        EntityMutationOperation operation,
+        Dictionary<string, JsonElement>? key,
+        Dictionary<string, JsonElement>? values,
+        Dictionary<string, JsonElement>? concurrency,
+        string? connectionName,
+        CancellationToken cancellationToken)
+    {
+        if (!entityMutationsOptions.Enabled)
+        {
+            throw new McpException("Entity mutations are disabled by default as a safety guard. To enable them, set EntityMutations:Enabled to true in the server's configuration and restart the MCP server process. Even when enabled, entity mutations refuse Production connections and require a ReadWrite connection.");
+        }
+
+        var contextType = ResolveContextType(contextName);
+        var entry = ResolveConnection(connectionName);
+        if (entry.IsProduction)
+        {
+            throw new McpException("Entity mutations are not permitted for production connections.");
+        }
+        if (entry.AccessMode != ConnectionAccessMode.ReadWrite)
+        {
+            throw new McpException("Entity mutations require a ReadWrite connection.");
+        }
+
+        using var context = CreateContext(contextType, entry);
+        try
+        {
+            var result = await entityMutationExecutor.ExecuteAsync(
+                context,
+                new EntityMutationRequest(operation, entity, key, values, concurrency),
+                cancellationToken);
+            if (result.IsConflict)
+            {
+                return resultFormatter.Format(new
+                {
+                    contextName,
+                    connectionName = entry.Name,
+                    entity = result.Entity,
+                    operation = "not-found-or-concurrency-conflict",
+                    affectedRows = 0
+                });
+            }
+
+            return resultFormatter.Format(new
+            {
+                contextName,
+                connectionName = entry.Name,
+                entity = result.Entity,
+                operation = result.Operation,
+                affectedRows = result.AffectedRows,
+                values = result.Values
+            });
+        }
+        catch (MutationExecutionException ex) when (ex.IsConflict)
+        {
+            return resultFormatter.Format(new
+            {
+                contextName,
+                connectionName = entry.Name,
+                entity,
+                operation = "not-found-or-concurrency-conflict",
+                affectedRows = 0
+            });
+        }
+        catch (MutationExecutionException ex)
+        {
+            throw new McpException($"{ex.Message} Next step: correct the request using the DbContext schema and retry.");
+        }
     }
 }

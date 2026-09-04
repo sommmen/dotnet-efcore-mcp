@@ -300,6 +300,9 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
 | `run_query` | `contextName: string`, `query: string`, `connectionName?: string` | Root DbSet name, scalar-or-sequence result, effective sequence page size, and safely projected rows |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
+| `insert_entity` | `contextName: string`, `entity: string`, `values: object`, `connectionName?: string` | Inserted scalar values and actual affected rows; disabled by default and restricted to development `ReadWrite` connections |
+| `update_entity` | `contextName: string`, `entity: string`, `key: object`, `values: object`, `concurrency?: object`, `connectionName?: string` | Updated scalar values and actual affected rows, or a stable not-found-or-concurrency-conflict result |
+| `delete_entity` | `contextName: string`, `entity: string`, `key: object`, `concurrency?: object`, `connectionName?: string` | Actual affected rows, or a stable not-found-or-concurrency-conflict result |
 
 `query` is a [Dynamic LINQ](https://dynamic-linq.net/) expression rooted at an exact, public
 `DbSet<T>` property name on the selected context, such as
