@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Launcher</RootNamespace>
+    <!-- Deliberately has NO ProjectReference to TargetApp or QueryHost: this PoC's whole point
+         is that the three processes are independently built and only ever connected at runtime
+         via "dotnet exec [runtimeconfig] ... [depsfile] ... <dll>", not via shared compile-time
+         references or a shared bin output. See ../README.md. -->
+  </PropertyGroup>
+
+</Project>
