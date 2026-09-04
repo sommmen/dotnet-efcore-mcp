@@ -9,6 +9,12 @@ public sealed class QueryExecutionOptions
     /// flips.</summary>
     public QueryEngine Engine { get; init; } = QueryEngine.DynamicLinq;
 
+    /// <summary>Where Roslyn queries execute. Auto safely selects an isolated process.</summary>
+    public QueryExecutionMode Mode { get; init; } = QueryExecutionMode.Auto;
+
+    /// <summary>Path to the query-host DLL. Required for out-of-process Roslyn execution.</summary>
+    public string? OutOfProcessHostPath { get; init; }
+
     /// <summary>Whether a compiled <see cref="QueryEngine.Roslyn"/> query is allowed to call
     /// <c>SaveChanges()</c>/<c>SaveChangesAsync()</c> (directly or via tracked entities). Defaults
     /// to <c>false</c> so <c>run_query</c> stays read-only by default even under the Roslyn
