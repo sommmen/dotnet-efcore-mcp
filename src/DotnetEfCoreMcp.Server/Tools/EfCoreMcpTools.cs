@@ -130,23 +130,27 @@ public sealed class EfCoreMcpTools(
 
     [McpServerTool(Name = "load_assembly"), Description(
         "Loads (or reloads) a compiled target .NET project's assembly (its bin/<Configuration>/<TFM>/*.dll output) " +
-        "into an isolated, collectible AssemblyLoadContext, replacing any previously loaded assembly. " +
-        "Returns warnings when no DbContexts are found or when assembly types could not load. " +
-        "Call this before list_contexts/get_schema/run_query, or again after rebuilding the target project.")]
+        "into an isolated, collectible AssemblyLoadContext, replacing any previously loaded assembly under the same " +
+        "target. Returns warnings when no DbContexts are found or when assembly types could not load. " +
+        "Call this before list_contexts/get_schema/run_query, or again after rebuilding the target project. " +
+        "Pass targetName to register/replace an additional named target instead of the default one, so multiple " +
+        "compiled assemblies can be loaded and addressed simultaneously; omit it to preserve today's single-target " +
+        "behavior.")]
     public string LoadAssembly(
-        [Description("Absolute or relative path to the target project's compiled assembly DLL.")] string assemblyPath)
-        => Execute("load_assembly", () => LoadAssemblyCore(assemblyPath));
+        [Description("Absolute or relative path to the target project's compiled assembly DLL.")] string assemblyPath,
+        [Description("Optional logical name to register this assembly under, so it can be addressed later via targetName without disturbing other loaded targets. Omit to load/replace the default target (today's behavior).")] string? targetName = null)
+        => Execute("load_assembly", () => LoadAssemblyCore(assemblyPath, targetName));
 
-    private string LoadAssemblyCore(string assemblyPath)
+    private string LoadAssemblyCore(string assemblyPath, string? targetName = null)
     {
         try
         {
-            var handle = assemblyLoader.Load(assemblyPath);
+            var handle = assemblyLoader.Load(assemblyPath, targetName);
             var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
             var warnings = BuildScanWarnings(scan, handle);
             logger.LogInformation(
-                "Loaded target assembly. Path={AssemblyPath} DbContextCount={DbContextCount}",
-                handle.AssemblyPath, scan.Descriptors.Count);
+                "Loaded target assembly. Path={AssemblyPath} TargetName={TargetName} DbContextCount={DbContextCount}",
+                handle.AssemblyPath, targetName, scan.Descriptors.Count);
             if (warnings.Count > 0)
             {
                 logger.LogWarning(
@@ -158,6 +162,7 @@ public sealed class EfCoreMcpTools(
             {
                 loadedAssemblyPath = handle.AssemblyPath,
                 loadedAtUtc = handle.LoadedAtUtc,
+                targetName,
                 discoveredDbContexts = scan.Descriptors.Select(c => new { name = c.Name, fullName = c.FullName, constructionKind = c.ConstructionKind.ToString() }),
                 defaultContext = scan.Descriptors.Count == 1 ? scan.Descriptors[0].Name : null,
                 hint = scan.Descriptors.Count == 1
@@ -175,13 +180,15 @@ public sealed class EfCoreMcpTools(
 
     [McpServerTool(Name = "list_contexts"), Description(
         "Lists the Microsoft.EntityFrameworkCore.DbContext-derived types discovered in the currently loaded target assembly, " +
-        "including warnings when none are found or when assembly types could not load.")]
-    public string ListContexts()
-        => Execute("list_contexts", ListContextsCore);
+        "including warnings when none are found or when assembly types could not load. Pass targetName to inspect a " +
+        "non-default named target loaded via load_assembly; omit it to use the current default target (today's behavior).")]
+    public string ListContexts(
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null)
+        => Execute("list_contexts", () => ListContextsCore(targetName));
 
-    private string ListContextsCore()
+    private string ListContextsCore(string? targetName = null)
     {
-        var handle = RequireLoadedAssembly();
+        var handle = RequireLoadedAssembly(targetName);
         var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
         var warnings = BuildScanWarnings(scan);
         if (warnings.Count > 0)
@@ -194,7 +201,7 @@ public sealed class EfCoreMcpTools(
         return resultFormatter.Format(new
         {
             assemblyPath = handle.AssemblyPath,
-            isStale = assemblyLoader.IsCurrentAssemblyStale(),
+            isStale = assemblyLoader.IsTargetStale(targetName),
             contexts = scan.Descriptors.Select(c => new
             {
                 name = c.Name,
@@ -212,17 +219,18 @@ public sealed class EfCoreMcpTools(
         [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
         [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. If omitted, the currently active connection is used.")] string? connectionName = null,
         [Description("One-based entity page number. Defaults to 1.")] int page = 1,
-        [Description("Number of entities per page. Defaults to 25 and is capped at 100.")] int pageSize = 25)
-        => Execute("get_schema", () => GetSchemaCore(contextName, connectionName, page, pageSize));
+        [Description("Number of entities per page. Defaults to 25 and is capped at 100.")] int pageSize = 25,
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null)
+        => Execute("get_schema", () => GetSchemaCore(contextName, connectionName, page, pageSize, targetName));
 
-    private string GetSchemaCore(string? contextName, string? connectionName, int page, int pageSize)
+    private string GetSchemaCore(string? contextName, string? connectionName, int page, int pageSize, string? targetName = null)
     {
         if (page < 1)
             throw new McpException("`page` must be at least 1.");
         if (pageSize < 1 || pageSize > 100)
             throw new McpException("`pageSize` must be between 1 and 100.");
 
-        var contextType = ResolveContextType(contextName);
+        var contextType = ResolveContextType(contextName, targetName);
         var entry = ResolveConnection(connectionName);
 
         logger.LogInformation("get_schema requested. Context={ContextName} Connection={ConnectionName} Page={Page} PageSize={PageSize}", contextType.Name, connectionName, page, pageSize);
@@ -343,8 +351,9 @@ public sealed class EfCoreMcpTools(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
         [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, cancellationToken));
+        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, cancellationToken));
 
     private async Task<QueryResult> ExecuteDynamicLinqAsync(Type contextType, ConnectionRegistryEntry entry, string query, CancellationToken cancellationToken)
     {
@@ -352,9 +361,9 @@ public sealed class EfCoreMcpTools(
         return await queryExecutor.ExecuteAsync(context, new QueryRequest { Query = query }, entry.CommandTimeoutSeconds, cancellationToken);
     }
 
-    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, CancellationToken cancellationToken)
+    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, CancellationToken cancellationToken)
     {
-        var contextType = ResolveContextType(contextName);
+        var contextType = ResolveContextType(contextName, targetName);
         var entry = ResolveConnection(connectionName);
         try
         {
@@ -362,7 +371,7 @@ public sealed class EfCoreMcpTools(
             {
                 QueryEngine.DynamicLinq => await ExecuteDynamicLinqAsync(contextType, entry, query, cancellationToken),
                 QueryEngine.Roslyn => await roslynQueryExecutor.ExecuteAsync(
-                    RequireLoadedAssembly(), contextType, entry, ResolveEffectiveProvider(contextType, entry),
+                    RequireLoadedAssembly(targetName), contextType, entry, ResolveEffectiveProvider(contextType, entry),
                     new QueryRequest { Query = query }, cancellationToken),
                 _ => throw new InvalidOperationException($"Unsupported query engine '{queryExecutionOptions.Engine}'.")
             };
@@ -383,10 +392,11 @@ public sealed class EfCoreMcpTools(
         [Description("Raw SQL command text. Use @p0, @p1, ... for values rather than embedding them in this string.")] string sql,
         [Description("Logical connection name from the server's connection registry. If omitted, the currently active connection is used.")] string? connectionName = null,
         [Description("Positional parameter values referenced by SQL placeholders @p0, @p1, ...")] object?[]? parameters = null,
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("run_sql_query", () => RunSqlQueryCore(contextName, sql, connectionName, parameters, cancellationToken));
+        => ExecuteAsync("run_sql_query", () => RunSqlQueryCore(contextName, sql, connectionName, parameters, targetName, cancellationToken));
 
-    private async Task<string> RunSqlQueryCore(string contextName, string sql, string? connectionName, object?[]? parameters, CancellationToken cancellationToken)
+    private async Task<string> RunSqlQueryCore(string contextName, string sql, string? connectionName, object?[]? parameters, string? targetName, CancellationToken cancellationToken)
     {
         if (!rawSqlExecutionOptions.Enabled)
         {
@@ -400,7 +410,7 @@ public sealed class EfCoreMcpTools(
                 "read-only LINQ-style querying) already covers your need before enabling raw SQL.");
         }
 
-        var contextType = ResolveContextType(contextName);
+        var contextType = ResolveContextType(contextName, targetName);
         var entry = ResolveConnection(connectionName);
         if (entry.IsProduction)
         {
@@ -590,6 +600,55 @@ public sealed class EfCoreMcpTools(
         }
     }
 
+    [McpServerTool(Name = "list_loaded_assemblies"), Description(
+        "Lists every target assembly currently registered on the server, including each target's logical name, " +
+        "source path, load timestamp, and whether it is the current default target used when targetName is " +
+        "omitted from load_assembly/list_contexts/get_schema/run_query/run_sql_query.")]
+    public string ListLoadedAssemblies()
+        => Execute("list_loaded_assemblies", ListLoadedAssembliesCore);
+
+    private string ListLoadedAssembliesCore()
+    {
+        var targets = assemblyLoader.ListTargets();
+        return resultFormatter.Format(new
+        {
+            defaultTargetName = assemblyLoader.CurrentDefaultTargetName == AssemblyLoaderService.DefaultTargetName
+                ? null
+                : assemblyLoader.CurrentDefaultTargetName,
+            targets = targets.Select(t => new
+            {
+                targetName = t.Name == AssemblyLoaderService.DefaultTargetName ? null : t.Name,
+                assemblyPath = t.Handle.AssemblyPath,
+                loadedAtUtc = t.Handle.LoadedAtUtc,
+                isDefault = t.IsDefault,
+            }),
+        });
+    }
+
+    [McpServerTool(Name = "select_target"), Description(
+        "Selects which registered target assembly resolves as the default when load_assembly/list_contexts/" +
+        "get_schema/run_query/run_sql_query calls omit targetName. Does not unload or otherwise affect any " +
+        "other registered target.")]
+    public string SelectTarget(
+        [Description("Logical target name previously registered via load_assembly's targetName parameter.")] string targetName)
+        => Execute("select_target", () => SelectTargetCore(targetName));
+
+    private string SelectTargetCore(string targetName)
+    {
+        try
+        {
+            assemblyLoader.SelectDefault(targetName);
+            return resultFormatter.Format(new
+            {
+                defaultTargetName = targetName,
+            });
+        }
+        catch (UnknownAssemblyTargetException ex)
+        {
+            throw new McpException(ex.Message);
+        }
+    }
+
     private T Execute<T>(string operation, Func<T> action)
     {
         try
@@ -675,10 +734,17 @@ public sealed class EfCoreMcpTools(
             "reloading the assembly will not help.";
     }
 
-    private LoadedAssemblyHandle RequireLoadedAssembly()
+    private LoadedAssemblyHandle RequireLoadedAssembly(string? targetName = null)
     {
-        return assemblyLoader.Current
-            ?? throw new McpException("No target assembly is loaded yet. Call load_assembly with the path to a compiled target project's DLL first.");
+        try
+        {
+            return assemblyLoader.Get(targetName)
+                ?? throw new McpException("No target assembly is loaded yet. Call load_assembly with the path to a compiled target project's DLL first.");
+        }
+        catch (UnknownAssemblyTargetException ex)
+        {
+            throw new McpException(ex.Message);
+        }
     }
 
     /// <summary>Cache-only schema retrieval for <c>get_entity_schema</c>/<c>search_schema</c>: never
@@ -694,9 +760,9 @@ public sealed class EfCoreMcpTools(
             "then retry.");
     }
 
-    private Type ResolveContextType(string? contextName)
+    private Type ResolveContextType(string? contextName, string? targetName = null)
     {
-        var handle = RequireLoadedAssembly();
+        var handle = RequireLoadedAssembly(targetName);
         var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
         var contexts = scan.Descriptors;
 
