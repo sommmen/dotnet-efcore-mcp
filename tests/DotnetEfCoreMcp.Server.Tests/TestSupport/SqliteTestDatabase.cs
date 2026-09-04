@@ -25,15 +25,27 @@ public sealed class SqliteTestDatabase : IDisposable
         string name = "TestConnection",
         int commandTimeoutSeconds = 30,
         ConnectionAccessMode accessMode = ConnectionAccessMode.ReadOnly,
-        EnvironmentType environment = EnvironmentType.Unspecified) => new()
-    {
-        Name = name,
-        Provider = DatabaseProvider.Sqlite,
-        ConnectionString = ConnectionString,
-        AccessMode = accessMode,
-        CommandTimeoutSeconds = commandTimeoutSeconds,
-        Environment = environment,
-    };
+        EnvironmentType environment = EnvironmentType.Unspecified,
+        ConnectionAccessPolicy? accessPolicy = null) => new()
+        {
+            Name = name,
+            Provider = DatabaseProvider.Sqlite,
+            ConnectionString = ConnectionString,
+            AccessMode = accessMode,
+            CommandTimeoutSeconds = commandTimeoutSeconds,
+            Environment = environment,
+            // DbContextActivator (the only consumer of entries built this way) never consults
+            // AccessPolicy - it is purely MCP tool-layer enforcement - so an empty, unused-by-default
+            // policy keeps these lower-level fixtures decoupled from policy concerns unless a test
+            // explicitly supplies one.
+            AccessPolicy = accessPolicy ?? new ConnectionAccessPolicy
+            {
+                AllowContexts = [],
+                DenyContexts = [],
+                AllowEntities = [],
+                DenyEntities = [],
+            },
+        };
 
     public void Dispose()
     {

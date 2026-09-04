@@ -35,6 +35,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
                 ["Connections:MigrationsTests:Provider"] = "Sqlite",
                 ["Connections:MigrationsTests:AccessMode"] = accessMode.ToString(),
                 ["Connections:MigrationsTests:Environment"] = environment.ToString(),
+                ["Connections:MigrationsTests:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();

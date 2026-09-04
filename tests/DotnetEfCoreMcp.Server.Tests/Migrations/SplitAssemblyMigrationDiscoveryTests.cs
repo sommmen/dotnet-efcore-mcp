@@ -54,6 +54,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
                 ["Connections:MigrationsTests:Provider"] = "Sqlite",
                 ["Connections:MigrationsTests:AccessMode"] = ConnectionAccessMode.ReadWrite.ToString(),
                 ["Connections:MigrationsTests:Environment"] = EnvironmentType.Development.ToString(),
+                ["Connections:MigrationsTests:AccessPolicy:AllowContexts:0"] = "SplitContextApp.SplitDbContext",
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
