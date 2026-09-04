@@ -130,4 +130,30 @@ if (!string.IsNullOrWhiteSpace(configuredAssemblyPath))
     }
 }
 
+// Optional startup convenience: seed any additional named targets configured under
+// "AssemblyLoader:Targets" (see AssemblyLoaderOptions.Targets), so multiple compiled assemblies can
+// be available for `targetName`-qualified tool calls immediately without separate load_assembly
+// calls. Purely additive - existing single-target callers that never configure `Targets` see no
+// change.
+var assemblyLoaderOptions = host.Services.GetRequiredService<AssemblyLoaderOptions>();
+foreach (var (targetName, targetOptions) in assemblyLoaderOptions.Targets)
+{
+    if (string.IsNullOrWhiteSpace(targetOptions.Path))
+    {
+        logger.LogWarning("Skipping AssemblyLoader:Targets entry '{TargetName}': no Path configured.", targetName);
+        continue;
+    }
+
+    try
+    {
+        var namedLoader = host.Services.GetRequiredService<AssemblyLoaderService>();
+        namedLoader.Load(targetOptions.Path, targetName, targetOptions);
+        logger.LogInformation("Loaded target assembly '{TargetName}' from configured AssemblyLoader:Targets entry: {Path}", targetName, targetOptions.Path);
+    }
+    catch (AssemblyLoadFailedException ex)
+    {
+        logger.LogWarning(ex, "Failed to load configured AssemblyLoader:Targets entry '{TargetName}' at startup ('{Path}'); use the load_assembly tool once the issue is resolved.", targetName, targetOptions.Path);
+    }
+}
+
 await host.RunAsync();
