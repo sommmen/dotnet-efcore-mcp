@@ -250,6 +250,81 @@ public sealed class EfCoreMcpTools(
         });
     }
 
+    [McpServerTool(Name = "get_entity_schema"), Description(
+        "Returns the complete cached schema definition (properties, primary keys, foreign keys, navigations, " +
+        "ownership, and inheritance metadata) for one exact entity name on a DbContext already discovered by " +
+        "get_schema. Cache-only: never constructs a DbContext, opens a database connection, or rediscovers the " +
+        "model. Call get_schema first if the schema has not been built yet for this context.")]
+    public string GetEntitySchema(
+        [Description("Exact entity name (CLR type name), as returned by get_schema/list_contexts entity names.")] string entityName,
+        [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null)
+        => Execute("get_entity_schema", () => GetEntitySchemaCore(contextName, entityName));
+
+    private string GetEntitySchemaCore(string? contextName, string entityName)
+    {
+        if (string.IsNullOrWhiteSpace(entityName))
+            throw new McpException("`entityName` must not be empty.");
+
+        var contextType = ResolveContextType(contextName);
+        var schema = RequireCachedSchema(contextType);
+
+        logger.LogInformation("get_entity_schema requested. Context={ContextName} Entity={EntityName}", contextType.Name, entityName);
+
+        var entity = Schema.SchemaSlicer.FindEntity(schema, entityName, Schema.NoOpSchemaAccessPolicy.Instance);
+        if (entity is null)
+        {
+            var known = schema.Entities.Select(e => e.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+            var choices = known.Length == 0 ? "(none)" : string.Join(", ", known);
+            throw new McpException(
+                $"No entity named '{entityName}' was found in the cached schema for '{schema.ContextName}'. " +
+                $"Known entities: {choices}. Next step: call get_schema to list all entities, then pass an exact entityName.");
+        }
+
+        return resultFormatter.Format(new
+        {
+            contextName = schema.ContextName,
+            entity,
+        });
+    }
+
+    [McpServerTool(Name = "search_schema"), Description(
+        "Searches the cached schema for a DbContext already discovered by get_schema, matching entity names, " +
+        "property names, and relationship (navigation) names against a case-insensitive substring query. Returns " +
+        "compact matches only (not full entity definitions); use get_entity_schema for a complete slice. " +
+        "Cache-only: never constructs a DbContext, opens a database connection, or rediscovers the model.")]
+    public string SearchSchema(
+        [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
+        [Description("Non-empty, case-insensitive substring to match against entity, property, and relationship names.")] string query = "",
+        [Description("Maximum number of entity matches to return. Defaults to 10 and is capped at 25.")] int? maxResults = null)
+        => Execute("search_schema", () => SearchSchemaCore(contextName, query, maxResults));
+
+    private string SearchSchemaCore(string? contextName, string query, int? maxResults)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            throw new McpException("`query` must not be empty.");
+
+        var effectiveMaxResults = maxResults ?? Schema.SchemaSlicer.DefaultSearchResults;
+        if (effectiveMaxResults < 1 || effectiveMaxResults > Schema.SchemaSlicer.MaxSearchResults)
+            throw new McpException($"`maxResults` must be between 1 and {Schema.SchemaSlicer.MaxSearchResults}.");
+
+        var contextType = ResolveContextType(contextName);
+        var schema = RequireCachedSchema(contextType);
+
+        logger.LogInformation("search_schema requested. Context={ContextName} Query={Query} MaxResults={MaxResults}", contextType.Name, query, effectiveMaxResults);
+
+        var result = Schema.SchemaSlicer.Search(schema, query, effectiveMaxResults, Schema.NoOpSchemaAccessPolicy.Instance);
+        var truncated = result.TotalMatchCount > result.Matches.Count;
+        return resultFormatter.Format(new
+        {
+            contextName = schema.ContextName,
+            query,
+            maxResults = effectiveMaxResults,
+            totalMatchCount = result.TotalMatchCount,
+            matches = result.Matches,
+            truncated,
+        });
+    }
+
     [McpServerTool(Name = "run_query"), Description(
         "Executes a safe, read-only LINQPad-style expression rooted at a public DbSet property on the selected DbContext. " +
         "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: " +
@@ -258,7 +333,9 @@ public sealed class EfCoreMcpTools(
         "GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, Distinct, Count, LongCount, Sum, Average, Min, Max, First, " +
         "FirstOrDefault, Single, SingleOrDefault, Any, All, and the set operators Concat/Union/Except/Intersect (which may reference another public " +
         "DbSet by name, e.g. Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). Join, GroupJoin, SelectMany, and Zip are NOT " +
-        "supported (a hard Dynamic LINQ parser limitation) — use a navigation-property predicate instead, e.g. Orders.Where(o => o.Customer.Name == \"Alice\").")]
+        "supported (a hard Dynamic LINQ parser limitation) — use a navigation-property predicate instead, e.g. Orders.Where(o => o.Customer.Name == \"Alice\"). " +
+        "The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are always capped at " +
+        "effectiveTake); it is false for take:0 and for terminal scalar/element results.")]
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
@@ -493,6 +570,19 @@ public sealed class EfCoreMcpTools(
     {
         return assemblyLoader.Current
             ?? throw new McpException("No target assembly is loaded yet. Call load_assembly with the path to a compiled target project's DLL first.");
+    }
+
+    /// <summary>Cache-only schema retrieval for <c>get_entity_schema</c>/<c>search_schema</c>: never
+    /// builds a schema (which would require constructing a <c>DbContext</c>), it only reads whatever
+    /// <c>get_schema</c> has already cached for <paramref name="contextType"/>.</summary>
+    private Schema.SchemaDto RequireCachedSchema(Type contextType)
+    {
+        if (schemaCache.TryGet(contextType, out var schema) && schema is not null)
+            return schema;
+
+        throw new McpException(
+            $"No cached schema exists yet for '{contextType.Name}'. Next step: call get_schema for this context first, " +
+            "then retry.");
     }
 
     private Type ResolveContextType(string? contextName)

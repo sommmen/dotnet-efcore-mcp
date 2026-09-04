@@ -13,6 +13,8 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 - [x] `insert_entity` — insert a metadata-validated entity through a non-production `ReadWrite` connection
 - [x] `update_entity` — update a metadata-validated entity through a non-production `ReadWrite` connection
 - [x] `delete_entity` — delete a metadata-validated entity through a non-production `ReadWrite` connection
+- [x] `get_entity_schema` — return the complete cached definition for one exact entity
+- [x] `search_schema` — search the cached schema for compact entity/property/relationship matches
 
 ## P0 #1 — LINQPad-style `run_query`
 
@@ -33,19 +35,20 @@ This is not permission to execute arbitrary C# on the server. The tool accepts o
 
 An opt-in `QueryExecution:Engine = "Roslyn"` setting routes `run_query` through a Roslyn-compiled `UserQuery : TDbContext` pipeline instead, implemented and covered by tests but not yet the default; see [Roslyn-compiled `UserQuery`](./roslyn-user-query.md) for its design and rollout status.
 
-## Proposed open work — P0 #2: `run_query` continuation indicator
+## P0 #2 — `run_query` continuation indicator
 
-Add `hasMoreRows: boolean` to successful **sequence-returning** `run_query` responses. It reports
-whether another row matches after the effective `skip` and effective `take` window; it does not add a
-row to `rows`, change `rowCount`, or expose a total count. The MCP response contract should explicitly
-say that `take: 0` returns no rows and `hasMoreRows: false`, rather than probing or materializing a row.
-Terminal scalar aggregates have no page window and return no `hasMoreRows` signal.
+`hasMoreRows: boolean` is present on every successful **sequence-returning** `run_query` response. It
+reports whether another row matches after the effective `skip` and effective `take` window; it does
+not add a row to `rows`, change `rowCount`, or expose a total count. `take: 0` returns no rows and
+`hasMoreRows: false` without probing or materializing a row. Terminal scalar aggregates have no page
+window; their `hasMoreRows` is always `false`.
 
-Implement this in `QueryExecutor` by retrieving no more than one sentinel row beyond the effective
-take for positive takes, using the existing filtered, ordered, skipped query. Remove the sentinel
-before projection and construct the result with the new flag; retain the current clamping and
-read-only behavior. Add tool binding/serialization coverage plus executor tests for an empty result,
-an exact effective take, an extra row, a clamped take, nonzero skip, and `take: 0`.
+`QueryExecutor` retrieves no more than one sentinel row beyond the effective take for positive takes,
+using the existing filtered, ordered, skipped query (`MaterializeWithContinuationAsync`, shared by the
+`DynamicLinq` and `Roslyn` engines). The sentinel is removed before projection and the result is
+constructed with the flag; clamping and read-only behavior are unchanged. Executor tests cover an
+empty result, an exact effective take, an extra row (over-limit), a clamped take, nonzero skip, and
+`take: 0`.
 - [x] `run_sql_query` — execute explicitly enabled raw SQL only against development `ReadWrite` connections
 - [x] `load_assembly` (or startup-only configuration) — point the server at a project's build output
   - Implemented as both: an optional `TargetAssemblyPath` startup config value AND a
@@ -112,24 +115,40 @@ payload; generic, redacted failures; and the `timedOut` and `cancelled` outcomes
 connection-layer tests for context disposal, non-mutation, registry-only resolution, and each failure
 classification described in [Connection management](./connections.md#proposed-open-work--p0-5-test_connection-diagnostics).
 
-## Proposed open work — P0 #6: schema slicing/search
+## P0 #6 — schema slicing/search
 
-Add `get_entity_schema(contextName: string, entityName: string)` and
-`search_schema(contextName: string, query: string, maxResults?: number)`. Both are read-only and
+Added `get_entity_schema(entityName: string, contextName?: string)` and
+`search_schema(contextName?: string, query: string, maxResults?: number)`. Both are read-only and
 cache-only: after resolving `contextName`, they operate solely on the schema already held by
-`SchemaCache`; they must not create a context, connect to a provider, or rediscover EF metadata.
+`SchemaCache`; they never create a context, connect to a provider, or rediscover EF metadata. If
+nothing is cached yet for the resolved context (i.e. `get_schema` was never called for it), both
+tools throw a validation error directing the caller to call `get_schema` first, rather than
+building the schema themselves.
 
-`get_entity_schema` returns the complete cached entity definition for an exact entity name.
-`search_schema` returns compact entity/property/relationship match summaries rather than full
-entities. Search is case-insensitive and deterministic; `query` must be non-empty. Its result count
-defaults to 10 and cannot exceed 25, with invalid counts rejected. Return `truncated` whenever more
-matches exist than the effective limit.
+`get_entity_schema` returns the complete cached entity definition (`EntityTypeSchema`, the same
+shape used by `get_schema`'s `entities`) for an exact, case-sensitive entity name; an unknown name
+throws with the known entity names listed. `search_schema` returns compact
+entity/property/relationship match summaries (`entityName`, `entityNameMatched`,
+`matchingProperties`, `matchingRelationships`) rather than full entities — callers follow up with
+`get_entity_schema` for a complete slice. Search is a case-insensitive substring match against
+entity names, property names, and relationship (navigation) names, and is deterministically ordered
+by entity name; `query` must be non-empty. Its result count (`maxResults`) defaults to 10 and cannot
+exceed 25, with invalid counts (including `<= 0`) rejected. The response always reports
+`totalMatchCount` (the number of matching entities before the cap) and `truncated` (whether
+`totalMatchCount` exceeds the number of returned matches).
 
-Pass the cached schema through a policy-ready selector before slicing or searching. P0 #6 does not
-implement authorization, but this seam must permit a future access-policy evaluator to filter the
-visible entities, properties, and relationships without changing the two public contracts. Add
-focused MCP binding/forwarding tests plus schema tests for cache-only behavior, slice fidelity,
-unknown names, matching/order, caps and `truncated`, invalid input, and policy-seam forwarding.
+The cached schema is passed through `ISchemaAccessPolicy` (`Schema/SchemaAccessPolicy.cs`) before
+slicing or searching. P0 #6 does not implement authorization — the default
+`NoOpSchemaAccessPolicy` returns the schema unchanged — but this seam lets a future
+per-connection access-policy evaluator (P0 #9) filter the visible entities, properties, and
+relationships without changing either tool's public request/response shape.
+
+Implemented in `Schema/SchemaSlicer.cs` (`FindEntity`, `Search`) and `Schema/SchemaCache.TryGet`
+(a read-only lookup distinct from `GetOrBuild`, so the tools can detect a cache miss instead of
+building the schema). See `Schema/SchemaSlicerTests.cs` for cache-only slicing/search coverage
+(slice fidelity, unknown names, matching/order, caps and `truncated`, policy-seam forwarding) and
+`Tools/EfCoreMcpToolsSchemaSlicingTests.cs` for MCP binding/forwarding coverage (cache-miss
+behavior, compact match shape, invalid input, context selection).
 
 ## Proposed open work — P0 #7: query complexity limits beyond row count
 
