@@ -6,8 +6,25 @@ public static class FixturePaths
 {
     public static string SampleAppDllPath => GetFixtureDllPath("SampleApp", "SampleApp.dll");
 
-    public static string QueryHostDllPath => Path.GetFullPath(Path.Combine(
-        AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "DotnetEfCoreMcp.QueryHost", "bin", "Debug", "net10.0", "DotnetEfCoreMcp.QueryHost.dll"));
+    public static string QueryHostDllPath => GetQueryHostDllPath();
+
+    private static string GetQueryHostDllPath()
+    {
+        foreach (var config in new[] { "Debug", "Release" })
+        {
+            var candidate = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+                "src", "DotnetEfCoreMcp.QueryHost", "bin", config, "net10.0", "DotnetEfCoreMcp.QueryHost.dll"));
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException(
+            "DotnetEfCoreMcp.QueryHost.dll not found under src/DotnetEfCoreMcp.QueryHost/bin/{Debug,Release}/net10.0. " +
+            "Build the solution before running out-of-process query host tests.");
+    }
 
     public static string NoContextAppDllPath => GetFixtureDllPath("NoContextApp", "NoContextApp.dll");
 
