@@ -70,11 +70,15 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
             var stderr = await stderrTask.ConfigureAwait(false);
 
             if (process.ExitCode != 0)
-                throw new QueryExecutionException("The out-of-process query host failed to execute the query.");
+                throw new QueryExecutionException(string.IsNullOrWhiteSpace(stderr)
+                    ? $"The out-of-process query host failed to execute the query (exit code {process.ExitCode})."
+                    : $"The out-of-process query host failed to execute the query (exit code {process.ExitCode}): {stderr.Trim()}");
 
             var response = JsonSerializer.Deserialize<OutOfProcessQueryResponse>(stdout, JsonOptions);
             if (response is null || response.ProtocolVersion != OutOfProcessQueryRequest.CurrentProtocolVersion || response.RequestId != requestId)
-                throw new QueryExecutionException("The out-of-process query host returned an invalid response.");
+                throw new QueryExecutionException(string.IsNullOrWhiteSpace(stderr)
+                    ? "The out-of-process query host returned an invalid response."
+                    : $"The out-of-process query host returned an invalid response. Query host stderr: {stderr.Trim()}");
             if (!string.IsNullOrWhiteSpace(response.Error))
                 throw new QueryExecutionException(response.Error);
             if (response.Result is null)
