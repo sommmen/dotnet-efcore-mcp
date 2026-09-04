@@ -11,6 +11,8 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 - [x] `get_schema` — return the model/schema for a given context
 - [x] `run_query` — execute a read-only LINQPad-style query expression against a selected context
 - [x] `test_connection` — run a bounded, redacted connection-health diagnostic for a given context/connection
+- [x] get_entity_schema — return the complete cached definition for one exact entity
+- [x] search_schema — search the cached schema for compact entity/property/relationship matches
 
 ## P0 #1 — LINQPad-style `run_query`
 

@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>QueryHost</RootNamespace>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Compiled independently of TargetApp. At runtime it is never launched with its own
+         runtimeconfig/deps.json - Launcher invokes it via
+         "dotnet exec [runtimeconfig] <TargetApp>.runtimeconfig.json [depsfile] <TargetApp>.deps.json QueryHost.dll",
+         so dependency resolution for Microsoft.EntityFrameworkCore.* comes from TargetApp's own
+         dependency closure, not this project's bin output. See ../README.md. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Referenced only so this project compiles against the EF Core / Dynamic LINQ APIs used
+         below (DbContextOptionsBuilder<T>, UseSqlServer, the dynamic Where(string) extension).
+         Which implementation actually loads at runtime is controlled entirely by which
+         runtimeconfig/depsfile Launcher passes to "dotnet exec" - see the PoC README. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
+    <PackageReference Include="System.Linq.Dynamic.Core" Version="1.7.4" />
+  </ItemGroup>
+
+</Project>

@@ -20,6 +20,8 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Schema`](../../tests/DotnetEfCoreMcp
     `AssemblyLoadContext` produces new `Type` instances (old ones are collectible/unloaded),
     so old cache entries can never be returned for a stale assembly — invalidation is a
     natural consequence of the identity change rather than an explicit cache-clear call.
+- [x] Slice and search the cached schema without constructing a `DbContext` or rediscovering
+  the model (`get_entity_schema`, `search_schema`) — see P0 #6 below.
 
 ## Tool contract
 
@@ -34,27 +36,33 @@ Schema responses are bounded at the tool boundary, while the complete model rema
 `25`, maximum `100`), along with `totalEntityCount`, `truncated`, `hasMore`, and `nextPage`. When
 more entities remain, the response includes a continuation hint showing the next request.
 
-## Proposed open work — P0 #6: schema slicing/search
+## P0 #6 — schema slicing/search
 
-Add two read-only tools over the existing `SchemaCache`; neither may construct a `DbContext`,
-query a database, or rediscover a model. `get_entity_schema(contextName, entityName)` returns the
-complete cached entity definition (properties, keys, foreign keys, navigations, ownership, and
-inheritance metadata) for the exact entity name, or the established sanitized validation error when
-the context or entity is unknown.
+Added two read-only tools over the existing `SchemaCache`; neither constructs a `DbContext`,
+queries a database, or rediscovers a model — if nothing is cached yet for the resolved context,
+both throw a validation error directing the caller to call `get_schema` first.
+`get_entity_schema(entityName, contextName?)` returns the complete cached entity definition
+(properties, keys, foreign keys, navigations, ownership, and inheritance metadata) for the exact,
+case-sensitive entity name, or the established sanitized validation error (listing known entity
+names) when the context or entity is unknown.
 
-`search_schema(contextName, query, maxResults?)` searches only cached schema metadata and returns
-compact matches for entity names plus matching properties and relationships. Require a non-empty
-query, use deterministic case-insensitive matching and a documented stable ordering, default
-`maxResults` to 10, reject invalid values, and enforce an absolute cap of 25. Include `truncated`
-so callers know a capped result set omitted further matches; do not return full entity definitions
-from search.
+`search_schema(contextName?, query, maxResults?)` searches only cached schema metadata and returns
+compact matches (`entityName`, `entityNameMatched`, `matchingProperties`,
+`matchingRelationships`) for entity names plus matching properties and relationships — never full
+entity definitions. `query` must be non-empty; matching is a deterministic, case-insensitive
+substring comparison ordered by entity name. `maxResults` defaults to 10, rejects invalid values,
+and is capped at 25. The response always reports `totalMatchCount` (before the cap) and
+`truncated` (whether the cap omitted further matches).
 
-Route both operations through a policy-ready cached-schema selection seam before entity lookup or
-matching. P0 #6 supplies no access policy, but a later evaluator must be able to filter entities,
-properties, and relationships at that seam without altering either tool's public request or response
-shape. Focused tests should prove cache-only execution (including no context construction/database
-access), exact slice fidelity and unknown-name validation, search matching/order, default and
-maximum caps with `truncated`, invalid arguments, and forwarding through the policy seam.
+Both operations are implemented in `Schema/SchemaSlicer.cs` (`FindEntity`, `Search`) and route the
+cached schema through `ISchemaAccessPolicy` (`Schema/SchemaAccessPolicy.cs`) before entity lookup
+or matching. P0 #6 supplies no access policy — the default `NoOpSchemaAccessPolicy` is a no-op —
+but this seam lets a later evaluator (P0 #9) filter entities, properties, and relationships without
+altering either tool's public request or response shape. `Schema/SchemaSlicerTests.cs` and
+`Tools/EfCoreMcpToolsSchemaSlicingTests.cs` cover cache-only execution (including no context
+construction/database access), exact slice fidelity and unknown-name validation, search
+matching/order, default and maximum caps with `truncated`, invalid arguments, and forwarding
+through the policy seam.
 
 ## Proposed open work — P0 #9: policy-filtered schema discovery
 
