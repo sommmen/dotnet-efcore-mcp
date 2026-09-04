@@ -254,7 +254,9 @@ public sealed class EfCoreMcpTools(
         "GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, Distinct, Count, LongCount, Sum, Average, Min, Max, First, " +
         "FirstOrDefault, Single, SingleOrDefault, Any, All, and the set operators Concat/Union/Except/Intersect (which may reference another public " +
         "DbSet by name, e.g. Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). Join, GroupJoin, SelectMany, and Zip are NOT " +
-        "supported (a hard Dynamic LINQ parser limitation) — use a navigation-property predicate instead, e.g. Orders.Where(o => o.Customer.Name == \"Alice\").")]
+        "supported (a hard Dynamic LINQ parser limitation) — use a navigation-property predicate instead, e.g. Orders.Where(o => o.Customer.Name == \"Alice\"). " +
+        "The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are always capped at " +
+        "effectiveTake); it is false for take:0 and for terminal scalar/element results.")]
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
