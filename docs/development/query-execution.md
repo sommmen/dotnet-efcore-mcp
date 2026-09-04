@@ -16,13 +16,20 @@ in the MCP server process. Execution location is currently configurable only for
 
 | Setting | Values | Default | Effect |
 | --- | --- | --- | --- |
-| `QueryExecution:Mode` | `InProcess`, `OutOfProcess`, `Auto` | `Auto` | Selects where Roslyn queries execute. |
+| `QueryExecution:Mode` | `InProcess`, `OutOfProcess`, `Pooled`, `Auto` | `Auto` | Selects where Roslyn queries execute. |
 | `QueryExecution:OutOfProcessHostPath` | Absolute path to the query-host DLL | — | Required when the selected mode uses isolated execution. |
+| `QueryExecution:PoolMaxWorkersPerTarget` | positive integer | `2` | Maximum warm persistent workers kept for one target assembly path + last-write-time build key. |
+| `QueryExecution:PoolMaxTotalWorkers` | positive integer | `8` | Maximum pooled persistent workers across all target keys in one MCP server instance. |
+| `QueryExecution:PoolMaxQueriesPerWorker` | positive integer | `50` | Recycles a pooled worker after this many successfully completed queries. |
+| `QueryExecution:PoolIdleTimeoutSeconds` | positive integer | `300` | Recycles an idle pooled worker after this many idle seconds; each worker also self-terminates after 2× this window as defense in depth. |
 
 `InProcess` uses the server's existing Roslyn executor. `OutOfProcess` launches a short-lived
-query-host process for each query. `Auto` currently chooses `OutOfProcess` as a fail-closed
-default; compatibility fingerprinting for choosing an in-process execution path has not yet been
-implemented.
+query-host process for each query. `Pooled` uses a bounded pool of long-lived out-of-process query
+hosts keyed by target assembly full path + last-write-time UTC so warm workers never cross builds
+or worktrees, but still retain out-of-process isolation from the MCP server itself. `Auto`
+currently chooses `OutOfProcess` as a fail-closed default; compatibility fingerprinting for
+choosing an in-process execution path has not yet been implemented, and `Auto` does not yet opt
+into pooling.
 
 For isolated execution, configure the query-host DLL and retain both deployment artifacts:
 
@@ -33,13 +40,25 @@ For isolated execution, configure the query-host DLL and retain both deployment 
 
 The host receives a versioned JSON request through standard input and returns one JSON response on
 standard output. Connection strings travel only in that request, not on the process command line.
-The first implementation supports Roslyn query execution and serialized sequence/scalar results;
-it intentionally does not yet include a compatibility fingerprint or long-lived host process.
+In `Pooled` mode, a persistent host stays alive for newline-delimited request/response exchanges
+until the pool retires it or it self-terminates after extended idleness; `OutOfProcess` continues
+to use the original one-request/one-process path unchanged.
 
 For design background, see [Query execution alternatives](query-execution-alternatives.md). For
 measured latency characteristics of out-of-process execution and a pooling design to reduce
 per-query cost, see [Out-of-process query host latency: findings and a pooling
 design](query-execution-host-pooling.md).
+
+> [!IMPORTANT]
+> `Pooled` trades some "fresh process per query" simplicity for much lower steady-state latency.
+> Safety remains bounded by per-query timeout + kill-and-drop, per-worker recycling, and per-build
+> keying, but warm workers can still retain process-level JIT/compiler caches until recycled. Keep
+> `OutOfProcess` if you require the strongest isolation boundary.
+>
+> Pool bounds are per MCP server instance, not system-wide. Each concurrently running server or git
+> worktree keeps its own independent pool, so the total system-wide worker count is
+> `PoolMaxTotalWorkers × instance count`. Operators running several instances should size
+> `PoolMaxTotalWorkers` down accordingly.
 
 ## Consumer-visible failures
 

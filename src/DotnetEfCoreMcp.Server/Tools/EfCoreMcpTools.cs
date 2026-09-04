@@ -7,6 +7,7 @@ using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -27,6 +28,7 @@ public sealed class EfCoreMcpTools(
     QueryExecutor queryExecutor,
     RoslynQueryExecutor roslynQueryExecutor,
     OutOfProcessRoslynQueryExecutor outOfProcessRoslynQueryExecutor,
+    PooledOutOfProcessRoslynQueryExecutor pooledOutOfProcessRoslynQueryExecutor,
     QueryExecutionOptions queryExecutionOptions,
     RawSqlExecutionOptions rawSqlExecutionOptions,
     SqlQueryExecutor sqlQueryExecutor,
@@ -38,6 +40,47 @@ public sealed class EfCoreMcpTools(
     EntityMutationsOptions entityMutationsOptions,
     EntityMutationExecutor entityMutationExecutor)
 {
+    internal EfCoreMcpTools(
+        AssemblyLoaderService assemblyLoader,
+        AssemblyDiscoveryService assemblyDiscovery,
+        ConnectionRegistry connectionRegistry,
+        SchemaCache schemaCache,
+        QueryExecutor queryExecutor,
+        RoslynQueryExecutor roslynQueryExecutor,
+        OutOfProcessRoslynQueryExecutor outOfProcessRoslynQueryExecutor,
+        QueryExecutionOptions queryExecutionOptions,
+        RawSqlExecutionOptions rawSqlExecutionOptions,
+        SqlQueryExecutor sqlQueryExecutor,
+        MigrationsOptions migrationsOptions,
+        MigrationInspector migrationInspector,
+        IToolResultFormatter resultFormatter,
+        ToolDiagnosticsOptions toolDiagnosticsOptions,
+        ILogger<EfCoreMcpTools> logger,
+        EntityMutationsOptions entityMutationsOptions,
+        EntityMutationExecutor entityMutationExecutor)
+        : this(
+            assemblyLoader,
+            assemblyDiscovery,
+            connectionRegistry,
+            schemaCache,
+            queryExecutor,
+            roslynQueryExecutor,
+            outOfProcessRoslynQueryExecutor,
+            new PooledOutOfProcessRoslynQueryExecutor(
+                new QueryHostPool(queryExecutionOptions, outOfProcessRoslynQueryExecutor, NullLogger<QueryHostPool>.Instance)),
+            queryExecutionOptions,
+            rawSqlExecutionOptions,
+            sqlQueryExecutor,
+            migrationsOptions,
+            migrationInspector,
+            resultFormatter,
+            toolDiagnosticsOptions,
+            logger,
+            entityMutationsOptions,
+            entityMutationExecutor)
+    {
+    }
+
 
     [McpServerTool(Name = "list_assembly_candidates"), Description(
         "Discovers compiled project assemblies under a workspace, ordered by the recommended selection: " +
@@ -428,6 +471,7 @@ public sealed class EfCoreMcpTools(
         return queryExecutionOptions.Mode switch
         {
             QueryExecutionMode.InProcess => roslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
+            QueryExecutionMode.Pooled => pooledOutOfProcessRoslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
             QueryExecutionMode.OutOfProcess or QueryExecutionMode.Auto => outOfProcessRoslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported query execution mode '{queryExecutionOptions.Mode}'."),
         };

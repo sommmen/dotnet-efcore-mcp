@@ -15,6 +15,18 @@ public sealed class QueryExecutionOptions
     /// <summary>Path to the query-host DLL. Required for out-of-process Roslyn execution.</summary>
     public string? OutOfProcessHostPath { get; init; }
 
+    /// <summary>Maximum number of pooled persistent query-host workers kept warm for one target assembly build.</summary>
+    public int PoolMaxWorkersPerTarget { get; init; } = 2;
+
+    /// <summary>Maximum total number of pooled persistent query-host workers across all target assembly builds in one MCP server instance.</summary>
+    public int PoolMaxTotalWorkers { get; init; } = 8;
+
+    /// <summary>Maximum number of successful queries one pooled worker serves before it is retired and replaced on demand.</summary>
+    public int PoolMaxQueriesPerWorker { get; init; } = 50;
+
+    /// <summary>Maximum time a pooled worker may remain idle in the server-side pool before it is retired.</summary>
+    public int PoolIdleTimeoutSeconds { get; init; } = 300;
+
     /// <summary>Whether a compiled <see cref="QueryEngine.Roslyn"/> query is allowed to call
     /// <c>SaveChanges()</c>/<c>SaveChangesAsync()</c> (directly or via tracked entities). Defaults
     /// to <c>false</c> so <c>run_query</c> stays read-only by default even under the Roslyn

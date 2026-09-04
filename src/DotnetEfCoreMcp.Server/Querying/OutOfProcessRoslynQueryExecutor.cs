@@ -16,17 +16,7 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
         if (string.IsNullOrWhiteSpace(options.OutOfProcessHostPath))
             throw new QueryExecutionException("Out-of-process query execution requires QueryExecution:OutOfProcessHostPath.");
 
-        var hostPath = Path.GetFullPath(options.OutOfProcessHostPath);
-        if (!File.Exists(hostPath))
-            throw new QueryExecutionException("The configured out-of-process query host was not found.");
-
-        var runtimeConfigPath = Path.ChangeExtension(target.AssemblyPath, "runtimeconfig.json");
-        if (!File.Exists(runtimeConfigPath))
-            throw new QueryExecutionException("The target application must provide a runtime configuration file for out-of-process query execution.");
-
-        var hostDepsFilePath = Path.ChangeExtension(hostPath, "deps.json");
-        if (!File.Exists(hostDepsFilePath))
-            throw new QueryExecutionException("The configured out-of-process query host is missing its dependency file.");
+        var hostConfiguration = ResolveHostConfiguration(options, target);
 
         var requestId = Guid.NewGuid().ToString("N");
         var payload = new OutOfProcessQueryRequest
@@ -47,9 +37,9 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
                 ArgumentList =
                 {
                     "exec",
-                    "--runtimeconfig", runtimeConfigPath,
-                    "--depsfile", hostDepsFilePath,
-                    hostPath,
+                    "--runtimeconfig", hostConfiguration.RuntimeConfigPath,
+                    "--depsfile", hostConfiguration.HostDepsFilePath,
+                    hostConfiguration.HostPath,
                 },
                 UseShellExecute = false,
                 RedirectStandardInput = true,
@@ -103,7 +93,24 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
         }
     }
 
-    private static void KillIfRunning(Process process)
+    internal static OutOfProcessHostConfiguration ResolveHostConfiguration(QueryExecutionOptions options, LoadedAssemblyHandle target)
+    {
+        var hostPath = Path.GetFullPath(options.OutOfProcessHostPath!);
+        if (!File.Exists(hostPath))
+            throw new QueryExecutionException("The configured out-of-process query host was not found.");
+
+        var runtimeConfigPath = Path.ChangeExtension(target.AssemblyPath, "runtimeconfig.json");
+        if (!File.Exists(runtimeConfigPath))
+            throw new QueryExecutionException("The target application must provide a runtime configuration file for out-of-process query execution.");
+
+        var hostDepsFilePath = Path.ChangeExtension(hostPath, "deps.json");
+        if (!File.Exists(hostDepsFilePath))
+            throw new QueryExecutionException("The configured out-of-process query host is missing its dependency file.");
+
+        return new OutOfProcessHostConfiguration(hostPath, runtimeConfigPath, hostDepsFilePath);
+    }
+
+    internal static void KillIfRunning(Process process)
     {
         try
         {
@@ -115,7 +122,7 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
         }
     }
 
-    private static QueryResult ToQueryResult(QueryResultWire result) => new(
+    internal static QueryResult ToQueryResult(QueryResultWire result) => new(
         result.Entity, result.RowCount, result.EffectiveTake, result.HasMoreRows, result.IsScalar,
         FromJson(result.Scalar), result.Rows.Select(row => (IReadOnlyDictionary<string, object?>)row.ToDictionary(pair => pair.Key, pair => FromJson(pair.Value))).ToArray());
 
@@ -131,3 +138,5 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
         _ => value.Clone(),
     };
 }
+
+internal readonly record struct OutOfProcessHostConfiguration(string HostPath, string RuntimeConfigPath, string HostDepsFilePath);
