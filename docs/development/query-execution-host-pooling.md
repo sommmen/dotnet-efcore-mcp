@@ -55,7 +55,13 @@ one-process-per-query path:
 | Average per call | 1,876ms |
 | Total for 10 calls | 18,763ms |
 
-**Phase breakdown of a single representative call** (`elapsed=1852ms` total):
+**Phase breakdown of a single representative call** (`elapsed=1852ms` total). The host-level phases
+below run first and are cumulative from process start; the executor-internal phases run inside
+`RoslynQueryExecutor.ExecuteAsync` (which starts once the host-level phases finish, at 107ms) and
+are shown separately, cumulative from *that* start, to avoid mixing two different zero points in
+one table:
+
+*Host phases (cumulative from process start):*
 
 | Phase | Cumulative | Phase cost |
 |---|---|---|
@@ -63,16 +69,24 @@ one-process-per-query path:
 | deserialize request | 61ms | 55ms |
 | load target assembly | 104ms | 43ms |
 | resolve context type | 107ms | 3ms |
-| generate query source | 46ms¹ | 46ms |
-| **compile (Roslyn `CSharpCompilation`)** | **1,151ms¹** | **~1,100ms** |
-| load compiled assembly into ALC | 1,163ms¹ | 12ms |
-| create `DbContext` | 1,240ms¹ | 77ms |
-| invoke `RunUserAuthoredQuery` | 1,514ms¹ | 274ms |
-| shape/materialize result | 1,686ms¹ | 172ms |
+
+*Executor phases (cumulative from `RoslynQueryExecutor.ExecuteAsync` start, i.e. +107ms above)*:
+
+| Phase | Cumulative | Phase cost |
+|---|---|---|
+| generate query source | 46ms | 46ms |
+| **compile (Roslyn `CSharpCompilation`)** | **1,151ms** | **~1,100ms** |
+| load compiled assembly into ALC | 1,163ms | 12ms |
+| create `DbContext` | 1,240ms | 77ms |
+| invoke `RunUserAuthoredQuery` | 1,514ms | 274ms |
+| shape/materialize result | 1,686ms | 172ms |
 | *(executor total)* | 1,798ms | — |
 
-¹ measured from the start of `RoslynQueryExecutor.ExecuteAsync`, i.e. after process
-start/stdin/deserialize/assembly-load/type-resolve already completed.
+Overall wall-clock total for this call was measured as 1,852ms (`elapsed` above); the two tables'
+own reference points sum to slightly more (107ms + 1,798ms ≈ 1,905ms) due to small overlap between
+the host's stop-the-clock point and the executor's start-the-clock point in the temporary
+instrumentation, not a real 53ms of missing/duplicated work — both are within normal
+Stopwatch-boundary noise for numbers of this size.
 
 **Conclusion:** process/IO overhead (spawn, stdin, deserialize, assembly load, type resolve) is
 only ~100–210ms — a small fraction of the total. **Roslyn compilation of the dynamically
@@ -131,7 +145,7 @@ Each risk below is weighed against the measured win.
 | **Hung/malicious query blocks a pooled worker** | A query that spins forever or deadlocks would tie up a reusable process indefinitely instead of just failing and letting the next one-shot process start clean. This is strictly worse than today only if the pool has no per-query timeout — today there is *implicitly* a timeout equal to "the caller gives up and the whole process gets killed" (see `OutOfProcessRoslynQueryExecutor.KillIfRunning`, and commit `1a3a950` "fix(querying): kill out-of-process query host on non-cancellation failures", which already establishes kill-on-failure as an existing pattern to build on). | Enforce a hard per-query wall-clock timeout inside the pool manager (already have `CancellationToken` plumbed through `ExecuteAsync`). On timeout, `Kill(entireProcessTree: true)` the worker (exactly like today's cancellation path) and **remove it from the pool** rather than returning it — replace with a freshly spawned (cold) worker. Net effect: a hang costs one caller their timeout, exactly like today, and does not degrade other callers beyond losing one warm slot temporarily. |
 | **State leakage between distinct queries in the same process** | The current pipeline already creates a **fresh `DbContext`** and loads compiled query code into a **fresh, collectible `CompiledQueryLoadContext`** per query (see `RoslynQueryExecutor.ExecuteAsync`), and disposes/unloads both after each call — this isolation is already per-query, not per-process, so it is preserved unchanged by pooling. What pooling *adds* exposure to is **process-wide static state**: JIT/type caches, `AssemblyLoaderService`'s in-memory cache of previously loaded target assemblies (`Load`/`LoadCore` — an `internal` cache keyed by path/name), and Roslyn's own internal caches (e.g. compilation reference/metadata caches). | Two safe boundaries: (1) key pool membership by **target assembly path + its last-write timestamp**, so a process only ever serves the target app it was warmed against, and a rebuilt target app cannot be served by a worker holding a stale copy; (2) recycle (retire and replace) a pooled worker after **N served queries or M minutes idle/alive**, bounding both memory growth and staleness exposure — this is a standard pattern for "warm worker pools" in other ecosystems (e.g. PHP-FPM `pm.max_requests`, ASP.NET Core's own worker recycling). |
 | **Unbounded memory growth from many distinct query shapes over a long session** | Each distinct query text produces a distinct generated/compiled assembly loaded into the process (via a collectible ALC, which *can* be unloaded — but Roslyn's own compilation caches and JIT'd code for the compiler itself are not per-ALC and persist for the process's life). A long agentic session issuing hundreds of different queries against a persistently warm process could grow memory over time. | The recycle policy above (max requests per worker) directly bounds this — no worker lives long enough to accumulate unbounded state. Also cap **pool size** (e.g. 1–2 idle warm workers) rather than growing it unboundedly; a pool is for warm *readiness*, not concurrency scaling. |
-| **Confusing cross-target-app reuse** | If the server is later extended to serve multiple target apps/connections in one session (the multi-target assembly registry added in #36 suggests this is already a direction), a pool must not hand a worker warmed for target app A a query meant for target app B — different EF Core/provider versions, different `runtimeconfig.json`. | Pool keying (above) already handles this: pools are keyed per target assembly identity, so cross-target reuse is structurally impossible, not just discouraged. |
+| **Confusing cross-target-app reuse** | If the server is later extended to serve multiple target apps/connections in one session (the named multi-target assembly registry, [P2 #15](WORK-TRACKER.md), suggests this is already a direction), a pool must not hand a worker warmed for target app A a query meant for target app B — different EF Core/provider versions, different `runtimeconfig.json`. | Pool keying (above) already handles this: pools are keyed per target assembly identity, so cross-target reuse is structurally impossible, not just discouraged. |
 | **Losing the "kill this exact process = fully contained" mental model** | Operationally, the current model's simplicity ("every query gets exactly one process, which then dies") is easy to reason about for security review. | Keep one-shot execution as the *default*/fallback path (already true via `QueryExecution:Mode`); ship pooling as an explicit opt-in mode (e.g. `QueryExecution:Mode=Pooled`) so the isolation-simple path remains available and is what ships by default until the pooled path has field experience. |
 
 None of these risks are novel — they are the same class of tradeoffs every warm-worker-pool
