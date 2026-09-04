@@ -2,6 +2,7 @@ using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tools;
@@ -90,7 +91,9 @@ public sealed class EfCoreMcpToolsListAssemblyCandidatesTests : IDisposable
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new JsonToolResultFormatter(),
             new ToolDiagnosticsOptions(),
-            NullLogger<EfCoreMcpTools>.Instance);
+            NullLogger<EfCoreMcpTools>.Instance,
+            new EntityMutationsOptions(),
+            new EntityMutationExecutor(NullLogger<EntityMutationExecutor>.Instance));
     }
 
     private void WriteProject(string relativePath)

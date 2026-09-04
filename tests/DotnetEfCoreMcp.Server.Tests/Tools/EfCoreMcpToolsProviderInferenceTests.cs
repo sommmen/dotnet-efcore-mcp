@@ -1,6 +1,7 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
@@ -21,6 +22,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         SqliteTestDatabase db,
         out AssemblyLoaderService assemblyLoader,
         RawSqlExecutionOptions? rawSqlOptions = null,
+        EntityMutationsOptions? entityMutationsOptions = null,
         bool readWrite = false,
         bool production = false)
     {
@@ -47,7 +49,9 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
             new SqlQueryExecutor(resolvedRawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new ToonToolResultFormatter(),
             new ToolDiagnosticsOptions(),
-            NullLogger<EfCoreMcpTools>.Instance);
+            NullLogger<EfCoreMcpTools>.Instance,
+            entityMutationsOptions ?? new EntityMutationsOptions(),
+            new EntityMutationExecutor(NullLogger<EntityMutationExecutor>.Instance));
         return tools;
     }
 
@@ -73,6 +77,37 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var json = tools.ListConnections();
 
         Assert.Contains("(inferred)", json);
+    }
+
+    [Theory]
+    [InlineData("insert")]
+    [InlineData("update")]
+    [InlineData("delete")]
+    public async Task EntityMutation_WhenDisabled_RejectsBeforeQuerying(string operation)
+    {
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(db, out var assemblyLoader);
+        assemblyLoader.Load(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(() => operation switch
+        {
+            "insert" => tools.InsertEntity("SampleAppDbContext", "Customer", Values("Name", "Ada", "Age", 37)),
+            "update" => tools.UpdateEntity("SampleAppDbContext", "Customer", Values("Id", 1), Values("Age", 38)),
+            _ => tools.DeleteEntity("SampleAppDbContext", "Customer", Values("Id", 1))
+        });
+
+        Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EntityMutations:Enabled", exception.Message, StringComparison.Ordinal);
+    }
+
+    private static Dictionary<string, System.Text.Json.JsonElement> Values(params object[] pairs)
+    {
+        var values = new Dictionary<string, System.Text.Json.JsonElement>();
+        for (var index = 0; index < pairs.Length; index += 2)
+        {
+            values.Add((string)pairs[index], System.Text.Json.JsonSerializer.SerializeToElement(pairs[index + 1]));
+        }
+        return values;
     }
 
     [Fact]

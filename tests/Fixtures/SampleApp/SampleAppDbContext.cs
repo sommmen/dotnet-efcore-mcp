@@ -19,6 +19,10 @@ public class SampleAppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Customer>()
+            .Property(c => c.Version)
+            .IsConcurrencyToken();
+
+        modelBuilder.Entity<Customer>()
             .HasMany(c => c.Orders)
             .WithOne(o => o.Customer)
             .HasForeignKey(o => o.CustomerId);
