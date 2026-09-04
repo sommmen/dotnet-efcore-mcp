@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace DotnetEfCoreMcp.Server.Schema;
@@ -12,7 +13,12 @@ public static class SchemaBuilder
 {
     public static SchemaDto Build(DbContext context)
     {
-        var model = context.Model;
+        // context.Model is the "read-optimized" runtime model, which sheds design-time-only
+        // metadata (comments, default value/SQL annotations, etc.) for faster startup. The
+        // design-time model retains that metadata and is required to read it without throwing
+        // InvalidOperationException - it is still purely compiled model metadata, not a database
+        // round-trip.
+        var model = context.GetService<IDesignTimeModel>().Model;
         var entities = new List<EntityTypeSchema>();
 
         // The relational annotation extensions (e.g. GetColumnType) throw InvalidCastException
@@ -24,6 +30,8 @@ public static class SchemaBuilder
 
         foreach (var entityType in model.GetEntityTypes())
         {
+            var primaryKey = entityType.FindPrimaryKey();
+
             var properties = entityType.GetProperties()
                 .Select(p => new PropertySchema(
                     Name: p.Name,
@@ -33,10 +41,20 @@ public static class SchemaBuilder
                     IsNullable: p.IsNullable,
                     IsPrimaryKey: p.IsPrimaryKey(),
                     IsForeignKey: p.IsForeignKey(),
-                    IsConcurrencyToken: p.IsConcurrencyToken))
+                    IsConcurrencyToken: p.IsConcurrencyToken,
+                    MaxLength: p.GetMaxLength(),
+                    Precision: p.GetPrecision(),
+                    Scale: p.GetScale(),
+                    IsUnicode: p.IsUnicode(),
+                    IsFixedLength: isRelational ? p.IsFixedLength() : null,
+                    ValueGenerated: p.ValueGenerated.ToString(),
+                    DefaultValueSql: isRelational ? p.GetDefaultValueSql() : null,
+                    ComputedColumnSql: isRelational ? p.GetComputedColumnSql() : null,
+                    DefaultValue: isRelational ? p.GetDefaultValue()?.ToString() : null,
+                    Comment: isRelational ? p.GetComment() : null))
                 .ToList();
 
-            var primaryKeyProperties = entityType.FindPrimaryKey()?.Properties
+            var primaryKeyProperties = primaryKey?.Properties
                 .Select(p => p.Name)
                 .ToList() ?? [];
 
@@ -47,14 +65,29 @@ public static class SchemaBuilder
                     PrincipalProperties: fk.PrincipalKey.Properties.Select(p => p.Name).ToList(),
                     DependentToPrincipalNavigation: fk.DependentToPrincipal?.Name,
                     PrincipalToDependentNavigation: fk.PrincipalToDependent?.Name,
-                    IsRequired: fk.IsRequired))
+                    IsRequired: fk.IsRequired,
+                    ConstraintName: isRelational ? fk.GetConstraintName() : null,
+                    DeleteBehavior: fk.DeleteBehavior.ToString(),
+                    IsUnique: fk.IsUnique))
                 .ToList();
 
             var navigations = entityType.GetNavigations()
                 .Select(n => new NavigationSchema(
                     Name: n.Name,
                     TargetEntity: n.TargetEntityType.ClrType.Name,
-                    IsCollection: n.IsCollection))
+                    IsCollection: n.IsCollection,
+                    IsOnDependent: n.IsOnDependent,
+                    IsEagerLoaded: n.IsEagerLoaded,
+                    DeleteBehavior: n.ForeignKey.DeleteBehavior.ToString(),
+                    ForeignKeyProperties: n.ForeignKey.Properties.Select(p => p.Name).ToList()))
+                .ToList();
+
+            var indexes = entityType.GetIndexes()
+                .Select(i => new IndexSchema(
+                    Properties: i.Properties.Select(p => p.Name).ToList(),
+                    Name: isRelational ? i.GetDatabaseName() : null,
+                    IsUnique: i.IsUnique,
+                    Filter: isRelational ? i.GetFilter() : null))
                 .ToList();
 
             entities.Add(new EntityTypeSchema(
@@ -67,7 +100,13 @@ public static class SchemaBuilder
                 Navigations: navigations,
                 IsOwned: entityType.IsOwned(),
                 BaseEntityName: entityType.BaseType?.ClrType.Name,
-                DiscriminatorProperty: entityType.FindDiscriminatorProperty()?.Name));
+                DiscriminatorProperty: entityType.FindDiscriminatorProperty()?.Name,
+                Schema: isRelational ? entityType.GetSchema() : null,
+                ViewName: isRelational ? entityType.GetViewName() : null,
+                ViewSchema: isRelational ? entityType.GetViewSchema() : null,
+                Comment: isRelational ? entityType.GetComment() : null,
+                PrimaryKeyName: isRelational ? primaryKey?.GetName() : null,
+                Indexes: indexes));
         }
 
         return new SchemaDto(context.GetType().Name, entities);
