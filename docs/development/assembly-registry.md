@@ -2,10 +2,9 @@
 
 [← Back to Development Guide](../../DEVELOPMENT.md)
 
-Code: TBC (planned) · Tests: `tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`
+Code: `src/DotnetEfCoreMcp.Server/AssemblyLoading/AssemblyLoaderService.cs`, `AssemblyReloadWatcher.cs` · Tests: `tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`
 
-> **P2 #15 — Named multi-target assembly registry.** This page documents the intended
-> contract only; no implementation exists yet.
+> **P2 #15 — Named multi-target assembly registry.** Implemented.
 
 ## Goal
 

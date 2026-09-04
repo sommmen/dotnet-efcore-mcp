@@ -19,4 +19,13 @@ public sealed class AssemblyLoaderOptions
     /// less-trusted deployments where a target project's output shouldn't be re-executed without an
     /// explicit `load_assembly` call.</summary>
     public bool AutoReloadEnabled { get; init; } = true;
+
+    /// <summary>Optional startup-seeding map of named targets, keyed by the same logical
+    /// `targetName` string used by `load_assembly`/`list_contexts`/`get_schema`/`run_query`/
+    /// `run_sql_query`. Each entry is loaded at startup under its key as the target name, in
+    /// addition to (or instead of) the single-target `TargetAssemblyPath`/`WorkspacePath`
+    /// convenience. Purely a registration convenience - the same targets can also be registered or
+    /// replaced at runtime via `load_assembly`'s `targetName` parameter.</summary>
+    public IReadOnlyDictionary<string, AssemblyTargetOptions> Targets { get; init; } =
+        new Dictionary<string, AssemblyTargetOptions>();
 }
