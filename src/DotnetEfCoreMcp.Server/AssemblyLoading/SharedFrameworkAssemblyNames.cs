@@ -25,7 +25,19 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// calls the extremely common <c>ConfigureWarnings(b => b.Log((RelationalEventId.CommandExecuting, ...)))</c>
 /// pattern fails with "Field not found: RelationalEventId.CommandExecuting" if this assembly is
 /// missing here, even though the field very much exists - the runtime just resolved the field token
-/// against the wrong copy of the declaring assembly's dependency closure.
+/// against the wrong copy of the declaring assembly's dependency closure. Likewise
+/// Microsoft.EntityFrameworkCore.SqlServer's <c>SqlServerDbFunctionsExtensions</c> exposes a public
+/// <c>VectorDistance</c> overload that references <c>Microsoft.Data.SqlClient</c> types, which in turn
+/// pulls in Microsoft.Identity.Client and Microsoft.IdentityModel.Abstractions (for Azure AD
+/// authentication) - all four had to be added here after a live SQL Server integration test surfaced
+/// the gap.
+///
+/// Because this "any assembly reachable from a shared assembly's public API surface" rule is easy to
+/// violate silently (adding a provider or upgrading EF Core can introduce a new public member that
+/// reaches an assembly not yet listed here), <c>SharedFrameworkAssemblyClosureTests</c> walks the
+/// public API closure of every entry below with a <see cref="System.Reflection.MetadataLoadContext"/>
+/// and fails if it finds a non-BCL assembly that is not itself in this list. Prefer fixing a failure
+/// there by adding the missing assembly name rather than suppressing the test.
 ///
 /// Shared by both <see cref="TargetAssemblyLoadContext"/> (which loads a target project's own
 /// compiled output) and <c>DotnetEfCoreMcp.Server.Compilation.CompiledQueryLoadContext</c> (which
@@ -47,7 +59,14 @@ internal static class SharedFrameworkAssemblyNames
         "Microsoft.Extensions.Identity.Stores",
         "Microsoft.Extensions.Logging",
         "Microsoft.Extensions.Logging.Abstractions",
+        "Microsoft.Extensions.DependencyInjection.Abstractions",
+        "Microsoft.Extensions.Caching.Abstractions",
+        "Microsoft.Extensions.Options",
+        "Microsoft.Extensions.Primitives",
         "Microsoft.Data.Sqlite",
+        "Microsoft.Data.SqlClient",
+        "Microsoft.Identity.Client",
+        "Microsoft.IdentityModel.Abstractions",
         "SQLitePCLRaw.core",
         "SQLitePCLRaw.provider.e_sqlite3",
         "SQLitePCLRaw.batteries_v2",

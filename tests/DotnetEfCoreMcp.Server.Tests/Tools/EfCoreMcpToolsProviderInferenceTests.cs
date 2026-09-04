@@ -46,6 +46,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
             resolvedRawSqlOptions,
             new SqlQueryExecutor(resolvedRawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new ToonToolResultFormatter(),
+            new ToolDiagnosticsOptions(),
             NullLogger<EfCoreMcpTools>.Instance);
         return tools;
     }

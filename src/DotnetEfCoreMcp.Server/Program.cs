@@ -47,6 +47,10 @@ builder.Services.AddSingleton<QueryCompiler>();
 builder.Services.AddSingleton<RoslynQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("RawSqlExecution").Get<RawSqlExecutionOptions>() ?? new RawSqlExecutionOptions());
 builder.Services.AddSingleton<SqlQueryExecutor>();
+// Diagnostic metadata is an explicit development-only opt-in. ToolDiagnosticsOptions additionally
+// refuses to enable it under any other host environment.
+builder.Services.AddSingleton(_ => ToolDiagnosticsOptions.CreateEffective(
+    builder.Configuration, builder.Environment.IsDevelopment()));
 
 var configuredToolOutputFormat = builder.Configuration["ToolOutput:Format"];
 var toolResultFormat = string.IsNullOrWhiteSpace(configuredToolOutputFormat)

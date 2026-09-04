@@ -12,6 +12,8 @@ public static class FixturePaths
 
     public static string PackageDependencyAppDllPath => GetFixtureDllPath("PackageDependencyApp", "PackageDependencyApp.dll");
 
+    public static string ManyDbSetsAppDllPath => GetFixtureDllPath("ManyDbSetsApp", "ManyDbSetsApp.dll");
+
     private static string GetFixtureDllPath(string fixtureName, string assemblyFileName)
     {
         foreach (var config in new[] { "Debug", "Release" })

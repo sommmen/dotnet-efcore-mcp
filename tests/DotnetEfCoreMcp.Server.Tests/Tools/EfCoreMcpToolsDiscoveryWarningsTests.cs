@@ -56,6 +56,7 @@ public sealed class EfCoreMcpToolsDiscoveryWarningsTests
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new JsonToolResultFormatter(),
+            new ToolDiagnosticsOptions(),
             NullLogger<EfCoreMcpTools>.Instance);
     }
 

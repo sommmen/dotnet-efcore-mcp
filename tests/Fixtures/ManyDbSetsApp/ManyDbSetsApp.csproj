@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ManyDbSetsApp</RootNamespace>
+    <!-- Stands in for a large real-world app (e.g. a context with 100+ DbSets) so tests can prove
+         query execution stays correct once a context's *total* public DbSet count exceeds
+         Dynamic LINQ's built-in Func<>/Action<> delegate arities (16 parameters). It intentionally
+         has no ProjectReference from the test project - see SampleApp.csproj for why. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

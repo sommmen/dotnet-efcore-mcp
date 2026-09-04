@@ -26,6 +26,7 @@ public sealed class EfCoreMcpTools(
     RawSqlExecutionOptions rawSqlExecutionOptions,
     SqlQueryExecutor sqlQueryExecutor,
     IToolResultFormatter resultFormatter,
+    ToolDiagnosticsOptions toolDiagnosticsOptions,
     ILogger<EfCoreMcpTools> logger)
 {
 
@@ -437,13 +438,20 @@ public sealed class EfCoreMcpTools(
 
     private McpException CreateUnexpectedToolException(string operation, Exception exception)
     {
-        logger.LogError(exception, "Unexpected error invoking MCP tool {ToolName}", operation);
+        var errorId = Guid.NewGuid().ToString("N");
+        logger.LogError(exception, "Unexpected error invoking MCP tool {ToolName}. ErrorId={ErrorId}", operation, errorId);
 
-        var hint = DescribeIfAssemblyIdentitySplit(exception);
-        var message = hint is null
-            ? $"{operation} failed: {exception.GetType().Name}: {exception.Message}"
-            : $"{operation} failed: {exception.GetType().Name}: {exception.Message}\n\n{hint}";
-        return new McpException(message);
+        if (!toolDiagnosticsOptions.ExposeSafeErrorDetails)
+        {
+            return new McpException(
+                $"{operation} failed unexpectedly. Error reference: {errorId}. " +
+                "Check the server logs or contact the server operator.");
+        }
+
+        var hint = DescribeIfAssemblyIdentitySplit(exception) ?? GenericUnexpectedErrorHint;
+        return new McpException(
+            $"{operation} failed unexpectedly. Error reference: {errorId}. " +
+            $"Failure category: {exception.GetType().Name}. Next step: {hint}");
     }
 
     /// <summary>Recognizes the small family of exceptions ("field/method not found", "type could not be
@@ -455,7 +463,8 @@ public sealed class EfCoreMcpTools(
     /// configuration gap, not a problem with the target project, but the raw CLR exception message
     /// (e.g. "Field not found: 'Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.CommandExecuting'")
     /// gives no hint of that, sending anyone debugging it down the wrong path entirely. Returns
-    /// <see langword="null"/> for exceptions unrelated to this pattern so their message is left untouched.</summary>
+    /// <see langword="null"/> for exceptions unrelated to this pattern so they receive the generic,
+    /// vetted diagnostic hint instead.</summary>
     private static string? DescribeIfAssemblyIdentitySplit(Exception exception)
     {
         if (exception is not (MissingFieldException or MissingMethodException or TypeLoadException
@@ -542,6 +551,9 @@ public sealed class EfCoreMcpTools(
 
     private const string GenericQueryRecoveryHint =
         "verify entity and property names with get_schema, validate Dynamic LINQ syntax, and consult server logs if the problem persists.";
+
+    private const string GenericUnexpectedErrorHint =
+        "check the server logs using the error reference; diagnostic messages and stack traces are intentionally not returned to MCP callers.";
 
     /// <summary>Adds actionable next-step guidance to raw SQL execution failures, similar in
     /// spirit to <see cref="FormatQueryError"/> for the structured run_query tool. Raw SQL errors

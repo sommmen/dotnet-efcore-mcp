@@ -41,14 +41,35 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     }
 
     [Fact]
-    public void GetSchema_WhenAnUnexpectedExceptionOccurs_ExposesItsDetails()
+    public void GetSchema_WhenAnUnexpectedExceptionOccurs_ReturnsRedactedErrorByDefault()
     {
         var tools = CreateTools(new ThrowingResultFormatter());
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext"));
 
-        Assert.Equal("get_schema failed: InvalidOperationException: formatter failure", exception.Message);
+        Assert.StartsWith("get_schema failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("formatter failure", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-host", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("top-secret", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("InvalidOperationException", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetSchema_WhenAnUnexpectedExceptionOccursAndDiagnosticsAreEnabled_ExposesSafeCategoryOnly()
+    {
+        var tools = CreateTools(
+            new ThrowingResultFormatter(),
+            toolDiagnosticsOptions: new ToolDiagnosticsOptions { ExposeSafeErrorDetails = true });
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext"));
+
+        Assert.StartsWith("get_schema failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Failure category: InvalidOperationException", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("formatter failure", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-host", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("top-secret", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -71,7 +92,7 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     }
 
     [Fact]
-    public async Task RunQuery_WhenAnUnexpectedExceptionOccurs_ExposesItsDetails()
+    public async Task RunQuery_WhenAnUnexpectedExceptionOccurs_ReturnsRedactedErrorByDefault()
     {
         var tools = CreateTools();
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
@@ -79,8 +100,23 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
         var exception = await Assert.ThrowsAsync<McpException>(
             () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
 
-        Assert.StartsWith("run_query failed: SqliteException:", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("run_query failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SqliteException", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunQuery_WhenAnUnexpectedExceptionOccursAndDiagnosticsAreEnabled_ExposesSafeCategoryOnly()
+    {
+        var tools = CreateTools(toolDiagnosticsOptions: new ToolDiagnosticsOptions { ExposeSafeErrorDetails = true });
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+
+        Assert.StartsWith("run_query failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Failure category: SqliteException", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -95,7 +131,9 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
         Assert.Contains("omit contextName", root.GetProperty("hint").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static EfCoreMcpTools CreateTools(IToolResultFormatter? resultFormatter = null)
+    private static EfCoreMcpTools CreateTools(
+        IToolResultFormatter? resultFormatter = null,
+        ToolDiagnosticsOptions? toolDiagnosticsOptions = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -119,6 +157,7 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             resultFormatter ?? new JsonToolResultFormatter(),
+            toolDiagnosticsOptions ?? new ToolDiagnosticsOptions(),
             NullLogger<EfCoreMcpTools>.Instance);
     }
 
@@ -130,7 +169,7 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
         {
             if (Interlocked.Increment(ref formatCallCount) > 1)
             {
-                throw new InvalidOperationException("formatter failure");
+                throw new InvalidOperationException("formatter failure; Server=secret-host;Password=top-secret");
             }
 
             return new JsonToolResultFormatter().Format(value);

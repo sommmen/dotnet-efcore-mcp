@@ -15,6 +15,10 @@
     <!-- Non-relational provider used only to test SchemaBuilder against a DbContext whose
          provider doesn't support relational annotations (e.g. GetColumnType). -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.11" />
+    <!-- Used only by SharedFrameworkAssemblyClosureTests to inspect assemblies' public API surface
+         without loading them into this process (a real Assembly.Load would collide with the copies
+         this test project already references). -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>
@@ -35,6 +39,7 @@
     <None Include="..\Fixtures\BrokenDependencyApp\BrokenDependencyApp.csproj" />
     <None Include="..\Fixtures\BrokenDependencyApp.Dependency\BrokenDependencyApp.Dependency.csproj" />
     <None Include="..\Fixtures\PackageDependencyApp\PackageDependencyApp.csproj" />
+    <None Include="..\Fixtures\ManyDbSetsApp\ManyDbSetsApp.csproj" />
   </ItemGroup>
 
   <Target Name="BuildFixtureAssemblies" BeforeTargets="Build">
@@ -42,6 +47,7 @@
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\NoContextApp\NoContextApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\BrokenDependencyApp\BrokenDependencyApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\PackageDependencyApp\PackageDependencyApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\ManyDbSetsApp\ManyDbSetsApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
   </Target>
 
 </Project>
