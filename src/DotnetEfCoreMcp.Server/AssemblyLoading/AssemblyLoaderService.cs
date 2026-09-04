@@ -213,48 +213,55 @@ public sealed class AssemblyLoaderService
             migrationsAssembly.Contains(Path.AltDirectorySeparatorChar) ||
             migrationsAssembly.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
 
-        if (!looksLikePath)
+        // Loading into handle.Context mutates that context's loaded-assembly set, which can race
+        // with a concurrent Load()/Unload() on this service (e.g. a reload replacing the handle's
+        // underlying context while this method is still using it). Serializing on the same _gate
+        // used by every other mutating member closes that window.
+        lock (_gate)
         {
-            try
+            if (!looksLikePath)
             {
-                return handle.Context.LoadFromAssemblyName(new AssemblyName(migrationsAssembly));
+                try
+                {
+                    return handle.Context.LoadFromAssemblyName(new AssemblyName(migrationsAssembly));
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+                {
+                    throw new AssemblyLoadFailedException(
+                        $"Migrations assembly '{migrationsAssembly}' could not be resolved as a dependency of the currently loaded target assembly ('{handle.AssemblyPath}'). " +
+                        "If it is not a project or package reference of the loaded assembly, pass its compiled DLL path instead.",
+                        ex);
+                }
             }
-            catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+
+            var fullPath = Path.GetFullPath(migrationsAssembly);
+
+            if (_allowedRoots.Count > 0 && !_allowedRoots.Any(root => fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
             {
                 throw new AssemblyLoadFailedException(
-                    $"Migrations assembly '{migrationsAssembly}' could not be resolved as a dependency of the currently loaded target assembly ('{handle.AssemblyPath}'). " +
-                    "If it is not a project or package reference of the loaded assembly, pass its compiled DLL path instead.",
+                    $"Migrations assembly path '{fullPath}' is outside the configured allowed roots. Configure `AssemblyLoader:AllowedRoots` to include this location, or point at an assembly under an already-allowed root.");
+            }
+
+            if (!File.Exists(fullPath))
+            {
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly not found at '{fullPath}'. Build the target project first (e.g. `dotnet build`) and point at its bin/<Configuration>/<TFM>/*.dll output.");
+            }
+
+            try
+            {
+                return handle.Context.LoadAdditionalAssembly(fullPath);
+            }
+            catch (BadImageFormatException ex)
+            {
+                throw new AssemblyLoadFailedException(
+                    $"'{fullPath}' is not a valid managed assembly, or targets an incompatible platform/bitness for this process.",
                     ex);
             }
-        }
-
-        var fullPath = Path.GetFullPath(migrationsAssembly);
-
-        if (_allowedRoots.Count > 0 && !_allowedRoots.Any(root => fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new AssemblyLoadFailedException(
-                $"Migrations assembly path '{fullPath}' is outside the configured allowed roots. Configure `AssemblyLoader:AllowedRoots` to include this location, or point at an assembly under an already-allowed root.");
-        }
-
-        if (!File.Exists(fullPath))
-        {
-            throw new AssemblyLoadFailedException(
-                $"Migrations assembly not found at '{fullPath}'. Build the target project first (e.g. `dotnet build`) and point at its bin/<Configuration>/<TFM>/*.dll output.");
-        }
-
-        try
-        {
-            return handle.Context.LoadAdditionalAssembly(fullPath);
-        }
-        catch (BadImageFormatException ex)
-        {
-            throw new AssemblyLoadFailedException(
-                $"'{fullPath}' is not a valid managed assembly, or targets an incompatible platform/bitness for this process.",
-                ex);
-        }
-        catch (Exception ex)
-        {
-            throw new AssemblyLoadFailedException($"Failed to load migrations assembly '{fullPath}': {ex.Message}", ex);
+            catch (Exception ex)
+            {
+                throw new AssemblyLoadFailedException($"Failed to load migrations assembly '{fullPath}': {ex.Message}", ex);
+            }
         }
     }
 
