@@ -142,24 +142,32 @@ In other words:
 - Roslyn-generated query class solves query semantics
 - serialized result return keeps MCP boundaries clean
 
-## Practical implementation shape
+## Implemented first phase
 
-A viable design would look like this:
+The first isolated-execution phase is implemented for Roslyn queries. `QueryExecution:Mode`
+selects `InProcess`, `OutOfProcess`, or `Auto`; `Auto` currently selects the isolated host until
+compatibility fingerprinting is available. Dynamic LINQ remains an in-process execution engine.
 
-1. MCP server resolves the target app and target runtime
-2. MCP server launches a process such as:
-   - `dotnet exec --runtimeconfig ... --depsfile ... <query-host-dll>`
-   - or a dedicated helper app built for the target app's runtime
-3. build a simple JSON or binary protocol:
-   - request id
-   - connection info
-   - target context type
-   - query text
-   - optional timeout/cancellation metadata
-4. child process loads the target app assembly and relevant DbContext types
-5. child process compiles and executes the Roslyn-generated query class
-6. child process serializes rows/scalars back to the MCP server
-7. MCP server shapes the response into the normal `run_query` contract
+The host processes one versioned JSON request from standard input and writes one serialized result
+or sanitized error response to standard output. The server generates and validates a request ID.
+Connection details are therefore not placed on the command line, and host stderr is not exposed to
+MCP callers.
+
+The server launches the host as:
+
+```text
+dotnet exec --runtimeconfig <target>.runtimeconfig.json --depsfile <query-host>.deps.json <query-host>.dll
+```
+
+The two artifacts intentionally have different owners:
+
+- the **target application's runtimeconfig** selects the runtime/framework appropriate for the
+  target application;
+- the **query host's depsfile** resolves the host and MCP server dependency closure.
+
+Using the target application's depsfile for the host does not work: it does not contain the
+query-host or server assemblies. The initial phase uses a short-lived process per request and does
+not yet implement compatibility fingerprinting or a long-lived host.
 
 ## Design choice to make explicitly
 

@@ -24,6 +24,7 @@ public sealed class EfCoreMcpTools(
     SchemaCache schemaCache,
     QueryExecutor queryExecutor,
     RoslynQueryExecutor roslynQueryExecutor,
+    OutOfProcessRoslynQueryExecutor outOfProcessRoslynQueryExecutor,
     QueryExecutionOptions queryExecutionOptions,
     RawSqlExecutionOptions rawSqlExecutionOptions,
     SqlQueryExecutor sqlQueryExecutor,
@@ -358,9 +359,7 @@ public sealed class EfCoreMcpTools(
             var result = queryExecutionOptions.Engine switch
             {
                 QueryEngine.DynamicLinq => await ExecuteDynamicLinqAsync(contextType, entry, query, cancellationToken),
-                QueryEngine.Roslyn => await roslynQueryExecutor.ExecuteAsync(
-                    RequireLoadedAssembly(), contextType, entry, ResolveEffectiveProvider(contextType, entry),
-                    new QueryRequest { Query = query }, cancellationToken),
+                QueryEngine.Roslyn => await ExecuteRoslynAsync(contextType, entry, query, cancellationToken),
                 _ => throw new InvalidOperationException($"Unsupported query engine '{queryExecutionOptions.Engine}'.")
             };
             return resultFormatter.Format(result);
@@ -369,6 +368,18 @@ public sealed class EfCoreMcpTools(
         {
             throw new McpException(FormatQueryError(ex));
         }
+    }
+    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, CancellationToken cancellationToken)
+    {
+        var target = RequireLoadedAssembly();
+        var provider = ResolveEffectiveProvider(contextType, entry);
+        var request = new QueryRequest { Query = query };
+        return queryExecutionOptions.Mode switch
+        {
+            QueryExecutionMode.InProcess => roslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
+            QueryExecutionMode.OutOfProcess or QueryExecutionMode.Auto => outOfProcessRoslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
+            _ => throw new InvalidOperationException($"Unsupported query execution mode '{queryExecutionOptions.Mode}'."),
+        };
     }
     [McpServerTool(Name = "run_sql_query"), Description(
         "Executes a parameterized raw SQL command against a Development ReadWrite connection. This potentially " +

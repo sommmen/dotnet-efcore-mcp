@@ -6,6 +6,9 @@ public static class FixturePaths
 {
     public static string SampleAppDllPath => GetFixtureDllPath("SampleApp", "SampleApp.dll");
 
+    public static string QueryHostDllPath => Path.GetFullPath(Path.Combine(
+        AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "DotnetEfCoreMcp.QueryHost", "bin", "Debug", "net10.0", "DotnetEfCoreMcp.QueryHost.dll"));
+
     public static string NoContextAppDllPath => GetFixtureDllPath("NoContextApp", "NoContextApp.dll");
 
     public static string BrokenDependencyAppDllPath => GetFixtureDllPath("BrokenDependencyApp", "BrokenDependencyApp.dll");

@@ -44,6 +44,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
             new SchemaCache(),
             new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
             new RoslynQueryExecutor(new QueryExecutionOptions(), new QueryCompiler(new QueryCompilationOptions())),
+            new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions()),
             new QueryExecutionOptions(),
             resolvedRawSqlOptions,
             new SqlQueryExecutor(resolvedRawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
