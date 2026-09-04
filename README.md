@@ -302,6 +302,9 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `search_schema` | `contextName?: string`, `query: string`, `maxResults?: int` | Compact, case-insensitive substring matches (`entityName`, `entityNameMatched`, `matchingProperties`, `matchingRelationships`) across entity/property/relationship names, plus `totalMatchCount` and `truncated`. `maxResults` defaults to 10 and is capped at 25. Cache-only, same cache-miss behavior as `get_entity_schema`. |
 | `run_query` | `contextName: string`, `query: string`, `connectionName?: string` | Root DbSet name, scalar-or-sequence result, effective sequence page size, safely projected rows, and a `hasMoreRows` continuation flag |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
+| `insert_entity` | `contextName: string`, `entity: string`, `values: object`, `connectionName?: string` | Inserted scalar values and actual affected rows; disabled by default and restricted to development `ReadWrite` connections |
+| `update_entity` | `contextName: string`, `entity: string`, `key: object`, `values: object`, `concurrency?: object`, `connectionName?: string` | Updated scalar values and actual affected rows, or a stable not-found-or-concurrency-conflict result |
+| `delete_entity` | `contextName: string`, `entity: string`, `key: object`, `concurrency?: object`, `connectionName?: string` | Actual affected rows, or a stable not-found-or-concurrency-conflict result |
 
 `query` is a [Dynamic LINQ](https://dynamic-linq.net/) expression rooted at an exact, public
 `DbSet<T>` property name on the selected context, such as
