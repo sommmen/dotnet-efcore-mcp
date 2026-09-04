@@ -231,8 +231,12 @@ public sealed class AssemblyLoaderService
                 {
                     return handle.Context.LoadFromAssemblyName(new AssemblyName(migrationsAssembly));
                 }
-                catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+                catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException or ArgumentException)
                 {
+                    // ArgumentException covers malformed simple-name input (e.g. an invalid
+                    // assembly name format) thrown by the AssemblyName constructor itself, not
+                    // just failures from the subsequent load - both must be redacted the same way
+                    // rather than escaping as an unhandled exception to the tool caller.
                     throw new AssemblyLoadFailedException(
                         $"Migrations assembly '{migrationsAssembly}' could not be resolved as a dependency of the currently loaded target assembly ('{handle.AssemblyPath}'). " +
                         "If it is not a project or package reference of the loaded assembly, pass its compiled DLL path instead.",

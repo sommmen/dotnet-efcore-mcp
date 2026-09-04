@@ -117,6 +117,25 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void ResolveMigrationsAssembly_WithMalformedSimpleName_ThrowsAssemblyLoadFailedExceptionInsteadOfArgumentException()
+    {
+        // "SplitContextApp, Culture=notarealculture123" is syntactically well-formed enough to
+        // reach the AssemblyName constructor but its Culture component is not a recognized
+        // culture identifier, so the constructor itself throws CultureNotFoundException (an
+        // ArgumentException subtype) rather than failing later during the actual load. This must
+        // be redacted into AssemblyLoadFailedException just like any other malformed simple-name
+        // input, instead of letting the raw ArgumentException escape to the tool caller.
+        const string malformedName = "SplitContextApp, Culture=notarealculture123";
+        var assemblyLoader = new AssemblyLoaderService();
+        var handle = assemblyLoader.Load(FixturePaths.SplitMigrationsAppDllPath);
+
+        var exception = Assert.Throws<AssemblyLoadFailedException>(
+            () => assemblyLoader.ResolveMigrationsAssembly(handle, malformedName));
+
+        Assert.Contains(malformedName, exception.Message);
+    }
+
+    [Fact]
     public async Task ListMigrations_WithoutMigrationsAssembly_FindsNoMigrationsInContextOnlyAssembly()
     {
         var tools = CreateTools();
