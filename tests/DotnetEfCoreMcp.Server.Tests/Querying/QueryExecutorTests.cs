@@ -70,6 +70,7 @@ public sealed class QueryExecutorTests : IDisposable
         var result = await CreateExecutor(1).ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name)" }, 30, CancellationToken.None);
         Assert.Equal(1, result.RowCount);
         Assert.Equal(1, result.EffectiveTake);
+        Assert.True(result.HasMoreRows);
     }
 
     [Fact]
@@ -80,6 +81,7 @@ public sealed class QueryExecutorTests : IDisposable
         Assert.Equal(1, result.RowCount);
         Assert.Equal(1, result.EffectiveTake);
         Assert.Equal("Alice", result.Rows[0]["Name"]);
+        Assert.True(result.HasMoreRows);
     }
 
     [Fact]
@@ -89,6 +91,73 @@ public sealed class QueryExecutorTests : IDisposable
         var result = await CreateExecutor(maxTake: 1).ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Take(100)" }, 30, CancellationToken.None);
         Assert.Single(result.Rows);
         Assert.Equal(1, result.EffectiveTake);
+        Assert.True(result.HasMoreRows);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_FalseWhenNoRowsMatch()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Where(c => c.Age > 999)" }, 30, CancellationToken.None);
+        Assert.Equal(0, result.RowCount);
+        Assert.False(result.HasMoreRows);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_FalseWhenRowCountExactlyMatchesEffectiveTake()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor(maxTake: 3, defaultTake: 3).ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name)" }, 30, CancellationToken.None);
+        Assert.Equal(3, result.RowCount);
+        Assert.Equal(3, result.EffectiveTake);
+        Assert.False(result.HasMoreRows);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_TrueWhenExtraRowExistsBeyondTake()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Take(2)" }, 30, CancellationToken.None);
+        Assert.Equal(2, result.RowCount);
+        Assert.Equal(2, result.EffectiveTake);
+        Assert.True(result.HasMoreRows);
+        Assert.Equal(new[] { "Alice", "Bob" }, result.Rows.Select(row => row["Name"]));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_ReflectsRemainderAfterSkippedWindow()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Skip(1).Take(1)" }, 30, CancellationToken.None);
+        Assert.Single(result.Rows);
+        Assert.Equal(1, result.EffectiveTake);
+        Assert.Equal("Bob", result.Rows[0]["Name"]);
+        Assert.True(result.HasMoreRows);
+
+        var lastPage = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Skip(2).Take(1)" }, 30, CancellationToken.None);
+        Assert.Single(lastPage.Rows);
+        Assert.Equal("Carol", lastPage.Rows[0]["Name"]);
+        Assert.False(lastPage.HasMoreRows);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_FalseForZeroTakeWithoutMaterializing()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Take(0)" }, 30, CancellationToken.None);
+        Assert.Equal(0, result.RowCount);
+        Assert.Equal(0, result.EffectiveTake);
+        Assert.Empty(result.Rows);
+        Assert.False(result.HasMoreRows);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_FalseForScalarResults()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Count(c => c.Age >= 30)" }, 30, CancellationToken.None);
+        Assert.True(result.IsScalar);
+        Assert.False(result.HasMoreRows);
     }
 
     [Fact]
@@ -165,6 +234,21 @@ public sealed class QueryExecutorTests : IDisposable
         using var context = NewContext();
         var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest { Query = "Customers.Select(c => c.Name).Union(Orders.Select(o => \"Alice\"))" }, 30, CancellationToken.None);
         Assert.False(result.IsScalar);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PreservesTakeWithinSetOperationBranchWhenProbingContinuation()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest
+        {
+            Query = "Customers.Select(c => c.Name).Concat(Customers.OrderByDescending(c => c.Name).Take(1).Select(c => c.Name)).Skip(3)"
+        }, 30, CancellationToken.None);
+
+        Assert.Equal(1, result.EffectiveTake);
+        Assert.Equal(1, result.RowCount);
+        Assert.False(result.HasMoreRows);
+        Assert.Equal("Carol", result.Rows.Single().Single().Value);
     }
 
     [Theory]

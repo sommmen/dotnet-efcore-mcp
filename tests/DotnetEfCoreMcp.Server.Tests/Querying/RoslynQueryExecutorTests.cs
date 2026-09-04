@@ -74,6 +74,32 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         Assert.Equal(1, result.RowCount);
         Assert.Equal(1, result.EffectiveTake);
+        Assert.True(result.HasMoreRows);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_FalseWhenRowCountExactlyMatchesEffectiveTake()
+    {
+        var result = await CreateExecutor(maxTake: 2).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Take(2)" }, CancellationToken.None);
+
+        Assert.Equal(2, result.RowCount);
+        Assert.Equal(2, result.EffectiveTake);
+        Assert.False(result.HasMoreRows);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HasMoreRows_FalseForZeroTakeWithoutMaterializing()
+    {
+        var result = await CreateExecutor().ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Name).Take(0)" }, CancellationToken.None);
+
+        Assert.Equal(0, result.RowCount);
+        Assert.Equal(0, result.EffectiveTake);
+        Assert.Empty(result.Rows);
+        Assert.False(result.HasMoreRows);
     }
 
     [Fact]

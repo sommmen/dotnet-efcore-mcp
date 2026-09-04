@@ -115,18 +115,15 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
     private async Task<QueryResult> ShapeResultAsync(object? value, int commandTimeoutSeconds, CancellationToken cancellationToken)
     {
         if (value is not IQueryable sequence)
-            return new QueryResult("C#", 1, null, true, value, []);
+            return new QueryResult("C#", 1, null, false, true, value, []);
 
         var effectiveTake = QueryExecutor.GetEffectiveTake(sequence.Expression, executionOptions);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(commandTimeoutSeconds) + executionOptions.CancellationMargin);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
-            var cappedSequence = sequence.Provider.CreateQuery(System.Linq.Expressions.Expression.Call(
-                typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], sequence.Expression,
-                System.Linq.Expressions.Expression.Constant(effectiveTake)));
-            var values = await QueryExecutor.MaterializeUntypedAsync(cappedSequence, linked.Token).ConfigureAwait(false);
-            return new QueryResult("C#", values.Count, effectiveTake, false, null, values.Select(QueryExecutor.ProjectValue).ToList());
+            var (values, hasMoreRows) = await QueryExecutor.MaterializeWithContinuationAsync(sequence, effectiveTake, linked.Token).ConfigureAwait(false);
+            return new QueryResult("C#", values.Count, effectiveTake, hasMoreRows, false, null, values.Select(QueryExecutor.ProjectValue).ToList());
         }
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
         {

@@ -100,12 +100,11 @@ public sealed class QueryExecutor
             if (execution is IQueryable sequence)
             {
                 var effectiveTake = GetEffectiveTake(lambda.Body, _options);
-                var page = sequence.Take(effectiveTake);
-                var values = await MaterializeUntypedAsync(page, linkedCts.Token).ConfigureAwait(false);
-                return new QueryResult(rootName, values.Count, effectiveTake, false, null, values.Select(ProjectValue).ToList());
+                var (values, hasMoreRows) = await MaterializeWithContinuationAsync(sequence, effectiveTake, linkedCts.Token).ConfigureAwait(false);
+                return new QueryResult(rootName, values.Count, effectiveTake, hasMoreRows, false, null, values.Select(ProjectValue).ToList());
             }
 
-            return new QueryResult(rootName, 1, null, true, execution, []);
+            return new QueryResult(rootName, 1, null, false, true, execution, []);
         }
         catch (OperationCanceledException ex) when (timeoutCts.IsCancellationRequested)
         {
@@ -211,6 +210,36 @@ public sealed class QueryExecutor
         return (List<object?>)task.GetType().GetProperty("Result")!.GetValue(task)!;
     }
 
+    /// <summary>Materializes <paramref name="sequence"/> up to <paramref name="effectiveTake"/> rows,
+    /// reporting whether at least one further row exists (P0 #2 <c>hasMoreRows</c>). Shared across
+    /// query engines: both the Dynamic LINQ and Roslyn engines hand back a filtered, ordered, skipped
+    /// <see cref="IQueryable"/> at this point, so the same sentinel-row approach applies to either.
+    /// For a positive <paramref name="effectiveTake"/>, requests <c>effectiveTake + 1</c> rows and
+    /// treats a returned extra row solely as a sentinel: it is discarded before projection and never
+    /// counted in <see cref="QueryResult.RowCount"/> or included in <see cref="QueryResult.Rows"/>.
+    /// For <paramref name="effectiveTake"/> of zero, no sentinel probe is issued at all - the sequence
+    /// is never materialized and <c>hasMoreRows</c> is unconditionally <c>false</c>. Consecutive
+    /// caller-supplied <c>Take</c> calls at the outer page-pipeline level are stripped first: composing a
+    /// new <c>Take(effectiveTake + 1)</c> on top of <c>Take(N)</c> would otherwise reduce to
+    /// <c>Take(min(N, effectiveTake + 1))</c>, which equals <c>Take(N)</c> whenever
+    /// <c>N &lt;= effectiveTake</c> and would silently prevent the sentinel row from ever being requested.
+    /// Takes nested in set-operation branches are preserved because they affect that branch's result
+    /// semantics.</summary>
+    internal static async Task<(List<object?> Values, bool HasMoreRows)> MaterializeWithContinuationAsync(
+        IQueryable sequence, int effectiveTake, CancellationToken cancellationToken)
+    {
+        if (effectiveTake == 0) return ([], false);
+
+        var withoutExistingTake = TakeRemover.RemovePagePipelineTakes(sequence.Expression);
+        var page = sequence.Provider.CreateQuery(Expression.Call(
+            typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], withoutExistingTake,
+            Expression.Constant(effectiveTake + 1)));
+        var values = await MaterializeUntypedAsync(page, cancellationToken).ConfigureAwait(false);
+        var hasMoreRows = values.Count > effectiveTake;
+        if (hasMoreRows) values.RemoveAt(values.Count - 1);
+        return (values, hasMoreRows);
+    }
+
     private static async Task<List<object?>> MaterializeAsync<T>(IQueryable query, CancellationToken cancellationToken)
     {
         var values = await ((IQueryable<T>)query).ToListAsync(cancellationToken).ConfigureAwait(false);
@@ -258,6 +287,26 @@ public sealed class QueryExecutor
                 && node.Arguments.Count == 2 && node.Arguments[1] is ConstantExpression { Value: int take })
                 _take = _take is null ? take : Math.Min(_take.Value, take);
             return base.VisitMethodCall(node);
+        }
+    }
+
+    /// <summary>Removes only consecutive outer <c>Queryable.Take</c> calls from a final page pipeline.
+    /// Takes nested in a set-operation branch are part of that branch's requested result semantics and
+    /// must remain intact.</summary>
+    private static class TakeRemover
+    {
+        public static Expression RemovePagePipelineTakes(Expression expression)
+        {
+            while (expression is MethodCallExpression methodCall &&
+                   methodCall.Method.DeclaringType == typeof(Queryable) &&
+                   methodCall.Method.Name == nameof(Queryable.Take) &&
+                   methodCall.Arguments.Count == 2 &&
+                   methodCall.Arguments[1] is ConstantExpression { Value: int })
+            {
+                expression = methodCall.Arguments[0];
+            }
+
+            return expression;
         }
     }
 
