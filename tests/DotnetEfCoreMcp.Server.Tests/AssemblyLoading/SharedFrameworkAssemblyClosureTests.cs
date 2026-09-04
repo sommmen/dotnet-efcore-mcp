@@ -27,9 +27,33 @@ public sealed class SharedFrameworkAssemblyClosureTests
     /// project creates, resolves these via the default/TPA binder rather than via
     /// <see cref="SharedFrameworkAssemblyNames"/>, so they are not required to appear in the shared
     /// list and are excluded from the closure check.</summary>
+    private static readonly HashSet<string> FrameworkAssemblyNames = GetFrameworkAssemblyNames();
+
     private static bool IsFrameworkAssembly(string assemblyName) =>
-        assemblyName.StartsWith("System", StringComparison.Ordinal)
-        || assemblyName is "mscorlib" or "netstandard";
+        FrameworkAssemblyNames.Contains(assemblyName);
+
+    private static HashSet<string> GetFrameworkAssemblyNames()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "mscorlib",
+            "netstandard",
+        };
+
+        if (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") is string trustedPlatformAssemblies)
+        {
+            foreach (string path in trustedPlatformAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string? name = Path.GetFileNameWithoutExtension(path);
+                if (name is not null)
+                {
+                    names.Add(name);
+                }
+            }
+        }
+
+        return names;
+    }
 
     /// <summary>Historically some shared assembly names (e.g. Microsoft.AspNetCore.Identity, which
     /// is a metapackage with no assembly of its own) never had a matching physical DLL to begin

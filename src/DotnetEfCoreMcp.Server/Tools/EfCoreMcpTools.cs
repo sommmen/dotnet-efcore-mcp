@@ -481,7 +481,7 @@ public sealed class EfCoreMcpTools(
             "which surfaces as a confusing \"field/method not found\" or \"could not load\" error even " +
             "though the member genuinely exists. If this keeps happening for a specific dependency, it " +
             "usually means that assembly's simple name needs to be added to " +
-            "TargetAssemblyLoadContext.SharedAssemblyNames in the MCP server itself; retrying or " +
+            "SharedFrameworkAssemblyNames.Value in the MCP server itself; retrying or " +
             "reloading the assembly will not help.";
     }
 
