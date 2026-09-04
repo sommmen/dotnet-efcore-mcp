@@ -13,10 +13,11 @@ using ModelContextProtocol.Server;
 
 namespace DotnetEfCoreMcp.Server.Tools;
 
-/// <summary>The MCP tool surface for this server. All tools operate against a single, currently
-/// loaded target assembly (see <see cref="LoadAssembly"/>) and always resolve connection strings
-/// from the server-side <see cref="ConnectionRegistry"/> by logical name - an MCP client can never
-/// supply a raw connection string.</summary>
+/// <summary>The MCP tool surface for this server. Tools operate against one or more loaded target
+/// assemblies (see <see cref="LoadAssembly"/>), selected by an optional <c>targetName</c> parameter;
+/// omitting the name resolves to the current default target for backward compatibility with single-target
+/// callers. All tools resolve connection strings from the server-side <see cref="ConnectionRegistry"/>
+/// by logical name - an MCP client can never supply a raw connection string.</summary>
 [McpServerToolType]
 public sealed class EfCoreMcpTools(
     AssemblyLoaderService assemblyLoader,
