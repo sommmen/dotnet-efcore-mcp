@@ -300,6 +300,8 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
 | `run_query` | `contextName: string`, `query: string`, `connectionName?: string` | Root DbSet name, scalar-or-sequence result, effective sequence page size, and safely projected rows |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
+| `list_migrations` | `contextName: string`, `connectionName?: string` | Applied migrations (ID, product version), pending migrations (ID, target), a `databaseExists` flag, and an `appliedStateAvailable` flag; always available (read-only) except for production connections |
+| `generate_migration_script` | `contextName: string`, `connectionName?: string`, `fromMigration?: string`, `toMigration?: string`, `idempotent?: bool` (default `true`) | A preview SQL script, whether it was `truncated`, and the number of migrations it covers; disabled by default and restricted to development `ReadWrite` connections |
 
 `query` is a [Dynamic LINQ](https://dynamic-linq.net/) expression rooted at an exact, public
 `DbSet<T>` property name on the selected context, such as
@@ -340,6 +342,30 @@ acceptable.
 `get_schema` and `run_query` both require `connectionName` even though `get_schema` never
 queries the database — constructing the `DbContext` object at all (even for schema-only
 purposes) requires a real connection string/provider to build its `DbContextOptions`.
+
+`list_migrations` is always-on, read-only inspection (no DDL/DML, never mutates the target
+database): it reports which migrations the assembly knows about, which are recorded as applied
+in `__EFMigrationsHistory`, and which are pending. When the target database is unreachable,
+`databaseExists` is `false`, every known migration is reported pending, and
+`appliedStateAvailable` is `false` rather than presenting metadata as confirmed applied state.
+It is rejected only for production connections.
+
+`generate_migration_script` previews the SQL EF Core's `IMigrator.GenerateScript` would produce
+between two migration IDs — it never executes the script, opens a transaction, or calls
+`SaveChanges`. It is disabled by default; enable it (and restart the server, the same as
+`RawSqlExecution:Enabled`) with:
+
+```powershell
+dotnet user-secrets set "Migrations:Enabled" "true"
+# Or for the current process:
+$env:DOTNETEFCOREMCP_MIGRATIONS__ENABLED = "true"
+```
+
+Even when enabled, it is rejected for production and `ReadOnly` connections. The returned script
+is capped at `Migrations:MaxScriptLength` characters (100,000 by default) and truncated at a
+best-effort statement boundary, with `truncated` set to `true` when that happens. Not every
+provider supports idempotent scripts (for example, SQLite does not); retry with
+`idempotent: false` if `generate_migration_script` reports that limitation.
 
 ## Security
 

@@ -10,6 +10,8 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 - [x] `list_contexts` — list discovered `DbContext` types available from the currently loaded assembly
 - [x] `get_schema` — return the model/schema for a given context
 - [x] `run_query` — execute a read-only LINQPad-style query expression against a selected context
+- [x] `list_migrations` — non-mutating read of applied/pending EF Core migration state
+- [x] `generate_migration_script` — preview a migration SQL script without executing it
 
 ## P0 #1 — LINQPad-style `run_query`
 
@@ -174,28 +176,34 @@ Keep the public tool parameters unchanged: every existing `connectionName`, `con
 
 Each tool uses the same policy evaluator and sanitized authorization failure. Discovery tools return filtered views rather than denied entries, while direct lookup/execution rejects denied or unlisted selectors. Add focused tool-surface tests for forwarding the connection identity to the evaluator, coverage of every listed tool, allowlist-over-deny precedence, and non-disclosure of excluded contexts/entities in list, schema, and search responses.
 
-## Proposed open work — P1 #11: migration inspection & script generation
+## P1 #11 — migration inspection & script generation
 
-Add two structured, server-side tools for EF Core migration state and scripting, gated to
-non-production `ReadWrite` development connections and reusing the existing
-`ConnectionRegistry`/`DbContext` factory path (no raw connection strings from clients):
+Two structured, server-side tools for EF Core migration state and scripting, reusing the
+existing `ConnectionRegistry`/`DbContext` factory path (no raw connection strings from clients):
 
-- `list_migrations` — non-mutating read of `appliedMigrations`, `pendingMigrations`, and
-  `databaseExists`, sourced from the migration assembly's known migration IDs and, when a live
-  connection exists, `IHistoryRepository`'s read of `__EFMigrationsHistory`. Always available
-  (no enable flag); rejected on production connections.
-- `generate_migration_script` — produces idempotent SQL via `IMigrator.GenerateScript(...)` as
-  a preview only (never executes, opens no transaction, no `SaveChanges`). Gated by a
-  `Migrations:Enabled` configuration flag (default `false`) and capped by a configurable
-  `Migrations:MaxScriptLength`; the response carries `truncated: true` when cut short.
+- `list_migrations` — non-mutating read of `appliedMigrations`, `pendingMigrations`,
+  `databaseExists`, and `appliedStateAvailable`, sourced from the migration assembly's known
+  migration IDs and, when a live connection exists, `IHistoryRepository`'s read of
+  `__EFMigrationsHistory`. Always available (no enable flag) on non-production connections,
+  including `ReadOnly`; rejected only on production connections.
+- `generate_migration_script` — produces SQL via `IMigrator.GenerateScript(...)` as a preview
+  only (never executes, opens no transaction, no `SaveChanges`). Gated by a `Migrations:Enabled`
+  configuration flag (default `false`, restart-required to toggle — same convention as
+  `RawSqlExecution:Enabled`) and rejected for production and `ReadOnly` connections. The
+  response is capped by a configurable `Migrations:MaxScriptLength` (default 100,000 characters)
+  and truncated at a best-effort statement boundary; the response carries `truncated: true` when
+  cut short.
 
-`run_sql_query` remains the existing opt-in escape hatch; see
+`run_sql_query` remains a separate, independent opt-in escape hatch; see
 [Migration inspection](./migrations.md) for the full contract, EF Core integration points
-(`IMigrator`, `IHistoryRepository`), read-only safety rules, configuration surface, and open
-questions. Tool-surface
-tests cover parameter binding, non-production gating, script truncation, redacted failure
-classification, and proof that scripting never enumerates a query, opens a connection, or
-mutates state.
+(`IMigrator`, `IMigrationsAssembly`, `IHistoryRepository`), read-only safety rules, and
+configuration surface. Tests under
+[`tests/DotnetEfCoreMcp.Server.Tests/Migrations/`](../../tests/DotnetEfCoreMcp.Server.Tests/Migrations/)
+cover parameter binding/response shape, the `Migrations:Enabled` gate, production/`ReadOnly`
+connection rejection, script truncation, redacted failure messages (SQLite's lack of idempotent
+script support, unknown migration IDs), and proof that both tools never mutate the target
+database (no `Migrate()`, `ExecuteSqlRaw`, transaction, or `SaveChanges` call, and no database
+file is created as a side effect of previewing a script).
 
 ## Proposed open work — P1 #12: structured mutation tools
 
