@@ -458,8 +458,18 @@ public sealed class AssemblyLoaderService
         }
     }
 
+    // File systems are case-insensitive on Windows/macOS but case-sensitive on Linux. Using
+    // OrdinalIgnoreCase unconditionally would let a path that differs from an allowed root only
+    // in casing pass this containment check on Linux even though the OS itself would treat it as
+    // a distinct (and potentially unapproved) location - i.e. a casing-based bypass of the
+    // AllowedRoots restriction on arbitrary DLL loading.
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
     private static bool MatchesAnyRoot(string fullPath, IReadOnlyList<string> roots) =>
-        roots.Any(root => fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+        roots.Any(root => fullPath.StartsWith(root, PathComparison));
 
     private static IReadOnlyList<string> NormalizeRoots(IReadOnlyList<string> roots) =>
         roots
