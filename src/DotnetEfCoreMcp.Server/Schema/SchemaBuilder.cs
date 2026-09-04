@@ -121,14 +121,17 @@ public static class SchemaBuilder
 
     private static string? TryGetColumnName(IProperty property) => property.GetColumnName();
 
-    // Default values can be numbers, dates, or other IFormattable/IConvertible types whose
-    // ToString() output is culture-dependent (e.g. decimal separators, date formats). Formatting
-    // with InvariantCulture keeps the serialized value stable across machines/locales.
+    // Default values can be numbers, dates, or other IFormattable types whose ToString() output
+    // is culture-dependent (e.g. decimal separators, date formats). Formatting with
+    // InvariantCulture keeps the serialized value stable across machines/locales. byte[] (e.g.
+    // rowversion/timestamp defaults) is handled explicitly since it is neither IFormattable nor
+    // meaningfully convertible via Convert.ToString, which can throw for arbitrary CLR types.
     private static string? FormatDefaultValue(object? value) => value switch
     {
         null => null,
         string s => s,
+        byte[] bytes => Convert.ToHexString(bytes),
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
-        _ => Convert.ToString(value, CultureInfo.InvariantCulture),
+        _ => value.ToString(),
     };
 }

@@ -340,6 +340,67 @@ public sealed class SchemaBuilderTests
         Assert.Equal([nameof(InMemoryProbeChild.ParentId)], navigation.ForeignKeyProperties);
     }
 
+    [Fact]
+    public void Build_FormatsNumericDefaultValueWithInvariantCulture()
+    {
+        // A CLR (non-SQL) default value on a decimal property exercises FormatDefaultValue's
+        // IFormattable branch. Using InvariantCulture avoids a decimal separator that would
+        // differ under e.g. a comma-decimal culture, keeping serialized output stable.
+        using var db = new SqliteTestDatabase();
+        var options = new DbContextOptionsBuilder<DefaultValueProbeContext>()
+            .UseSqlite(db.ConnectionString)
+            .Options;
+        using var context = new DefaultValueProbeContext(options);
+
+        var schema = SchemaBuilder.Build(context);
+
+        var entity = schema.Entities.Single(e => e.Name == nameof(DefaultValueProbeEntity));
+        var amount = entity.Properties.Single(p => p.Name == nameof(DefaultValueProbeEntity.Amount));
+        Assert.Equal("1.5", amount.DefaultValue);
+    }
+
+    [Fact]
+    public void Build_FormatsByteArrayDefaultValueWithoutThrowing()
+    {
+        // byte[] is neither IFormattable nor safely handled by Convert.ToString for arbitrary
+        // types; FormatDefaultValue must special-case it instead of throwing.
+        using var db = new SqliteTestDatabase();
+        var options = new DbContextOptionsBuilder<DefaultValueProbeContext>()
+            .UseSqlite(db.ConnectionString)
+            .Options;
+        using var context = new DefaultValueProbeContext(options);
+
+        var schema = SchemaBuilder.Build(context);
+
+        var entity = schema.Entities.Single(e => e.Name == nameof(DefaultValueProbeEntity));
+        var rowVersion = entity.Properties.Single(p => p.Name == nameof(DefaultValueProbeEntity.RowVersion));
+        Assert.Equal("010203", rowVersion.DefaultValue);
+    }
+
+    private sealed class DefaultValueProbeContext(DbContextOptions<DefaultValueProbeContext> options)
+        : Microsoft.EntityFrameworkCore.DbContext(options)
+    {
+        public DbSet<DefaultValueProbeEntity> Probes => Set<DefaultValueProbeEntity>();
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<DefaultValueProbeEntity>(builder =>
+            {
+                builder.Property(p => p.Amount).HasDefaultValue(1.5m);
+                builder.Property(p => p.RowVersion).HasDefaultValue(new byte[] { 1, 2, 3 });
+            });
+        }
+    }
+
+    private sealed class DefaultValueProbeEntity
+    {
+        public int Id { get; set; }
+
+        public decimal Amount { get; set; }
+
+        public byte[] RowVersion { get; set; } = [];
+    }
+
     private sealed class InMemoryProbeContext(DbContextOptions<InMemoryProbeContext> options)
         : Microsoft.EntityFrameworkCore.DbContext(options)
     {
