@@ -75,7 +75,12 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         _loadedAssemblyPaths.Add(assemblyPath);
         if (assembly.GetName().Name is { } loadedSimpleName)
         {
-            _loadedAssemblyPathsByName[loadedSimpleName] = assemblyPath;
+            // TryAdd (not the indexer) so the *first* path a simple name was loaded from is the
+            // one collision detection compares against for the lifetime of this context. Using
+            // the indexer here would let any later load of the same simple name (e.g. a
+            // dependency resolved a second time via Load() below) silently overwrite the
+            // recorded path, defeating LoadAdditionalAssembly's same-name/different-path check.
+            _loadedAssemblyPathsByName.TryAdd(loadedSimpleName, assemblyPath);
         }
 
         return assembly;

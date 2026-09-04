@@ -236,6 +236,37 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void LoadAdditionalAssembly_WhenSameSimpleNameIsLoadedTwiceFromSamePath_KeepsFirstRecordedPath()
+    {
+        // Regression test for a review finding: the simple-name-to-path map used for collision
+        // detection must record the *first* path a simple name was loaded from and never let a
+        // later load silently overwrite it (e.g. via TargetAssemblyLoadContext's Load() override
+        // resolving a dependency a second time). This drives the private LoadAssemblyFromStream
+        // method directly via reflection - the only way to load the same simple name from a
+        // second path without going through LoadAdditionalAssembly's own (correct) same-name/
+        // different-path guard, which would otherwise throw before ever reaching the map write
+        // this test is verifying.
+        Directory.CreateDirectory(_scratchDirectory);
+        var copiedPath = Path.Combine(_scratchDirectory, "SplitContextAppCopy.dll");
+        File.Copy(FixturePaths.SplitContextAppDllPath, copiedPath);
+
+        var context = new TargetAssemblyLoadContext(FixturePaths.SplitContextAppDllPath, "reflection-probe");
+        var loadFromStream = typeof(TargetAssemblyLoadContext).GetMethod(
+            "LoadAssemblyFromStream",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var pathsByNameField = typeof(TargetAssemblyLoadContext).GetField(
+            "_loadedAssemblyPathsByName",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        loadFromStream.Invoke(context, [FixturePaths.SplitContextAppDllPath]);
+        loadFromStream.Invoke(context, [copiedPath]);
+
+        var pathsByName = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)pathsByNameField.GetValue(context)!;
+
+        Assert.Equal(FixturePaths.SplitContextAppDllPath, pathsByName["SplitContextApp"]);
+    }
+
+    [Fact]
     public async Task ListMigrations_WithUnresolvableMigrationsAssemblyName_ThrowsRedactedError()
     {
         var tools = CreateTools();
