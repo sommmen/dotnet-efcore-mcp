@@ -31,9 +31,9 @@ catch (QueryExecutionException ex)
 {
     response = Error(requestId, ex.Message);
 }
-catch
+catch (Exception ex)
 {
-    response = Error(requestId, "The out-of-process query host could not execute the query.");
+    response = Error(requestId, $"The out-of-process query host could not execute the query: {ex.GetType().Name}: {ex.Message}");
 }
 
 await Console.Out.WriteAsync(JsonSerializer.Serialize(response, jsonOptions));
