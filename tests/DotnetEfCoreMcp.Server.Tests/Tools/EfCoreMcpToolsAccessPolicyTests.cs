@@ -2,6 +2,7 @@ using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
@@ -193,6 +194,70 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
     }
 
     [Fact]
+    public void GetSchema_MissingContextName_ChoiceListNeverDisclosesADeniedButRealContext()
+    {
+        // Regression for a review finding where ResolveContextType built its "choose one of these"
+        // hint from every DbContext discovered in the assembly - including ones the connection's
+        // AccessPolicy denies - before the policy was ever consulted. The hint must be built from
+        // only the policy-reachable contexts, so a denied-but-real context name never leaks to a
+        // caller who omitted `contextName`.
+        var tools = CreateTools(allowContexts: ["SampleApp.SampleAppDbContext"]);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        // The fixture assembly exposes more than one DbContext, so omitting contextName forces the
+        // "multiple DbContexts" selection-error path that lists candidates.
+        var exception = Assert.Throws<McpException>(() => tools.GetSchema());
+
+        Assert.Contains("SampleAppDbContext", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("FactoryOnlyDbContext", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunQuery_AllowedEntityReferencedOnlyByItsDbSetName_Succeeds()
+    {
+        // Regression for a review finding where RunQueryCore checked the DbSet property name
+        // ("Customers") against the AccessPolicy instead of the resolved entity name ("Customer"),
+        // so a policy naming the entity by its actual EF entity name (as EntitySelector requires)
+        // would incorrectly deny a query against its own DbSet.
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(
+            allowEntities: [new EntitySelector("SampleApp.SampleAppDbContext", "Customer")],
+            connectionString: db.ConnectionString);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        // Ensure the schema exists before the tool tries to execute a real query against it.
+        var handle = new AssemblyLoaderService().Load(FixturePaths.SampleAppDllPath);
+        var contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors
+            .Single(d => d.Name == "SampleAppDbContext").ClrType;
+        using (var setupContext = DbContextActivator.CreateInstance(contextType, db.ToRegistryEntry(), DatabaseProvider.Sqlite))
+        {
+            setupContext.Database.EnsureCreated();
+        }
+
+        var result = await tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)");
+
+        Assert.DoesNotContain("not permitted", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunQuery_DeniedEntityReferencedViaUnion_RejectsBeforeExecutingAgainstTheDatabase()
+    {
+        // Regression for the same DbSet-name-vs-entity-name mismatch, exercised through the
+        // "other referenced DbSet" path (QueryExecutor.ResolveReferencedEntityNames): the root
+        // entity ("Order") is allowed, but the query also references the "Customers" DbSet via
+        // Union, whose entity ("Customer") is denied - this must be rejected before any query
+        // executes, using the entity name rather than the DbSet name.
+        var tools = CreateTools(allowEntities: [new EntitySelector("SampleApp.SampleAppDbContext", "Order")]);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.RunQuery("SampleAppDbContext", "Orders.Select(o => o.Id).Union(Customers.Select(c => c.Id))"));
+
+        Assert.Contains("Customer", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("not permitted", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ResolveConnection_UnresolvableAccessPolicySelector_ThrowsConfigurationErrorNotDenial()
     {
         // A configured selector that cannot resolve against the actual loaded model is a server
@@ -220,11 +285,12 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         IReadOnlyList<string>? allowContexts = null,
         IReadOnlyList<EntitySelector>? allowEntities = null,
         EntityMutationsOptions? entityMutationsOptions = null,
-        bool readWrite = false)
+        bool readWrite = false,
+        string? connectionString = null)
     {
         var values = new Dictionary<string, string?>
         {
-            ["Connections:PolicyTests:ConnectionString"] = "Data Source=:memory:",
+            ["Connections:PolicyTests:ConnectionString"] = connectionString ?? "Data Source=:memory:",
             ["Connections:PolicyTests:Provider"] = "Sqlite",
             ["Connections:PolicyTests:AccessMode"] = readWrite ? "ReadWrite" : "ReadOnly",
             ["Connections:PolicyTests:Environment"] = "Development",

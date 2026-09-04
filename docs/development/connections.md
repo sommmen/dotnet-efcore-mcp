@@ -96,11 +96,14 @@ Tests: [`Connections/ConnectionAccessPolicyTests.cs`](../../tests/DotnetEfCoreMc
 
   All selectors are exact, case-sensitive CLR `DbContext` full names and exact EF entity
   names; an entity selector is scoped as `<context full name>:<entity name>`. Empty/omitted
-  arrays are allowed (an absent `AccessPolicy` defaults to fully empty, i.e. everything
-  denied — fail-closed, not fail-open). A malformed entity selector (missing/empty
-  `context:entity` parts) or a selector that cannot resolve against the loaded model throws
-  `ConnectionRegistryConfigurationException` — the registry/connection resolution rejects
-  invalid policy before serving the connection rather than silently ignoring it.
+  arrays are allowed within an `AccessPolicy` section (everything denied — fail-closed, not
+  fail-open), but the `AccessPolicy` section itself is mandatory: a connection with no
+  `AccessPolicy` section at all throws `ConnectionRegistryConfigurationException` rather than
+  defaulting to an empty policy, so a missing policy is a startup configuration error, not a
+  silent fail-closed default. A malformed entity selector (missing/empty `context:entity`
+  parts) or a selector that cannot resolve against the loaded model throws the same exception
+  type — the registry/connection resolution rejects invalid policy before serving the
+  connection rather than silently ignoring it.
 - [x] Fail-closed evaluator with allow-over-deny precedence
   - `ConnectionAccessPolicy.IsContextReachable`/`IsContextAllowed`/`IsEntityAllowed` in
     [`ConnectionAccessPolicy.cs`](../../src/DotnetEfCoreMcp.Server/Connections/ConnectionAccessPolicy.cs):
