@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -50,7 +51,7 @@ public static class SchemaBuilder
                     ValueGenerated: p.ValueGenerated.ToString(),
                     DefaultValueSql: isRelational ? p.GetDefaultValueSql() : null,
                     ComputedColumnSql: isRelational ? p.GetComputedColumnSql() : null,
-                    DefaultValue: isRelational ? p.GetDefaultValue()?.ToString() : null,
+                    DefaultValue: isRelational ? FormatDefaultValue(p.GetDefaultValue()) : null,
                     Comment: isRelational ? p.GetComment() : null))
                 .ToList();
 
@@ -82,13 +83,14 @@ public static class SchemaBuilder
                     ForeignKeyProperties: n.ForeignKey.Properties.Select(p => p.Name).ToList()))
                 .ToList();
 
-            var indexes = entityType.GetIndexes()
+            var indexList = entityType.GetIndexes()
                 .Select(i => new IndexSchema(
                     Properties: i.Properties.Select(p => p.Name).ToList(),
                     Name: isRelational ? i.GetDatabaseName() : null,
                     IsUnique: i.IsUnique,
                     Filter: isRelational ? i.GetFilter() : null))
                 .ToList();
+            var indexes = indexList.Count > 0 ? indexList : null;
 
             entities.Add(new EntityTypeSchema(
                 Name: entityType.ClrType.Name,
@@ -118,4 +120,15 @@ public static class SchemaBuilder
     private static string? TryGetTableName(IEntityType entityType) => entityType.GetTableName();
 
     private static string? TryGetColumnName(IProperty property) => property.GetColumnName();
+
+    // Default values can be numbers, dates, or other IFormattable/IConvertible types whose
+    // ToString() output is culture-dependent (e.g. decimal separators, date formats). Formatting
+    // with InvariantCulture keeps the serialized value stable across machines/locales.
+    private static string? FormatDefaultValue(object? value) => value switch
+    {
+        null => null,
+        string s => s,
+        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+        _ => Convert.ToString(value, CultureInfo.InvariantCulture),
+    };
 }

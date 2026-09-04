@@ -40,8 +40,10 @@ public sealed record EntityTypeSchema(
 /// and sourced only from EF metadata already on the compiled model. Relational-specific facets
 /// (default/computed SQL, fixed-length, comment) stay <see langword="null"/> for non-relational
 /// providers; core facets (<see cref="MaxLength"/>, <see cref="Precision"/>, <see cref="Scale"/>,
-/// <see cref="IsUnicode"/>, <see cref="ValueGenerated"/>) are populated whenever configured,
-/// regardless of provider.</summary>
+/// <see cref="IsUnicode"/>) are populated whenever configured, regardless of provider.
+/// <see cref="ValueGenerated"/> is always populated - it reflects EF's
+/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IReadOnlyProperty.ValueGenerated"/>, which
+/// defaults to <c>Never</c> rather than being unset when not explicitly configured.</summary>
 public sealed record PropertySchema(
     string Name,
     string ClrTypeName,
