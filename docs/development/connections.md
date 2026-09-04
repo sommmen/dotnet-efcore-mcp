@@ -53,8 +53,14 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
   - Environment metadata is returned by `list_connections` without exposing connection
     strings. Existing configuration remains compatible by defaulting to `Unspecified`.
 - [x] Maintain an active connection that can be changed at runtime
-  - The first non-production connection is selected at startup. `swap_connection` changes
-    the active default; `get_schema` and `run_query` use it when `connectionName` is omitted.
+  - The first non-production connection is selected at startup, and `swap_connection` changes
+    the active default. This active connection is used as a silent fallback by `get_schema`,
+    `run_query`, and the other connection-scoped tools only when `connectionName` is omitted
+    *and* at most one connection is registered overall. As soon as two or more connections are
+    registered, an omitted `connectionName` throws a `McpException` listing every registered
+    connection name (mirroring the `contextName` disambiguation behavior for multiple
+    `DbContext`s) instead of silently using whichever connection happens to be active - this
+    prevents a stale/unrelated "active" connection from being used unnoticed.
 - [x] Apply RSFU safeguards to production connections
   - Production is forced to `ReadOnly`, never auto-selected, and requires an explicit
     `allowProduction: true` acknowledgement in `swap_connection`. A production-only
