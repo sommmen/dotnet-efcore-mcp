@@ -11,7 +11,7 @@ using SampleApp;
 namespace SampleApp.Migrations
 {
     [DbContext(typeof(SampleAppDbContext))]
-    [Migration("20260904100710_InitialCreate")]
+    [Migration("20260904162503_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -29,17 +29,28 @@ namespace SampleApp.Migrations
                     b.Property<int>("Age")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("TEXT")
+                        .IsFixedLength(false)
+                        .HasComment("The customer's display name.");
+
                     b.Property<int?>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
-                    b.ToTable("Customers");
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Customers_Name");
+
+                    b.ToTable("Customers", null, t =>
+                        {
+                            t.HasComment("Registered customers.");
+                        });
                 });
 
             modelBuilder.Entity("SampleApp.Order", b =>
@@ -49,10 +60,15 @@ namespace SampleApp.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<decimal>("Amount")
-                        .HasColumnType("TEXT");
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(18, 2)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("0.0");
 
                     b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("TEXT");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<int>("CustomerId")
                         .HasColumnType("INTEGER");

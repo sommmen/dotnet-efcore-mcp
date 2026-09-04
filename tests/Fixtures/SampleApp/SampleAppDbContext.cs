@@ -18,13 +18,38 @@ public class SampleAppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Customer>()
-            .Property(c => c.Version)
-            .IsConcurrencyToken();
+        modelBuilder.Entity<Customer>(builder =>
+        {
+            builder.ToTable("Customers", tableBuilder => tableBuilder.HasComment("Registered customers."));
 
-        modelBuilder.Entity<Customer>()
-            .HasMany(c => c.Orders)
-            .WithOne(o => o.Customer)
-            .HasForeignKey(o => o.CustomerId);
+            builder.Property(c => c.Version)
+                .IsConcurrencyToken();
+
+            builder.Property(c => c.Name)
+                .HasMaxLength(200)
+                .IsUnicode(false)
+                .IsFixedLength(false)
+                .HasComment("The customer's display name.");
+
+            builder.HasIndex(c => c.Name)
+                .IsUnique()
+                .HasDatabaseName("IX_Customers_Name");
+
+            builder.HasMany(c => c.Orders)
+                .WithOne(o => o.Customer)
+                .HasForeignKey(o => o.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Order>(builder =>
+        {
+            builder.Property(o => o.Amount)
+                .HasPrecision(18, 2)
+                .HasDefaultValueSql("0.0");
+
+            builder.Property(o => o.CreatedAtUtc)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .ValueGeneratedOnAdd();
+        });
     }
 }
