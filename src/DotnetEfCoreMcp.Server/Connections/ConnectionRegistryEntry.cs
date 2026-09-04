@@ -27,6 +27,11 @@ public sealed class ConnectionRegistryEntry
     /// acknowledgment (see <c>ConnectionRegistry.SetActive</c>).</summary>
     public bool IsProduction => Environment == EnvironmentType.Production;
 
+    /// <summary>The required, server-side context/entity allowlist for this connection (see
+    /// docs/development/connections.md, "P0 #9"). Never null - <see cref="ConnectionRegistry"/>
+    /// rejects any connection missing this section rather than inferring a default policy.</summary>
+    public required ConnectionAccessPolicy AccessPolicy { get; init; }
+
     /// <summary>Redacted representation safe to log or return to an MCP client - never includes
     /// <see cref="ConnectionString"/>.</summary>
     public override string ToString() =>

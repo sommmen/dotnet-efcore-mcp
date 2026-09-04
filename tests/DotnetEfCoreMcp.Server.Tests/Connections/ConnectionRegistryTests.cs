@@ -17,6 +17,7 @@ public sealed class ConnectionRegistryTests
             ["Connections:MyApp.Context:ConnectionString"] = "Data Source=test.db",
             ["Connections:MyApp.Context:AccessMode"] = "ReadOnly",
             ["Connections:MyApp.Context:CommandTimeoutSeconds"] = "45",
+            ["Connections:MyApp.Context:AccessPolicy:AllowContexts:0"] = "MyApp.Context",
         });
         var registry = new ConnectionRegistry(configuration);
 
@@ -36,6 +37,7 @@ public sealed class ConnectionRegistryTests
         {
             ["Connections:Known:Provider"] = "Sqlite",
             ["Connections:Known:ConnectionString"] = "Data Source=test.db",
+            ["Connections:Known:AccessPolicy:AllowContexts:0"] = "Known.Context",
         });
         var registry = new ConnectionRegistry(configuration);
 
@@ -61,6 +63,7 @@ public sealed class ConnectionRegistryTests
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
             ["Connections:Inferred:ConnectionString"] = "Data Source=test.db",
+            ["Connections:Inferred:AccessPolicy:AllowContexts:0"] = "Inferred.Context",
         });
 
         var registry = new ConnectionRegistry(configuration);
@@ -130,6 +133,7 @@ public sealed class ConnectionRegistryTests
             ["Connections:Staging:Provider"] = "Sqlite",
             ["Connections:Staging:ConnectionString"] = "Data Source=staging.db",
             ["Connections:Staging:Environment"] = "staging",
+            ["Connections:Staging:AccessPolicy:AllowContexts:0"] = "Staging.Context",
         });
 
         var entry = new ConnectionRegistry(configuration).Get("Staging");
@@ -163,6 +167,7 @@ public sealed class ConnectionRegistryTests
             ["Connections:Production:ConnectionString"] = "Data Source=production.db",
             ["Connections:Production:Environment"] = "Production",
             ["Connections:Production:AccessMode"] = "ReadWrite",
+            ["Connections:Production:AccessPolicy:AllowContexts:0"] = "Production.Context",
         });
 
         var entry = new ConnectionRegistry(configuration).Get("Production");
@@ -179,9 +184,11 @@ public sealed class ConnectionRegistryTests
             ["Connections:Production:Provider"] = "Sqlite",
             ["Connections:Production:ConnectionString"] = "Data Source=production.db",
             ["Connections:Production:Environment"] = "Production",
+            ["Connections:Production:AccessPolicy:AllowContexts:0"] = "Production.Context",
             ["Connections:Development:Provider"] = "Sqlite",
             ["Connections:Development:ConnectionString"] = "Data Source=development.db",
             ["Connections:Development:Environment"] = "Development",
+            ["Connections:Development:AccessPolicy:AllowContexts:0"] = "Development.Context",
         });
 
         var registry = new ConnectionRegistry(configuration);
@@ -198,6 +205,7 @@ public sealed class ConnectionRegistryTests
             ["Connections:Production:Provider"] = "Sqlite",
             ["Connections:Production:ConnectionString"] = "Data Source=production.db",
             ["Connections:Production:Environment"] = "Production",
+            ["Connections:Production:AccessPolicy:AllowContexts:0"] = "Production.Context",
         });
 
         var registry = new ConnectionRegistry(configuration);
@@ -213,9 +221,11 @@ public sealed class ConnectionRegistryTests
         {
             ["Connections:Development:Provider"] = "Sqlite",
             ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Development:AccessPolicy:AllowContexts:0"] = "Development.Context",
             ["Connections:Staging:Provider"] = "Sqlite",
             ["Connections:Staging:ConnectionString"] = "Data Source=staging.db",
             ["Connections:Staging:Environment"] = "Staging",
+            ["Connections:Staging:AccessPolicy:AllowContexts:0"] = "Staging.Context",
         });
         var registry = new ConnectionRegistry(configuration);
 
@@ -232,9 +242,11 @@ public sealed class ConnectionRegistryTests
         {
             ["Connections:Development:Provider"] = "Sqlite",
             ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Development:AccessPolicy:AllowContexts:0"] = "Development.Context",
             ["Connections:Production:Provider"] = "Sqlite",
             ["Connections:Production:ConnectionString"] = "Data Source=production.db",
             ["Connections:Production:Environment"] = "Production",
+            ["Connections:Production:AccessPolicy:AllowContexts:0"] = "Production.Context",
         });
         var registry = new ConnectionRegistry(configuration);
         var originalActive = registry.ActiveConnectionName;
@@ -252,9 +264,11 @@ public sealed class ConnectionRegistryTests
         {
             ["Connections:Development:Provider"] = "Sqlite",
             ["Connections:Development:ConnectionString"] = "Data Source=development.db",
+            ["Connections:Development:AccessPolicy:AllowContexts:0"] = "Development.Context",
             ["Connections:Production:Provider"] = "Sqlite",
             ["Connections:Production:ConnectionString"] = "Data Source=production.db",
             ["Connections:Production:Environment"] = "Production",
+            ["Connections:Production:AccessPolicy:AllowContexts:0"] = "Production.Context",
         });
         var registry = new ConnectionRegistry(configuration);
 
@@ -274,9 +288,11 @@ public sealed class ConnectionRegistryTests
             ["Connections:Development:Provider"] = "Sqlite",
             ["Connections:Development:ConnectionString"] = "Data Source=development.db",
             ["Connections:Development:Environment"] = "Development",
+            ["Connections:Development:AccessPolicy:AllowContexts:0"] = "Development.Context",
             ["Connections:Production:Provider"] = "Sqlite",
             ["Connections:Production:ConnectionString"] = secret,
             ["Connections:Production:Environment"] = "Production",
+            ["Connections:Production:AccessPolicy:AllowContexts:0"] = "Production.Context",
         });
         var registry = new ConnectionRegistry(configuration);
 
@@ -308,6 +324,13 @@ public sealed class ConnectionRegistryTests
             Name = "Secret",
             Provider = DatabaseProvider.Sqlite,
             ConnectionString = "Data Source=super-secret-path.db;Password=hunter2",
+            AccessPolicy = new ConnectionAccessPolicy
+            {
+                AllowContexts = [],
+                DenyContexts = [],
+                AllowEntities = [],
+                DenyEntities = [],
+            },
         };
 
         var rendered = entry.ToString();

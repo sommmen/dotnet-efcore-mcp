@@ -30,9 +30,11 @@ public sealed class EfCoreMcpToolsConnectionSelectionTests
             ["Connections:Alpha:ConnectionString"] = "Data Source=:memory:",
             ["Connections:Alpha:Provider"] = "Sqlite",
             ["Connections:Alpha:Environment"] = "Development",
+            ["Connections:Alpha:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             ["Connections:Beta:ConnectionString"] = "Data Source=:memory:",
             ["Connections:Beta:Provider"] = "Sqlite",
             ["Connections:Beta:Environment"] = "Development",
+            ["Connections:Beta:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
         });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
@@ -52,9 +54,11 @@ public sealed class EfCoreMcpToolsConnectionSelectionTests
             ["Connections:Alpha:ConnectionString"] = "Data Source=:memory:",
             ["Connections:Alpha:Provider"] = "Sqlite",
             ["Connections:Alpha:Environment"] = "Development",
+            ["Connections:Alpha:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             ["Connections:Beta:ConnectionString"] = "Data Source=:memory:",
             ["Connections:Beta:Provider"] = "Sqlite",
             ["Connections:Beta:Environment"] = "Development",
+            ["Connections:Beta:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
         });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
@@ -74,6 +78,7 @@ public sealed class EfCoreMcpToolsConnectionSelectionTests
             ["Connections:Only:ConnectionString"] = "Data Source=:memory:",
             ["Connections:Only:Provider"] = "Sqlite",
             ["Connections:Only:Environment"] = "Development",
+            ["Connections:Only:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
         });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
@@ -90,9 +95,11 @@ public sealed class EfCoreMcpToolsConnectionSelectionTests
             ["Connections:Alpha:ConnectionString"] = "Data Source=:memory:",
             ["Connections:Alpha:Provider"] = "Sqlite",
             ["Connections:Alpha:Environment"] = "Development",
+            ["Connections:Alpha:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             ["Connections:Beta:ConnectionString"] = "Data Source=:memory:",
             ["Connections:Beta:Provider"] = "Sqlite",
             ["Connections:Beta:Environment"] = "Development",
+            ["Connections:Beta:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
         });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 

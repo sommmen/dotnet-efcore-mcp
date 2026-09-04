@@ -79,23 +79,76 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
     identifiers logged. It never accepts a raw connection string, executes user SQL, calls
     `SaveChanges`, or changes the active connection.
 
-## Proposed open work — P0 #9: per-connection context/entity access policy
+## P0 #9: per-connection context/entity access policy
 
-Extend each server-side `Connections:<connectionName>` entry with a **required** `AccessPolicy` object:
+Code: [`Connections/ConnectionAccessPolicy.cs`](../../src/DotnetEfCoreMcp.Server/Connections/ConnectionAccessPolicy.cs) ·
+[`Schema/SchemaAccessPolicy.cs`](../../src/DotnetEfCoreMcp.Server/Schema/SchemaAccessPolicy.cs) ·
+Tests: [`Connections/ConnectionAccessPolicyTests.cs`](../../tests/DotnetEfCoreMcp.Server.Tests/Connections/ConnectionAccessPolicyTests.cs) ·
+[`Schema/ConnectionSchemaAccessPolicyTests.cs`](../../tests/DotnetEfCoreMcp.Server.Tests/Schema/ConnectionSchemaAccessPolicyTests.cs) ·
+[`Tools/EfCoreMcpToolsAccessPolicyTests.cs`](../../tests/DotnetEfCoreMcp.Server.Tests/Tools/EfCoreMcpToolsAccessPolicyTests.cs)
 
-```json
-{
-  "AccessPolicy": {
-    "AllowContexts": ["MyApp.Data.AppDbContext"],
-    "DenyContexts": ["MyApp.Data.AdminDbContext"],
-    "AllowEntities": ["MyApp.Data.AppDbContext:Order"],
-    "DenyEntities": ["MyApp.Data.AppDbContext:AuditEntry"]
+- [x] Extend each server-side `Connections:<connectionName>` entry with a `AccessPolicy` object
+
+  ```json
+  {
+    "AccessPolicy": {
+      "AllowContexts": ["MyApp.Data.AppDbContext"],
+      "DenyContexts": ["MyApp.Data.AdminDbContext"],
+      "AllowEntities": ["MyApp.Data.AppDbContext:Order"],
+      "DenyEntities": ["MyApp.Data.AppDbContext:AuditEntry"]
+    }
   }
-}
-```
+  ```
 
-All selectors are exact, case-sensitive CLR `DbContext` full names and exact EF entity names; an entity selector is scoped as `<context full name>:<entity name>`. Empty arrays are allowed, but an omitted policy, unknown member, malformed selector, duplicate selector, or selector that cannot resolve against the loaded model is configuration-invalid. The registry must reject invalid policy before serving the connection; it must not infer a default context/entity policy.
+  All selectors are exact, case-sensitive CLR `DbContext` full names and exact EF entity
+  names; an entity selector is scoped as `<context full name>:<entity name>`. Empty/omitted
+  arrays are allowed within an `AccessPolicy` section (everything denied — fail-closed, not
+  fail-open), but the `AccessPolicy` section itself is mandatory: a connection with no
+  `AccessPolicy` section at all throws `ConnectionRegistryConfigurationException` rather than
+  defaulting to an empty policy, so a missing policy is a startup configuration error, not a
+  silent fail-closed default. A malformed entity selector (missing/empty `context:entity`
+  parts) or a selector that cannot resolve against the loaded model throws the same exception
+  type — the registry/connection resolution rejects invalid policy before serving the
+  connection rather than silently ignoring it.
+- [x] Fail-closed evaluator with allow-over-deny precedence
+  - `ConnectionAccessPolicy.IsContextReachable`/`IsContextAllowed`/`IsEntityAllowed` in
+    [`ConnectionAccessPolicy.cs`](../../src/DotnetEfCoreMcp.Server/Connections/ConnectionAccessPolicy.cs):
+    a matching `AllowEntities` or `AllowContexts` selector permits a candidate even if the
+    corresponding deny list also matches (allowlist-over-deny precedence). Otherwise, a
+    candidate that matches no allow selector is denied by default — deny lists therefore never
+    widen access, they only exist for future policy audit/documentation clarity.
+  - Entity access requires the context to be reachable; a narrower entity-level allow makes
+    that one entity visible without granting blanket access to the rest of the context.
+- [x] Enforce before context construction and query parsing
+  - `EfCoreMcpTools.ResolveConnection` calls `AccessPolicy.EnsureResolvable` against the
+    discovered `DbContext`/entity model on every connection resolution (misconfigured policy
+    surfaces as `ConnectionRegistryConfigurationException`, distinct from a runtime denial).
+  - `EnsureContextReachable`/`EnsureEntityAllowed` gate `GetSchema`, `GetEntitySchema`,
+    `SearchSchema`, `RunQuery` (root `DbSet` name, both the Dynamic LINQ and Roslyn engines),
+    and the entity mutation tools (`InsertEntity`/`UpdateEntity`/`DeleteEntity`) — all run
+    before a `DbContext` is constructed or a query string is parsed.
+- [x] Hook into `ISchemaAccessPolicy` to filter schema output without mutating the cache
+  - `ConnectionSchemaAccessPolicy` (in
+    [`Schema/SchemaAccessPolicy.cs`](../../src/DotnetEfCoreMcp.Server/Schema/SchemaAccessPolicy.cs))
+    implements `ISchemaAccessPolicy.Apply` by projecting a filtered `SchemaDto` — denied
+    entities, and their foreign keys/navigations/base-type references from other entities, are
+    stripped from the copy returned to the caller. `GetSchema`, `GetEntitySchema`, and
+    `SearchSchema` all route the shared, cached `SchemaDocument`/`SchemaDto` through a
+    freshly-constructed policy instance per request via `SchemaSlicer`, so the cache entry
+    itself is never mutated or replaced.
+- [x] Reject denied/unknown requests through a unified, non-disclosing path
+  - `AccessPolicyDeniedException`/`ConnectionRegistryConfigurationException` are translated to
+    a plain `McpException` in `EfCoreMcpTools.Execute`/`ExecuteAsync`. Denial messages name
+    only the requested selector and connection — never the set of permitted/prohibited
+    alternatives — so a denied name is indistinguishable from a name that doesn't exist in the
+    model at all (verified by `GetEntitySchema_DeniedEntityLooksIdenticalToAnUnknownEntity` and
+    the "known entities" list in `get_entity_schema` being drawn only from the
+    policy-filtered/visible schema).
+  - `ListContexts` filters its `Descriptors` list to what the active connection's policy makes
+    reachable when a connection is active; with no active connection (nothing configured yet)
+    it stays unfiltered, since there is no policy to consult.
 
-The evaluator is fail-closed. A matching `AllowEntities` or `AllowContexts` selector permits a candidate even if the corresponding deny list also matches (**allowlist-over-deny precedence**). Otherwise a matching deny selector rejects it, and no matching allow also rejects it. Entity access requires a permitted context; an entity allow may make that entity available within its context, while it does not expose any other entity. Denials identify only the requested selector and connection, never enumerate permitted or prohibited alternatives.
-
-Focused registry tests cover required-policy validation, exact selector resolution, duplicate/malformed/unresolved values, default denial, and allow-over-deny collisions at both context and entity scope.
+Focused tests cover precedence, default denial, reachability vs. blanket context allow,
+`EnsureResolvable` selector-resolution failures, entity-selector parsing, schema filtering/
+non-mutation/non-disclosure, and enforcement across `get_schema`/`get_entity_schema`/
+`search_schema`/`run_query`/entity-mutation tool paths plus `list_contexts` filtering.
