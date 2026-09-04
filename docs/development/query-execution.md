@@ -8,6 +8,36 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Querying`](../../tests/DotnetEfCoreM
 See the [README "MCP tool contract"](../../README.md#mcp-tool-contract) for the public
 `run_query` request and response shapes.
 
+## Roslyn execution location
+
+`QueryExecution:Engine` selects the query language. The default, `DynamicLinq`, always executes
+in the MCP server process. Execution location is currently configurable only for
+`QueryExecution:Engine=Roslyn`:
+
+| Setting | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `QueryExecution:Mode` | `InProcess`, `OutOfProcess`, `Auto` | `Auto` | Selects where Roslyn queries execute. |
+| `QueryExecution:OutOfProcessHostPath` | Absolute path to the query-host DLL | — | Required when the selected mode uses isolated execution. |
+
+`InProcess` uses the server's existing Roslyn executor. `OutOfProcess` launches a short-lived
+query-host process for each query. `Auto` currently chooses `OutOfProcess` as a fail-closed
+default; compatibility fingerprinting for choosing an in-process execution path has not yet been
+implemented.
+
+For isolated execution, configure the query-host DLL and retain both deployment artifacts:
+
+- the target application's adjacent `<target>.runtimeconfig.json`, which selects the target
+  runtime/framework;
+- the query host's adjacent `<query-host>.deps.json`, which resolves the query host and server
+  dependency closure.
+
+The host receives a versioned JSON request through standard input and returns one JSON response on
+standard output. Connection strings travel only in that request, not on the process command line.
+The first implementation supports Roslyn query execution and serialized sequence/scalar results;
+it intentionally does not yet include a compatibility fingerprint or long-lived host process.
+
+For design background, see [Query execution alternatives](query-execution-alternatives.md).
+
 ## Consumer-visible failures
 
 `run_query` preserves its concise, entity-scoped failure message and returns a recognized safe
