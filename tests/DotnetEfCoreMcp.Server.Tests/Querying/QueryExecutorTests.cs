@@ -236,6 +236,21 @@ public sealed class QueryExecutorTests : IDisposable
         Assert.False(result.IsScalar);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_PreservesTakeWithinSetOperationBranchWhenProbingContinuation()
+    {
+        using var context = NewContext();
+        var result = await CreateExecutor().ExecuteAsync(context, new QueryRequest
+        {
+            Query = "Customers.Select(c => c.Name).Concat(Customers.OrderByDescending(c => c.Name).Take(1).Select(c => c.Name)).Skip(3)"
+        }, 30, CancellationToken.None);
+
+        Assert.Equal(1, result.EffectiveTake);
+        Assert.Equal(1, result.RowCount);
+        Assert.False(result.HasMoreRows);
+        Assert.Equal("Carol", result.Rows.Single().Single().Value);
+    }
+
     [Theory]
     [InlineData("customers.Where(c => c.Age > 0)")]
     [InlineData("Unknown.Where(c => true)")]

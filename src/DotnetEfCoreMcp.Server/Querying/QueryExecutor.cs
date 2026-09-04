@@ -218,19 +218,19 @@ public sealed class QueryExecutor
     /// treats a returned extra row solely as a sentinel: it is discarded before projection and never
     /// counted in <see cref="QueryResult.RowCount"/> or included in <see cref="QueryResult.Rows"/>.
     /// For <paramref name="effectiveTake"/> of zero, no sentinel probe is issued at all - the sequence
-    /// is never materialized and <c>hasMoreRows</c> is unconditionally <c>false</c>. Any <c>Take</c>
-    /// call(s) already present in <paramref name="sequence"/>'s expression tree (e.g. a caller-supplied
-    /// <c>.Take(N)</c> with <c>N &lt;= effectiveTake</c>, from which <paramref name="effectiveTake"/>
-    /// itself was derived) are stripped first: composing a new <c>Take(effectiveTake + 1)</c> on top of
-    /// an existing <c>Take(N)</c> would otherwise reduce to <c>Take(min(N, effectiveTake + 1))</c>,
-    /// which equals <c>Take(N)</c> whenever <c>N &lt;= effectiveTake</c> and would silently prevent the
-    /// sentinel row from ever being requested.</summary>
+    /// is never materialized and <c>hasMoreRows</c> is unconditionally <c>false</c>. Consecutive
+    /// caller-supplied <c>Take</c> calls at the outer page-pipeline level are stripped first: composing a
+    /// new <c>Take(effectiveTake + 1)</c> on top of <c>Take(N)</c> would otherwise reduce to
+    /// <c>Take(min(N, effectiveTake + 1))</c>, which equals <c>Take(N)</c> whenever
+    /// <c>N &lt;= effectiveTake</c> and would silently prevent the sentinel row from ever being requested.
+    /// Takes nested in set-operation branches are preserved because they affect that branch's result
+    /// semantics.</summary>
     internal static async Task<(List<object?> Values, bool HasMoreRows)> MaterializeWithContinuationAsync(
         IQueryable sequence, int effectiveTake, CancellationToken cancellationToken)
     {
         if (effectiveTake == 0) return ([], false);
 
-        var withoutExistingTake = new TakeRemover().Visit(sequence.Expression)!;
+        var withoutExistingTake = TakeRemover.RemovePagePipelineTakes(sequence.Expression);
         var page = sequence.Provider.CreateQuery(Expression.Call(
             typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], withoutExistingTake,
             Expression.Constant(effectiveTake + 1)));
@@ -290,20 +290,23 @@ public sealed class QueryExecutor
         }
     }
 
-    /// <summary>Removes every <c>Queryable.Take</c> call found by <see cref="TakeFinder"/> from an
-    /// expression tree, replacing each with its own source argument. Used by
-    /// <see cref="MaterializeWithContinuationAsync"/> so that a caller-supplied <c>.Take(N)</c> (the
-    /// value <see cref="GetEffectiveTake"/> itself may have derived <c>effectiveTake</c> from) does not
-    /// remain in the tree and silently cap the sentinel <c>Take(effectiveTake + 1)</c> composed on top
-    /// of it back down to <c>Take(N)</c>.</summary>
-    private sealed class TakeRemover : ExpressionVisitor
+    /// <summary>Removes only consecutive outer <c>Queryable.Take</c> calls from a final page pipeline.
+    /// Takes nested in a set-operation branch are part of that branch's requested result semantics and
+    /// must remain intact.</summary>
+    private static class TakeRemover
     {
-        protected override Expression VisitMethodCall(MethodCallExpression node)
+        public static Expression RemovePagePipelineTakes(Expression expression)
         {
-            if (node.Method.DeclaringType == typeof(Queryable) && node.Method.Name == nameof(Queryable.Take)
-                && node.Arguments.Count == 2 && node.Arguments[1] is ConstantExpression { Value: int })
-                return Visit(node.Arguments[0])!;
-            return base.VisitMethodCall(node);
+            while (expression is MethodCallExpression methodCall &&
+                   methodCall.Method.DeclaringType == typeof(Queryable) &&
+                   methodCall.Method.Name == nameof(Queryable.Take) &&
+                   methodCall.Arguments.Count == 2 &&
+                   methodCall.Arguments[1] is ConstantExpression { Value: int })
+            {
+                expression = methodCall.Arguments[0];
+            }
+
+            return expression;
         }
     }
 
