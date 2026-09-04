@@ -2,6 +2,7 @@ using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
@@ -157,6 +158,8 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
             new QueryExecutionOptions(),
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
+            new MigrationsOptions(),
+            new MigrationInspector(new MigrationsOptions(), NullLogger<MigrationInspector>.Instance),
             resultFormatter ?? new JsonToolResultFormatter(),
             toolDiagnosticsOptions ?? new ToolDiagnosticsOptions(),
             NullLogger<EfCoreMcpTools>.Instance,

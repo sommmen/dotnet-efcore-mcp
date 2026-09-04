@@ -1,6 +1,7 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
@@ -47,6 +48,8 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
             new QueryExecutionOptions(),
             resolvedRawSqlOptions,
             new SqlQueryExecutor(resolvedRawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
+            new MigrationsOptions(),
+            new MigrationInspector(new MigrationsOptions(), NullLogger<MigrationInspector>.Instance),
             new ToonToolResultFormatter(),
             new ToolDiagnosticsOptions(),
             NullLogger<EfCoreMcpTools>.Instance,
