@@ -22,6 +22,8 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Schema`](../../tests/DotnetEfCoreMcp
     natural consequence of the identity change rather than an explicit cache-clear call.
 - [x] Slice and search the cached schema without constructing a `DbContext` or rediscovering
   the model (`get_entity_schema`, `search_schema`) — see P0 #6 below.
+- [x] Enrich entity/property/relationship DTOs with relational mapping, constraint/index,
+  store-generation, and facet metadata — see P1 #10 below.
 
 ## Tool contract
 
@@ -70,24 +72,45 @@ Apply the per-connection `AccessPolicy` before any schema response is formed. `l
 
 Filtering is a view over the existing cache: it neither constructs a `DbContext` nor mutates a shared cached `SchemaDocument`. Apply filtering before search matching, result caps, truncation calculation, and entity lookup, so excluded names cannot influence matches, counts, or ordering. Focused tests prove a mixed-policy connection exposes only allowed contexts/entities and internally consistent relationships; denied/unknown requests do not disclose model names; and a broader allow selector wins over a conflicting deny selector.
 
-## Proposed open work — P1 #10: enrich schema metadata
+## P1 #10 — enrich schema metadata
 
-Extend the existing schema DTOs additively so current MCP clients continue to receive every
-field and response shape they use today. New fields must be optional/nullable (and collection
-fields defaulted compatibly where applicable); do not rename, remove, reinterpret, or make an
-existing field required. Surface only information available from the compiled EF Core metadata
-model—never provider queries, database inspection, raw SQL, migrations, or inferred values.
+Extended `EntityTypeSchema`, `PropertySchema`, `ForeignKeySchema`, and `NavigationSchema` (plus a
+new `IndexSchema`) with optional, trailing, backward-compatible fields sourced only from the
+compiled EF Core model. Every new parameter defaults to `null` so existing positional
+constructor calls (for example, in `Schema/SchemaSlicerTests.cs`) keep compiling unmodified, and
+both `JsonToolResultFormatter`/`ToonToolResultFormatter` already omit `null` fields from
+serialized tool responses (`JsonIgnoreCondition.WhenWritingNull`), so no serializer changes were
+needed for the new fields to stay compatible with existing clients.
 
-Enrich entity/property/relationship DTOs with useful relational mapping details such as schema,
-table or view mapping, key/index/constraint names, value-generation and store-generation behavior,
-default/computed SQL, precision/scale, max length, Unicode/fixed-length flags, comments, and
-relationship delete behavior. Obtain values through EF metadata APIs and relational metadata
-extensions. Provider-specific annotations (including SQL expressions, constraint names, and
-mapping details that a provider does not expose) must remain nullable rather than being guessed,
-normalized into fabricated values, or treated as errors.
+`EntityTypeSchema` gained `Schema`, `ViewName`, `ViewSchema`, `Comment`, `PrimaryKeyName`
+(relational-only), and `Indexes` (an `IndexSchema` list with `Properties`, `Name`, `IsUnique`,
+`Filter`). `PropertySchema` gained `MaxLength`, `Precision`, `Scale`, `IsUnicode`, and
+`ValueGenerated` (core EF metadata, populated regardless of provider), plus `IsFixedLength`,
+`DefaultValueSql`, `ComputedColumnSql`, `DefaultValue`, and `Comment` (relational-only).
+`ForeignKeySchema` gained `DeleteBehavior` and `IsUnique` (core) plus `ConstraintName`
+(relational-only). `NavigationSchema` gained `IsOnDependent`, `IsEagerLoaded`,
+`DeleteBehavior`, and `ForeignKeyProperties` (mirrored from the navigation's underlying foreign
+key so callers don't need to cross-reference the entity's foreign key list separately) — all
+core EF metadata, populated regardless of provider.
 
-Add focused schema-discovery tests using the existing fixture model plus provider-specific test
-metadata where needed. Verify legacy DTO serialization remains valid when enrichment is present
-or absent, representative EF metadata is copied faithfully, unsupported provider-specific values
-serialize as null, and discovery continues to use only `DbContext.Model` without opening a
-connection or querying a database.
+`Schema/SchemaBuilder.cs` reads relational-only facets by checking `context.Database.IsRelational()`
+up front (the pre-existing pattern used for `StoreType`) and calling the relational metadata
+extensions (`RelationalPropertyExtensions`, `RelationalEntityTypeExtensions`,
+`RelationalKeyExtensions`, `RelationalForeignKeyExtensions`, `RelationalIndexExtensions`) only
+when `true`; non-relational providers (for example, InMemory) get `null` for those facets instead
+of an `InvalidCastException`. Core facets (`GetMaxLength`, `GetPrecision`, `GetScale`,
+`IsUnicode`, `ValueGenerated`, `DeleteBehavior`, `IsUnique`, `IsOnDependent`, `IsEagerLoaded`) are
+defined directly on `IReadOnlyProperty`/`IReadOnlyForeignKey`/`IReadOnlyNavigationBase` and are
+populated unconditionally. The model is sourced via
+`context.GetService<IDesignTimeModel>().Model` rather than `context.Model`: the latter is a
+"read-optimized" runtime model that sheds design-time-only metadata (comments, some default-value
+annotations) for performance, and calling relational extensions like `GetComment()` against it
+throws `InvalidOperationException`. `IDesignTimeModel` is still purely compiled model metadata —
+no database round-trip is performed.
+
+`Schema/SchemaBuilderTests.cs` exercises the enrichment against the SampleApp fixture (extended
+in `SampleAppDbContext.OnModelCreating` with a table comment, a unique index, `HasMaxLength`,
+`IsUnicode(false)`, property comments, `HasPrecision`, `HasDefaultValueSql`, and
+`OnDelete(DeleteBehavior.Cascade)`) for relational metadata fidelity, and against a dedicated
+non-relational `InMemoryProbeContext`/`InMemoryProbeChild` pair for null handling: relational-only
+facets stay `null` under a non-relational provider while core facets remain populated.
