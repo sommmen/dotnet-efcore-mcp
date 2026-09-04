@@ -93,7 +93,7 @@ public static class DbContextActivator
             return Invoke(nonGenericOptionsCtor, contextType, [options]);
         }
 
-        if (migrationsAssembly is not null)
+        if (migrationsAssembly is not null && kind != DbContextConstructorShape.Unsupported)
         {
             throw new DbContextActivationException(
                 $"'{contextType.FullName}' cannot be activated with a separate migrations assembly because it uses a design-time factory or parameterless constructor. " +
