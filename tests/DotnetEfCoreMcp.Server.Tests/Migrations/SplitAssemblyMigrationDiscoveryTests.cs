@@ -329,31 +329,34 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void LoadAdditionalAssembly_WhenRequestedPathDiffersOnlyByCasingFromLoadedPath_BehaviorMatchesPlatformCaseSensitivity()
+    public void LoadAdditionalAssembly_WhenRecordedPathDiffersOnlyByCasingFromRequestedPath_BehaviorMatchesPlatformCaseSensitivity()
     {
         // Regression test for a review finding: the "same path as already loaded" check in
         // LoadAdditionalAssembly compared paths with StringComparison.OrdinalIgnoreCase
-        // unconditionally. Windows/macOS file systems are case-insensitive, so a path differing
-        // only in casing from the already-loaded path IS the same file there and must return the
-        // existing instance. Linux file systems are case-sensitive, so the same casing difference
-        // refers to a distinct (non-existent, in this test) file and must fail closed with the
-        // collision error instead of silently substituting the already-loaded assembly.
+        // unconditionally. Windows/macOS file systems are case-insensitive, so a recorded path
+        // differing only in casing from the requested path IS the same file there and must be
+        // accepted (loading normally rather than throwing). Linux file systems are case-sensitive,
+        // so the same casing difference refers to a distinct path and must fail closed with the
+        // collision error instead of silently accepting a mismatched entry. The recorded path is
+        // seeded directly (rather than by actually loading a differently-cased file, which
+        // wouldn't exist as a distinct file on any of these platforms) so only the comparison
+        // logic under test - not file-system path resolution - determines the outcome.
         var context = new TargetAssemblyLoadContext(FixturePaths.SplitContextAppDllPath, "reflection-probe");
-        context.LoadAdditionalAssembly(FixturePaths.SplitContextAppDllPath);
-
-        var differentlyCasedPath = FixturePaths.SplitContextAppDllPath == FixturePaths.SplitContextAppDllPath.ToUpperInvariant()
-            ? FixturePaths.SplitContextAppDllPath.ToLowerInvariant()
-            : FixturePaths.SplitContextAppDllPath.ToUpperInvariant();
+        var pathsByNameField = typeof(TargetAssemblyLoadContext).GetField(
+            "_loadedAssemblyPathsByName",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var pathsByName = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)pathsByNameField.GetValue(context)!;
+        pathsByName["SplitContextApp"] = FixturePaths.SplitContextAppDllPath.ToUpperInvariant();
 
         if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
         {
-            var resolved = context.LoadAdditionalAssembly(differentlyCasedPath);
+            var resolved = context.LoadAdditionalAssembly(FixturePaths.SplitContextAppDllPath);
             Assert.Equal("SplitContextApp", resolved.GetName().Name);
         }
         else
         {
             var exception = Assert.Throws<AssemblyLoadFailedException>(() =>
-                context.LoadAdditionalAssembly(differentlyCasedPath));
+                context.LoadAdditionalAssembly(FixturePaths.SplitContextAppDllPath));
             Assert.Contains("already loaded into this target from a different path", exception.Message, StringComparison.OrdinalIgnoreCase);
         }
     }
