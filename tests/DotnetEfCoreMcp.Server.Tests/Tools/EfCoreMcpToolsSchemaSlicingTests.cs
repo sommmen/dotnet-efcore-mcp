@@ -86,7 +86,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         tools.GetSchema("SampleAppDbContext");
 
-        using var document = JsonDocument.Parse(tools.SearchSchema("SampleAppDbContext", "Customer"));
+        using var document = JsonDocument.Parse(tools.SearchSchema("Customer", "SampleAppDbContext"));
         var root = document.RootElement;
 
         var matches = root.GetProperty("matches");
@@ -107,7 +107,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         tools.GetSchema("SampleAppDbContext");
 
-        using var document = JsonDocument.Parse(tools.SearchSchema("SampleAppDbContext", "customer"));
+        using var document = JsonDocument.Parse(tools.SearchSchema("customer", "SampleAppDbContext"));
 
         var entityNames = document.RootElement.GetProperty("matches")
             .EnumerateArray()
@@ -123,7 +123,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         tools.GetSchema("SampleAppDbContext");
 
-        var exception = Assert.Throws<McpException>(() => tools.SearchSchema("SampleAppDbContext", ""));
+        var exception = Assert.Throws<McpException>(() => tools.SearchSchema("", "SampleAppDbContext"));
 
         Assert.Contains("query", exception.Message, StringComparison.Ordinal);
     }
@@ -138,7 +138,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         tools.GetSchema("SampleAppDbContext");
 
-        var exception = Assert.Throws<McpException>(() => tools.SearchSchema("SampleAppDbContext", "Customer", maxResults));
+        var exception = Assert.Throws<McpException>(() => tools.SearchSchema("Customer", "SampleAppDbContext", maxResults));
 
         Assert.Contains("maxResults", exception.Message, StringComparison.Ordinal);
     }
@@ -150,7 +150,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         tools.GetSchema("SampleAppDbContext");
 
-        using var document = JsonDocument.Parse(tools.SearchSchema("SampleAppDbContext", "e"));
+        using var document = JsonDocument.Parse(tools.SearchSchema("e", "SampleAppDbContext"));
 
         Assert.Equal(10, document.RootElement.GetProperty("maxResults").GetInt32());
     }
@@ -162,7 +162,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         tools.GetSchema("SampleAppDbContext");
 
-        using var document = JsonDocument.Parse(tools.SearchSchema("SampleAppDbContext", "e", 25));
+        using var document = JsonDocument.Parse(tools.SearchSchema("e", "SampleAppDbContext", 25));
 
         Assert.Equal(25, document.RootElement.GetProperty("maxResults").GetInt32());
     }
@@ -176,7 +176,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
 
         // "e" matches many property/entity names across the small SampleApp fixture (Name, Age,
         // CreatedAtUtc, Amount, Customer, Orders, ...), comfortably exceeding a maxResults of 1.
-        using var document = JsonDocument.Parse(tools.SearchSchema("SampleAppDbContext", "e", 1));
+        using var document = JsonDocument.Parse(tools.SearchSchema("e", "SampleAppDbContext", 1));
         var root = document.RootElement;
 
         Assert.Equal(1, root.GetProperty("matches").GetArrayLength());
@@ -191,7 +191,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         tools.GetSchema("SampleAppDbContext");
 
-        using var document = JsonDocument.Parse(tools.SearchSchema("SampleAppDbContext", "zzz-no-match-zzz"));
+        using var document = JsonDocument.Parse(tools.SearchSchema("zzz-no-match-zzz", "SampleAppDbContext"));
         var root = document.RootElement;
 
         Assert.Equal(0, root.GetProperty("matches").GetArrayLength());
@@ -204,7 +204,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
     {
         var parameter = typeof(EfCoreMcpTools)
             .GetMethod(nameof(EfCoreMcpTools.SearchSchema), new[] { typeof(string), typeof(string), typeof(int?) })?
-            .GetParameters()[0];
+            .GetParameters()[1];
 
         Assert.NotNull(parameter);
         Assert.True(parameter!.HasDefaultValue, "The MCP tool metadata should mark contextName as optional so single-context assemblies can omit it.");
@@ -216,7 +216,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
         var tools = CreateTools();
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
-        var exception = Assert.Throws<McpException>(() => tools.SearchSchema("SampleAppDbContext", "Customer"));
+        var exception = Assert.Throws<McpException>(() => tools.SearchSchema("Customer", "SampleAppDbContext"));
 
         Assert.Contains("get_schema", exception.Message, StringComparison.Ordinal);
     }

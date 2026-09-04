@@ -114,7 +114,7 @@ classification described in [Connection management](./connections.md#proposed-op
 ## P0 #6 — schema slicing/search
 
 Added `get_entity_schema(entityName: string, contextName?: string)` and
-`search_schema(contextName?: string, query: string, maxResults?: number)`. Both are read-only and
+`search_schema(query: string, contextName?: string, maxResults?: number)`. Both are read-only and
 cache-only: after resolving `contextName`, they operate solely on the schema already held by
 `SchemaCache`; they never create a context, connect to a provider, or rediscover EF metadata. If
 nothing is cached yet for the resolved context (i.e. `get_schema` was never called for it), both
@@ -124,8 +124,8 @@ building the schema themselves.
 `get_entity_schema` returns the complete cached entity definition (`EntityTypeSchema`, the same
 shape used by `get_schema`'s `entities`) for an exact, case-sensitive entity name; an unknown name
 throws with the known entity names listed. `search_schema` returns compact
-entity/property/relationship match summaries (`entityName`, `entityNameMatched`,
-`matchingProperties`, `matchingRelationships`) rather than full entities — callers follow up with
+entity/property/relationship match summaries (`EntityName`, `EntityNameMatched`,
+`MatchingProperties`, `MatchingRelationships`) rather than full entities — callers follow up with
 `get_entity_schema` for a complete slice. Search is a case-insensitive substring match against
 entity names, property names, and relationship (navigation) names, and is deterministically ordered
 by entity name; `query` must be non-empty. Its result count (`maxResults`) defaults to 10 and cannot

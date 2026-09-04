@@ -266,10 +266,12 @@ public sealed class EfCoreMcpTools(
 
         logger.LogInformation("get_entity_schema requested. Context={ContextName} Entity={EntityName}", contextType.Name, entityName);
 
-        var entity = Schema.SchemaSlicer.FindEntity(schema, entityName, Schema.NoOpSchemaAccessPolicy.Instance);
+        var policy = Schema.NoOpSchemaAccessPolicy.Instance;
+        var visibleSchema = policy.Apply(schema);
+        var entity = Schema.SchemaSlicer.FindEntity(visibleSchema, entityName, policy);
         if (entity is null)
         {
-            var known = schema.Entities.Select(e => e.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+            var known = visibleSchema.Entities.Select(e => e.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
             var choices = known.Length == 0 ? "(none)" : string.Join(", ", known);
             throw new McpException(
                 $"No entity named '{entityName}' was found in the cached schema for '{schema.ContextName}'. " +
@@ -289,8 +291,8 @@ public sealed class EfCoreMcpTools(
         "compact matches only (not full entity definitions); use get_entity_schema for a complete slice. " +
         "Cache-only: never constructs a DbContext, opens a database connection, or rediscovers the model.")]
     public string SearchSchema(
+        [Description("Non-empty, case-insensitive substring to match against entity, property, and relationship names.")] string query,
         [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
-        [Description("Non-empty, case-insensitive substring to match against entity, property, and relationship names.")] string query = "",
         [Description("Maximum number of entity matches to return. Defaults to 10 and is capped at 25.")] int? maxResults = null)
         => Execute("search_schema", () => SearchSchemaCore(contextName, query, maxResults));
 

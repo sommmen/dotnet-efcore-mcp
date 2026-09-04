@@ -46,7 +46,7 @@ both throw a validation error directing the caller to call `get_schema` first.
 case-sensitive entity name, or the established sanitized validation error (listing known entity
 names) when the context or entity is unknown.
 
-`search_schema(contextName?, query, maxResults?)` searches only cached schema metadata and returns
+`search_schema(query, contextName?, maxResults?)` searches only cached schema metadata and returns
 compact matches (`entityName`, `entityNameMatched`, `matchingProperties`,
 `matchingRelationships`) for entity names plus matching properties and relationships — never full
 entity definitions. `query` must be non-empty; matching is a deterministic, case-insensitive

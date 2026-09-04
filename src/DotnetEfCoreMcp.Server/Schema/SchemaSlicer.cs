@@ -52,11 +52,12 @@ public static class SchemaSlicer
         var visible = policy.Apply(schema);
 
         var matches = visible.Entities
-            .Select(entity => BuildMatch(entity, query))
-            .Where(match => match is not null)
-            .Select(match => match!)
-            .OrderBy(match => match.EntityName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(match => match.EntityName, StringComparer.Ordinal)
+            .Select(entity => new { Match = BuildMatch(entity, query), entity.ClrFullName })
+            .Where(result => result.Match is not null)
+            .OrderBy(result => result.Match!.EntityName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(result => result.Match!.EntityName, StringComparer.Ordinal)
+            .ThenBy(result => result.ClrFullName, StringComparer.Ordinal)
+            .Select(result => result.Match!)
             .ToList();
 
         var page = matches.Take(maxResults).ToList();
