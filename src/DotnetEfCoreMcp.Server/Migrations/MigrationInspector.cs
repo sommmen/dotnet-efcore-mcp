@@ -97,17 +97,18 @@ public sealed class MigrationInspector(MigrationsOptions options, ILogger<Migrat
         try
         {
             // IMigrator.GenerateScript is synchronous, string-generation-only work (no I/O against
-            // the target database) - it is offloaded to a background thread purely so the
-            // configured cancellation margin is enforceable, not because it awaits anything itself.
+            // the target database). WaitAsync makes cancellation observable to the caller even
+            // though EF Core cannot cooperatively cancel a generation already in progress.
             sql = await Task.Run(
-                () => migrator.GenerateScript(request.FromMigration, request.ToMigration, generationOptions),
-                linkedCts.Token);
+                    () => migrator.GenerateScript(request.FromMigration, request.ToMigration, generationOptions))
+                .WaitAsync(linkedCts.Token);
         }
         catch (NotSupportedException ex)
         {
-            throw new MigrationInspectionException(
-                "This connection's database provider does not support idempotent migration scripts. Retry with idempotent: false.",
-                ex);
+            var message = request.Idempotent
+                ? "This connection's database provider does not support idempotent migration scripts. Retry with idempotent: false."
+                : "This connection's database provider does not support migration script generation.";
+            throw new MigrationInspectionException(message, ex);
         }
         catch (InvalidOperationException ex)
         {

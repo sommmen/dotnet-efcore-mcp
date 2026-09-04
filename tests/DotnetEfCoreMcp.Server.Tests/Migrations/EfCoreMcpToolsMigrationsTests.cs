@@ -3,6 +3,7 @@ using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.Migrations;
+using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
@@ -37,6 +38,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
+        var effectiveMigrationsOptions = migrationsOptions ?? new MigrationsOptions();
 
         var tools = new EfCoreMcpTools(
             new AssemblyLoaderService(),
@@ -48,11 +50,13 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
             new QueryExecutionOptions(),
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
-            migrationsOptions ?? new MigrationsOptions(),
-            new MigrationInspector(migrationsOptions ?? new MigrationsOptions(), NullLogger<MigrationInspector>.Instance),
+            effectiveMigrationsOptions,
+            new MigrationInspector(effectiveMigrationsOptions, NullLogger<MigrationInspector>.Instance),
             new JsonToolResultFormatter(),
             new ToolDiagnosticsOptions(),
-            NullLogger<EfCoreMcpTools>.Instance);
+            NullLogger<EfCoreMcpTools>.Instance,
+            new EntityMutationsOptions(),
+            new EntityMutationExecutor(NullLogger<EntityMutationExecutor>.Instance));
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         return tools;
     }
