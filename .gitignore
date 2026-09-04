@@ -402,4 +402,5 @@ src/Back-end/Applications/Api/OPG.Platform.Api.Management/blocks
 tmp/
 src/Back-end/.github/copilot-instructions.md
 .maintenance
-.serena/
+.serena/*
+!.serena/project.yml
