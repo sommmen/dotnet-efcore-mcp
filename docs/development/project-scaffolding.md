@@ -25,3 +25,22 @@
   - Implemented in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml): restores,
     builds (`Release`), and runs `dotnet test` against `dotnet-efcore-mcp.slnx` on push/PR
     to `main`, on `merge_group`, and via manual `workflow_dispatch`.
+- [x] Keep .NET's invariant globalization mode **disabled** for the server
+  (`<InvariantGlobalization>false</InvariantGlobalization>` in
+  `src/DotnetEfCoreMcp.Server/DotnetEfCoreMcp.Server.csproj`)
+  - Invariant mode is a common size/startup-time optimization for containerized .NET apps, but
+    `Microsoft.Data.SqlClient.SqlConnection.Open()` throws `NotSupportedException: Globalization
+    Invariant Mode is not supported` when it is enabled, which blocks every query against a SQL
+    Server target - confirmed via a live SQL Server integration test. Because SQL Server is one
+    of this project's explicitly supported providers (see
+    [Connection management](./connections.md)), invariant mode cannot be enabled here.
+  - Deployment implication: this server's runtime environment (including any container base
+    image) must ship ICU data (the default `mcr.microsoft.com/dotnet/*` images already do; only
+    slimmed/Alpine-without-ICU or explicitly invariant-mode images would need adjusting). No
+    action is needed for a standard `dotnet publish`/framework-dependent or self-contained
+    deployment on Windows or Linux, which include ICU by default.
+  - `run_query`'s error formatting still recognizes the invariant-mode `NotSupportedException`
+    message defensively (see `EfCoreMcpTools.FormatQueryError`) and returns an actionable "enable
+    ICU/globalization support" hint if a caller's own deployment re-enables invariant mode despite
+    this default, or overrides it via the `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT` environment
+    variable.

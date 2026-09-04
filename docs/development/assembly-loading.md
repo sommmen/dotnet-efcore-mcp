@@ -40,13 +40,24 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`](../../tests/Dotnet
     is the correct home for genuinely shared framework types.
   - **Shared type identity:** assemblies referenced by the server and target whose types cross a
     public API boundary must resolve to the server's default context, not a second target-local
-    copy. `TargetAssemblyLoadContext.SharedAssemblyNames` includes EF Core and its required
-    companion assemblies, including `Microsoft.Extensions.Logging` and
-    `Microsoft.Extensions.Logging.Abstractions`. Omitting one can create incompatible copies of
+    copy. `SharedFrameworkAssemblyNames.Value` (shared by `TargetAssemblyLoadContext` and
+    `CompiledQueryLoadContext`) includes EF Core and its required companion assemblies, including
+    `Microsoft.Extensions.Logging`/`Microsoft.Extensions.Logging.Abstractions` and, since a live
+    SQL Server integration test surfaced the gap, `Microsoft.Data.SqlClient` and its own
+    dependency closure (`Microsoft.Extensions.DependencyInjection.Abstractions`,
+    `Microsoft.Extensions.Caching.Abstractions`, `Microsoft.Extensions.Options`,
+    `Microsoft.Extensions.Primitives`, `Microsoft.Identity.Client`,
+    `Microsoft.IdentityModel.Abstractions`). Omitting one can create incompatible copies of
     types used by shared EF Core diagnostics and surface as runtime member-resolution failures
     such as `MissingFieldException` for `RelationalEventId.CommandExecuting`. When adding a shared
     assembly, also share every assembly that defines a type exposed by its public
     fields, parameters, or return values.
+  - Because that "reachable from a shared assembly's public API" rule is easy to violate silently
+    (a new provider or an EF Core upgrade can add a public member that reaches an assembly not yet
+    listed), `SharedFrameworkAssemblyClosureTests` walks the full public API closure of every
+    entry in `SharedFrameworkAssemblyNames.Value` with a `MetadataLoadContext` and fails if it
+    reaches any non-BCL assembly outside that list. Treat a failure there as "add the missing
+    assembly name", not as a test to suppress.
   - Non-fatal problems (e.g. a required shared framework that is not installed) are collected as
     `LoadedAssemblyHandle.DependencyDiagnostics` and surfaced ahead of type-load warnings in the
     `load_assembly` result, so the cause is reported above its symptoms.
