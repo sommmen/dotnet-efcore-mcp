@@ -23,8 +23,25 @@ namespace DotnetEfCoreMcp.Server.Tests.Migrations;
 public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
 {
     private readonly SqliteTestDatabase _db = new();
+    private readonly string _scratchDirectory =
+        Path.Combine(Path.GetTempPath(), $"split-assembly-migration-discovery-{Guid.NewGuid():N}");
 
-    public void Dispose() => _db.Dispose();
+    public void Dispose()
+    {
+        _db.Dispose();
+        if (Directory.Exists(_scratchDirectory))
+        {
+            try
+            {
+                Directory.Delete(_scratchDirectory, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup; a lingering handle from a not-yet-unloaded context
+                // shouldn't fail the test.
+            }
+        }
+    }
 
     private EfCoreMcpTools CreateTools(
         MigrationsOptions? migrationsOptions = null,
@@ -171,6 +188,32 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
         var resolved = assemblyLoader.ResolveMigrationsAssembly(handle, FixturePaths.SplitMigrationsAppDllPath);
 
         Assert.Equal("SplitMigrationsApp", resolved.GetName().Name);
+    }
+
+    [Fact]
+    public void ResolveMigrationsAssembly_WithPathCollidingWithAlreadyLoadedSimpleName_ThrowsInsteadOfSubstituting()
+    {
+        // SplitContextApp.dll is already loaded into the target context as the main target
+        // assembly. Copying it to a second location under a *different simple name on disk* but
+        // then requesting it by the *original* simple name (via a copy that still declares
+        // "SplitContextApp" as its assembly name) simulates a caller passing a distinct DLL path
+        // whose simple name happens to collide with something already loaded into this context -
+        // TargetAssemblyLoadContext.LoadAdditionalAssembly must fail closed here rather than
+        // silently returning the already-loaded (and here, wrong) assembly.
+        Directory.CreateDirectory(_scratchDirectory);
+        var copiedPath = Path.Combine(_scratchDirectory, "SplitContextAppCopy.dll");
+        File.Copy(FixturePaths.SplitContextAppDllPath, copiedPath);
+
+        var assemblyLoader = new AssemblyLoaderService(new AssemblyLoaderOptions
+        {
+            AllowedRoots = [Path.GetDirectoryName(FixturePaths.SplitContextAppDllPath)!, _scratchDirectory],
+        });
+        var handle = assemblyLoader.Load(FixturePaths.SplitContextAppDllPath);
+
+        var exception = Assert.Throws<AssemblyLoadFailedException>(() =>
+            assemblyLoader.ResolveMigrationsAssembly(handle, copiedPath));
+
+        Assert.Contains("already loaded into this target from a different path", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -269,6 +269,12 @@ public sealed class AssemblyLoaderService
             {
                 return handle.Context.LoadAdditionalAssembly(fullPath);
             }
+            catch (AssemblyLoadFailedException)
+            {
+                // Already carries a safe, specific message (e.g. a same-name/different-path
+                // collision) - propagate as-is instead of re-wrapping with a generic one.
+                throw;
+            }
             catch (BadImageFormatException ex)
             {
                 throw new AssemblyLoadFailedException(
