@@ -254,6 +254,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
             new SchemaCache(),
             new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
             new RoslynQueryExecutor(new QueryExecutionOptions(), new QueryCompiler(new QueryCompilationOptions())),
+            new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions()),
             new QueryExecutionOptions(),
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),

@@ -324,13 +324,13 @@ public sealed class ConnectionRegistryTests
             Name = "Secret",
             Provider = DatabaseProvider.Sqlite,
             ConnectionString = "Data Source=super-secret-path.db;Password=hunter2",
-        AccessPolicy = new ConnectionAccessPolicy
-        {
-            AllowContexts = [],
-            DenyContexts = [],
-            AllowEntities = [],
-            DenyEntities = [],
-        },
+            AccessPolicy = new ConnectionAccessPolicy
+            {
+                AllowContexts = [],
+                DenyContexts = [],
+                AllowEntities = [],
+                DenyEntities = [],
+            },
         };
 
         var rendered = entry.ToString();

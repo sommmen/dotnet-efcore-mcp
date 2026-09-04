@@ -18,7 +18,7 @@ public readonly record struct EntitySelector(string ContextFullName, string Enti
             return false;
 
         var parts = raw.Split(':');
-        if (parts.Length != 2 || parts[0].Length == 0 || parts[1].Length == 0)
+        if (parts.Length != 2 || string.IsNullOrEmpty(parts[0]) || string.IsNullOrEmpty(parts[1]))
             return false;
 
         selector = new EntitySelector(parts[0], parts[1]);

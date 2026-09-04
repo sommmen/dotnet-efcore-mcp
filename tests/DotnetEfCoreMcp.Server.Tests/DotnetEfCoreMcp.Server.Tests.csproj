@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DotnetEfCoreMcp.Server\DotnetEfCoreMcp.Server.csproj" />
+    <ProjectReference Include="..\..\src\DotnetEfCoreMcp.QueryHost\DotnetEfCoreMcp.QueryHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
