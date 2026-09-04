@@ -114,7 +114,7 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
                     $"It cannot also be loaded from '{assemblyPath}' - use a distinctly-named assembly, or ensure the migrations assembly and the main target assembly's dependencies do not collide.");
             }
 
-            var alreadyLoaded = Assemblies.FirstOrDefault(a => string.Equals(a.GetName().Name, simpleName, StringComparison.Ordinal));
+            var alreadyLoaded = Assemblies.FirstOrDefault(a => string.Equals(a.GetName().Name, simpleName, StringComparison.OrdinalIgnoreCase));
             if (alreadyLoaded is not null)
             {
                 return alreadyLoaded;

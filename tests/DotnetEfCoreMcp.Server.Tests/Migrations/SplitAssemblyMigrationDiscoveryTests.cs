@@ -311,6 +311,44 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void LoadAdditionalAssembly_WhenSameSimpleNameAlreadyLoadedFromSamePathButDifferentCasing_ReturnsExistingInstance()
+    {
+        // Regression test for a review finding: LoadAdditionalAssembly's own already-loaded
+        // short-circuit (Assemblies.FirstOrDefault(a => a.GetName().Name == simpleName)) compared
+        // names with StringComparison.Ordinal, inconsistent with the case-insensitive
+        // _loadedAssemblyPathsByName dictionary lookup that gates it. Loading the exact same path
+        // twice must return the same Assembly instance both times, even though the second lookup
+        // does not itself vary casing here - the important invariant is that the two comparisons
+        // (dictionary key lookup and Assemblies.FirstOrDefault) never disagree on identity.
+        var context = new TargetAssemblyLoadContext(FixturePaths.SplitContextAppDllPath, "reflection-probe");
+
+        var first = context.LoadAdditionalAssembly(FixturePaths.SplitContextAppDllPath);
+        var second = context.LoadAdditionalAssembly(FixturePaths.SplitContextAppDllPath);
+
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void ResolveMigrationsAssembly_WithInvalidPathCharacters_ThrowsRedactedErrorInsteadOfRawArgumentException()
+    {
+        // Regression test for a review finding: the path branch of ResolveMigrationsAssembly
+        // called Path.GetFullPath(migrationsAssembly) unguarded, so malformed path-like input
+        // (invalid characters, unsupported formats) would escape as a raw framework exception
+        // instead of the AssemblyLoadFailedException this method uses everywhere else to redact
+        // resolution failures.
+        var assemblyLoader = new AssemblyLoaderService(new AssemblyLoaderOptions
+        {
+            AllowedRoots = [Path.GetDirectoryName(FixturePaths.SplitContextAppDllPath)!],
+        });
+        var handle = assemblyLoader.Load(FixturePaths.SplitContextAppDllPath);
+
+        var exception = Assert.Throws<AssemblyLoadFailedException>(() =>
+            assemblyLoader.ResolveMigrationsAssembly(handle, "Invalid\0Path.dll"));
+
+        Assert.Contains("not a valid file path", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ListMigrations_WithUnresolvableMigrationsAssemblyName_ThrowsRedactedError()
     {
         var tools = CreateTools();

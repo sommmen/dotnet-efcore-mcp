@@ -262,7 +262,20 @@ public sealed class AssemblyLoaderService
                 return resolved;
             }
 
-            var fullPath = Path.GetFullPath(migrationsAssembly);
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(migrationsAssembly);
+            }
+            catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+            {
+                // Path.GetFullPath throws for invalid characters, unsupported formats, and
+                // excessively long paths - redact these the same way as every other malformed
+                // input to this method rather than letting a raw framework exception escape to
+                // the tool caller.
+                throw new AssemblyLoadFailedException(
+                    $"Migrations assembly path '{migrationsAssembly}' is not a valid file path.", ex);
+            }
 
             if (_allowedRoots.Count > 0 && !MatchesAnyRoot(fullPath, _allowedRoots))
             {
