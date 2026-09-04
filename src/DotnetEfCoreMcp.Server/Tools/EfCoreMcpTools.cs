@@ -200,11 +200,20 @@ public sealed class EfCoreMcpTools(
                 handle.AssemblyPath, string.Join(" | ", warnings));
         }
 
+        // list_contexts must filter to the active connection's AccessPolicy (P0 #9) when a
+        // connection is active, but must not fail (or invoke the throwing ResolveConnection) when
+        // none is - e.g. immediately after load_assembly, before any connection has been selected -
+        // since discovering available contexts is a prerequisite for picking one.
+        var activeConnection = connectionRegistry.ActiveConnection;
+        var visibleDescriptors = activeConnection is null
+            ? scan.Descriptors
+            : scan.Descriptors.Where(c => activeConnection.AccessPolicy.IsContextReachable(c.FullName)).ToArray();
+
         return resultFormatter.Format(new
         {
             assemblyPath = handle.AssemblyPath,
             isStale = assemblyLoader.IsTargetStale(targetName),
-            contexts = scan.Descriptors.Select(c => new
+            contexts = visibleDescriptors.Select(c => new
             {
                 name = c.Name,
                 fullName = c.FullName,
@@ -232,16 +241,22 @@ public sealed class EfCoreMcpTools(
         if (pageSize < 1 || pageSize > 100)
             throw new McpException("`pageSize` must be between 1 and 100.");
 
-        var contextType = ResolveContextType(contextName, targetName);
         var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry, targetName);
+        EnsureContextReachable(contextType, entry);
 
         logger.LogInformation("get_schema requested. Context={ContextName} Connection={ConnectionName} Page={Page} PageSize={PageSize}", contextType.Name, connectionName, page, pageSize);
 
-        var schema = schemaCache.GetOrBuild(contextType, () =>
+        // The cache stores the full, unfiltered schema (it is keyed only by contextType and shared
+        // across connections/callers), so the per-connection AccessPolicy filter is applied to a
+        // fresh, non-mutating view every call rather than being baked into the cached value.
+        var cachedSchema = schemaCache.GetOrBuild(contextType, () =>
         {
             using var context = CreateContext(contextType, entry);
             return Schema.SchemaBuilder.Build(context);
         });
+        var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
+        var schema = policy.Apply(cachedSchema);
 
         var totalEntityCount = schema.Entities.Count;
         var offset = (long)(page - 1) * pageSize;
@@ -278,15 +293,21 @@ public sealed class EfCoreMcpTools(
         if (string.IsNullOrWhiteSpace(entityName))
             throw new McpException("`entityName` must not be empty.");
 
-        var contextType = ResolveContextType(contextName);
+        var entry = ResolveConnection(null);
+        var contextType = ResolveContextType(contextName, entry);
+        EnsureContextReachable(contextType, entry);
         var schema = RequireCachedSchema(contextType);
+        var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
 
         logger.LogInformation("get_entity_schema requested. Context={ContextName} Entity={EntityName}", contextType.Name, entityName);
 
-        var entity = Schema.SchemaSlicer.FindEntity(schema, entityName, Schema.NoOpSchemaAccessPolicy.Instance);
+        var entity = Schema.SchemaSlicer.FindEntity(schema, entityName, policy);
         if (entity is null)
         {
-            var known = schema.Entities.Select(e => e.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+            // The known-entities list below is drawn from the policy-filtered view only, so a
+            // denied/unknown entityName can never be distinguished from one that genuinely does not
+            // exist in the model (P0 #9 non-disclosure requirement).
+            var known = policy.Apply(schema).Entities.Select(e => e.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
             var choices = known.Length == 0 ? "(none)" : string.Join(", ", known);
             throw new McpException(
                 $"No entity named '{entityName}' was found in the cached schema for '{schema.ContextName}'. " +
@@ -320,12 +341,15 @@ public sealed class EfCoreMcpTools(
         if (effectiveMaxResults < 1 || effectiveMaxResults > Schema.SchemaSlicer.MaxSearchResults)
             throw new McpException($"`maxResults` must be between 1 and {Schema.SchemaSlicer.MaxSearchResults}.");
 
-        var contextType = ResolveContextType(contextName);
+        var entry = ResolveConnection(null);
+        var contextType = ResolveContextType(contextName, entry);
+        EnsureContextReachable(contextType, entry);
         var schema = RequireCachedSchema(contextType);
+        var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
 
         logger.LogInformation("search_schema requested. Context={ContextName} Query={Query} MaxResults={MaxResults}", contextType.Name, query, effectiveMaxResults);
 
-        var result = Schema.SchemaSlicer.Search(schema, query, effectiveMaxResults, Schema.NoOpSchemaAccessPolicy.Instance);
+        var result = Schema.SchemaSlicer.Search(schema, query, effectiveMaxResults, policy);
         var truncated = result.TotalMatchCount > result.Matches.Count;
         return resultFormatter.Format(new
         {
@@ -365,10 +389,24 @@ public sealed class EfCoreMcpTools(
 
     private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, CancellationToken cancellationToken)
     {
-        var contextType = ResolveContextType(contextName, targetName);
         var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry, targetName);
+
+        // Entity-level access policy (P0 #9) is enforced here, before either query engine dispatches,
+        // because the Roslyn engine constructs its own DbContext subclass and never calls
+        // CreateContext (which only enforces context-level reachability). The root DbSet plus any other
+        // DbSet referenced via set operators (Union/Concat/...) are resolved to their entity type names
+        // up front so both engines share one enforcement point using the same names the policy is
+        // configured with.
+        EnsureContextReachable(contextType, entry);
         try
         {
+            var (rootName, expressionText) = QueryExecutor.NormalizeAndGetRoot(query, queryExecutionOptions.MaxQueryLength);
+            foreach (var entityName in QueryExecutor.ResolveReferencedEntityNames(contextType, rootName, expressionText))
+            {
+                EnsureEntityAllowed(contextType, entry, entityName);
+            }
+
             var result = queryExecutionOptions.Engine switch
             {
                 QueryEngine.DynamicLinq => await ExecuteDynamicLinqAsync(contextType, entry, query, cancellationToken),
@@ -422,8 +460,8 @@ public sealed class EfCoreMcpTools(
                 "read-only LINQ-style querying) already covers your need before enabling raw SQL.");
         }
 
-        var contextType = ResolveContextType(contextName, targetName);
         var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry, targetName);
         if (entry.IsProduction)
         {
             throw new McpException("Raw SQL execution is not permitted for production connections.");
@@ -464,8 +502,8 @@ public sealed class EfCoreMcpTools(
 
     private async Task<string> ListMigrationsCore(string contextName, string? connectionName, CancellationToken cancellationToken)
     {
-        var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry);
         if (entry.IsProduction)
         {
             throw new McpException("Migration inspection is not permitted for production connections.");
@@ -521,8 +559,8 @@ public sealed class EfCoreMcpTools(
                 "before enabling script generation.");
         }
 
-        var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry);
         if (entry.IsProduction)
         {
             throw new McpException("Migration script generation is not permitted for production connections.");
@@ -671,6 +709,14 @@ public sealed class EfCoreMcpTools(
         {
             throw;
         }
+        catch (Exception ex) when (ex is AccessPolicyDeniedException or ConnectionRegistryConfigurationException)
+        {
+            // These carry deliberately non-disclosing, already-safe messages (P0 #9) - surface them
+            // directly rather than routing through CreateUnexpectedToolException's opaque, generic
+            // "failed unexpectedly" path, which would obscure the actionable denial/misconfiguration
+            // reason without adding any further safety.
+            throw new McpException(ex.Message);
+        }
         catch (Exception ex)
         {
             throw CreateUnexpectedToolException(operation, ex);
@@ -690,6 +736,10 @@ public sealed class EfCoreMcpTools(
         catch (OperationCanceledException)
         {
             throw;
+        }
+        catch (Exception ex) when (ex is AccessPolicyDeniedException or ConnectionRegistryConfigurationException)
+        {
+            throw new McpException(ex.Message);
         }
         catch (Exception ex)
         {
@@ -772,11 +822,23 @@ public sealed class EfCoreMcpTools(
             "then retry.");
     }
 
-    private Type ResolveContextType(string? contextName, string? targetName = null)
+    /// <summary>Resolves a DbContext by name within the currently loaded assembly. Requires the
+    /// already-resolved <paramref name="entry"/> (see <see cref="ResolveConnection"/>) so that,
+    /// on a no-match/ambiguous-match error, the disclosed list of "choose one of these" context
+    /// names can be restricted to <paramref name="entry"/>'s <c>AccessPolicy</c>-reachable contexts
+    /// only (mirroring <c>ListContextsCore</c>'s <c>visibleDescriptors</c> filter). Every call site
+    /// therefore calls <see cref="ResolveConnection"/> before this method, not after, so a caller
+    /// who passes a denied or nonexistent contextName is never told which real context names
+    /// exist beyond what their connection's policy already permits them to see (P0 #9
+    /// non-disclosure requirement). A denied-but-real match is still returned here and rejected
+    /// uniformly afterward by <see cref="EnsureContextReachable"/>, so it produces the exact same
+    /// outward message shape as a genuinely nonexistent name.</summary>
+    private Type ResolveContextType(string? contextName, ConnectionRegistryEntry entry, string? targetName = null)
     {
         var handle = RequireLoadedAssembly(targetName);
         var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
         var contexts = scan.Descriptors;
+        var visibleContexts = contexts.Where(c => entry.AccessPolicy.IsContextReachable(c.FullName)).ToArray();
 
         if (string.IsNullOrWhiteSpace(contextName))
         {
@@ -784,7 +846,7 @@ public sealed class EfCoreMcpTools(
                 return contexts[0].ClrType;
 
             throw new McpException(BuildContextSelectionError(
-                contexts,
+                visibleContexts,
                 contexts.Count == 0
                     ? "No DbContexts were found in the currently loaded assembly."
                     : "`contextName` is required because the loaded assembly contains multiple DbContexts."));
@@ -801,7 +863,7 @@ public sealed class EfCoreMcpTools(
         var reason = matches.Length > 1
             ? $"DbContext name '{contextName}' is ambiguous."
             : $"No DbContext named '{contextName}' was found in the currently loaded assembly.";
-        throw new McpException(BuildContextSelectionError(contexts, reason));
+        throw new McpException(BuildContextSelectionError(visibleContexts, reason));
     }
 
     private static string BuildContextSelectionError(IReadOnlyList<DbContextDescriptor> contexts, string reason)
@@ -915,6 +977,7 @@ public sealed class EfCoreMcpTools(
 
     private ConnectionRegistryEntry ResolveConnection(string? connectionName)
     {
+        ConnectionRegistryEntry entry;
         try
         {
             if (string.IsNullOrWhiteSpace(connectionName))
@@ -935,15 +998,30 @@ public sealed class EfCoreMcpTools(
                 {
                     throw new McpException("No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections.)");
                 }
-                return active;
+                entry = active;
             }
-
-            return connectionRegistry.Get(connectionName);
+            else
+            {
+                entry = connectionRegistry.Get(connectionName);
+            }
         }
         catch (UnknownConnectionException ex)
         {
             throw new McpException(ex.Message);
         }
+
+        // AccessPolicy selectors can only be checked against the actual discovered model once a
+        // target assembly is loaded (see ConnectionRegistry.LoadAccessPolicy); every tool that
+        // resolves a connection to use it does so through here, so this is the single place that
+        // enforces "reject invalid policy before serving the connection" for that deferred check.
+        var handle = assemblyLoader.Current;
+        if (handle is not null)
+        {
+            var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
+            entry.AccessPolicy.EnsureResolvable(entry.Name, scan.Descriptors);
+        }
+
+        return entry;
     }
 
     private static string BuildConnectionSelectionError(IReadOnlyCollection<string> connectionNames, string reason)
@@ -956,6 +1034,8 @@ public sealed class EfCoreMcpTools(
 
     private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry)
     {
+        EnsureContextReachable(contextType, entry);
+
         var provider = ResolveEffectiveProvider(contextType, entry);
         try
         {
@@ -964,6 +1044,32 @@ public sealed class EfCoreMcpTools(
         catch (DbContextActivationException ex)
         {
             throw new McpException(ex.Message);
+        }
+    }
+
+    /// <summary>Enforces the connection's <see cref="ConnectionAccessPolicy"/> at the context level
+    /// before a <c>DbContext</c> is constructed or a query is parsed against it (P0 #9). Denied and
+    /// unreachable contexts are rejected through the same <see cref="AccessPolicyDeniedException"/>
+    /// path so callers cannot distinguish "denied" from "does not exist".</summary>
+    private static void EnsureContextReachable(Type contextType, ConnectionRegistryEntry entry)
+    {
+        var contextFullName = contextType.FullName ?? contextType.Name;
+        if (!entry.AccessPolicy.IsContextReachable(contextFullName))
+        {
+            throw AccessPolicyDeniedException.ForContext(entry.Name, contextFullName);
+        }
+    }
+
+    /// <summary>Enforces the connection's <see cref="ConnectionAccessPolicy"/> at the entity level
+    /// (P0 #9), in addition to the context-level check already performed by
+    /// <see cref="EnsureContextReachable"/>. Used wherever a single target entity/DbSet name is known
+    /// before a query is parsed or a mutation is executed.</summary>
+    private static void EnsureEntityAllowed(Type contextType, ConnectionRegistryEntry entry, string entityName)
+    {
+        var contextFullName = contextType.FullName ?? contextType.Name;
+        if (!entry.AccessPolicy.IsEntityAllowed(contextFullName, entityName))
+        {
+            throw AccessPolicyDeniedException.ForEntity(entry.Name, contextFullName, entityName);
         }
     }
 
@@ -1000,8 +1106,8 @@ public sealed class EfCoreMcpTools(
 
     private async Task<string> TestConnectionCore(string contextName, string? connectionName, CancellationToken cancellationToken)
     {
-        var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry);
         var provider = ResolveEffectiveProvider(contextType, entry);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -1083,8 +1189,8 @@ public sealed class EfCoreMcpTools(
             throw new McpException("Entity mutations are disabled by default as a safety guard. To enable them, set EntityMutations:Enabled to true in the server's configuration and restart the MCP server process. Even when enabled, entity mutations refuse Production connections and require a ReadWrite connection.");
         }
 
-        var contextType = ResolveContextType(contextName);
         var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry);
         if (entry.IsProduction)
         {
             throw new McpException("Entity mutations are not permitted for production connections.");
@@ -1093,6 +1199,8 @@ public sealed class EfCoreMcpTools(
         {
             throw new McpException("Entity mutations require a ReadWrite connection.");
         }
+
+        EnsureEntityAllowed(contextType, entry, entity);
 
         using var context = CreateContext(contextType, entry);
         try

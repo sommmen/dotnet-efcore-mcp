@@ -30,6 +30,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
                 ["Connections:Primary:Provider"] = "Sqlite",
                 ["Connections:Primary:AccessMode"] = "ReadOnly",
                 ["Connections:Primary:Environment"] = "Development",
+                ["Connections:Primary:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
@@ -127,6 +128,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
                 ["Connections:ProdOnly:ConnectionString"] = db.ConnectionString,
                 ["Connections:ProdOnly:Provider"] = "Sqlite",
                 ["Connections:ProdOnly:Environment"] = "Production",
+                ["Connections:ProdOnly:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();

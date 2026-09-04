@@ -33,6 +33,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
                 ["Connections:Inferred:ConnectionString"] = db.ConnectionString,
                 ["Connections:Inferred:AccessMode"] = readWrite ? "ReadWrite" : "ReadOnly",
                 ["Connections:Inferred:Environment"] = production ? "Production" : "Development",
+                ["Connections:Inferred:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             })
             .Build();
 

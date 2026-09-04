@@ -65,6 +65,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
                 ["Connections:Primary:ConnectionString"] = "Data Source=:memory:",
                 ["Connections:Primary:Provider"] = "Sqlite",
                 ["Connections:Primary:Environment"] = "Development",
+                ["Connections:Primary:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();

@@ -116,7 +116,12 @@ public sealed class QueryExecutor
         }
     }
 
-    private static (string Root, string Expression) NormalizeAndGetRoot(string? query, int maxQueryLength)
+    /// <summary>Trims and validates a raw LINQPad-style query and extracts the leading DbSet property
+    /// name it is rooted at. Made <c>internal</c> (rather than <c>private</c>) so
+    /// <c>EfCoreMcpTools.RunQueryCore</c> can extract the same root name to enforce entity-level
+    /// access policy (P0 #9) before either query engine dispatches, without duplicating this parsing
+    /// logic.</summary>
+    internal static (string Root, string Expression) NormalizeAndGetRoot(string? query, int maxQueryLength)
     {
         var value = query?.Trim();
         if (maxQueryLength <= 0) throw new InvalidOperationException("Query execution option MaxQueryLength must be positive.");
@@ -128,6 +133,48 @@ public sealed class QueryExecutor
         var match = System.Text.RegularExpressions.Regex.Match(value, "^(?<root>[A-Za-z_][A-Za-z0-9_]*)");
         if (!match.Success) throw new QueryExecutionException("`query` must start with a DbSet property name.");
         return (match.Groups["root"].Value, value);
+    }
+
+    /// <summary>
+    /// Resolves the EF entity CLR type names that a raw query text may touch, so callers can enforce
+    /// entity-level access policy (P0 #9) using the same names the policy is configured with (entity type
+    /// names, e.g. <c>"Customer"</c>) rather than the unrelated DbSet property name the query is written
+    /// against (e.g. <c>"Customers"</c>). This is a <see cref="Type"/>-based counterpart of
+    /// <see cref="GetOtherDbSetProperties"/>/<see cref="ExecuteAsyncCore"/>'s root-resolution logic that
+    /// runs before a <see cref="DbContext"/> instance exists, so policy can be enforced before context
+    /// construction. The root DbSet is resolved first (if it does not map to a public <c>DbSet&lt;T&gt;</c>
+    /// property, its raw name is returned unchanged so an unresolvable/bogus root is still rejected through
+    /// the same policy check rather than silently skipped); every other public <c>DbSet&lt;T&gt;</c> property
+    /// whose name appears as a whole word in <paramref name="expressionText"/> (e.g. via
+    /// <c>Union</c>/<c>Concat</c>/<c>Except</c>/<c>Intersect</c>) contributes its entity type name too.
+    /// </summary>
+    internal static IReadOnlyList<string> ResolveReferencedEntityNames(Type contextType, string rootName, string expressionText)
+    {
+        ArgumentNullException.ThrowIfNull(contextType);
+        ArgumentNullException.ThrowIfNull(rootName);
+        ArgumentNullException.ThrowIfNull(expressionText);
+
+        var names = new List<string>();
+        var rootProperty = contextType.GetProperty(rootName, BindingFlags.Instance | BindingFlags.Public);
+        var rootEntityType = TryGetDbSetEntityType(rootProperty);
+        names.Add(rootEntityType?.Name ?? rootName);
+
+        foreach (var property in contextType.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        {
+            if (property.Name == rootName) continue;
+            var entityType = TryGetDbSetEntityType(property);
+            if (entityType is null) continue;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(expressionText, $@"\b{System.Text.RegularExpressions.Regex.Escape(property.Name)}\b")) continue;
+            names.Add(entityType.Name);
+        }
+        return names;
+    }
+
+    private static Type? TryGetDbSetEntityType(PropertyInfo? property)
+    {
+        if (property is null) return null;
+        if (!property.PropertyType.IsGenericType || property.PropertyType.GetGenericTypeDefinition() != typeof(DbSet<>)) return null;
+        return property.PropertyType.GetGenericArguments()[0];
     }
 
     /// <summary>

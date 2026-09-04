@@ -33,6 +33,39 @@ public sealed class UnknownConnectionException : Exception
     }
 }
 
+/// <summary>Thrown when a request is rejected by a connection's <see cref="ConnectionAccessPolicy"/>
+/// (see docs/development/connections.md, "P0 #9"): the requested context or entity did not match an
+/// allow selector, either because it matched a deny selector or because it matched neither list
+/// (fail-closed default denial). The message intentionally identifies only the requested selector
+/// and connection - it never enumerates permitted or prohibited alternatives, so a denial cannot be
+/// used to discover whether other names exist in the model.</summary>
+public sealed class AccessPolicyDeniedException : Exception
+{
+    public AccessPolicyDeniedException(string connectionName, string message)
+        : base(message)
+    {
+        ConnectionName = connectionName;
+    }
+
+    public string ConnectionName { get; }
+
+    /// <summary>The single, unified denial for an unreachable/unlisted <c>DbContext</c>. Deliberately
+    /// worded so it does not confirm or deny whether <paramref name="requestedContextName"/> exists
+    /// in the loaded model at all.</summary>
+    public static AccessPolicyDeniedException ForContext(string connectionName, string requestedContextName) =>
+        new(
+            connectionName,
+            $"Access to DbContext '{requestedContextName}' is not permitted for connection '{connectionName}'.");
+
+    /// <summary>The single, unified denial for an unreachable/unlisted entity within an otherwise
+    /// reachable context. Deliberately worded so it does not confirm or deny whether
+    /// <paramref name="requestedEntityName"/> exists in the loaded model at all.</summary>
+    public static AccessPolicyDeniedException ForEntity(string connectionName, string requestedContextName, string requestedEntityName) =>
+        new(
+            connectionName,
+            $"Access to entity '{requestedEntityName}' on DbContext '{requestedContextName}' is not permitted for connection '{connectionName}'.");
+}
+
 /// <summary>Thrown when an operation attempts to mutate or make active a connection that is
 /// protected because it is designated as production (see <see cref="ConnectionRegistryEntry.IsProduction"/>).
 /// Production connections are update-forbidden and cannot be set as the active connection without

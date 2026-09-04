@@ -160,6 +160,8 @@ public sealed class ConnectionRegistry
                 accessMode = ConnectionAccessMode.ReadOnly;
             }
 
+            var accessPolicy = LoadAccessPolicy(name, child.GetSection("AccessPolicy"));
+
             result[name] = new ConnectionRegistryEntry
             {
                 Name = name,
@@ -168,7 +170,112 @@ public sealed class ConnectionRegistry
                 AccessMode = accessMode,
                 CommandTimeoutSeconds = commandTimeoutSeconds,
                 Environment = environment,
+                AccessPolicy = accessPolicy,
             };
+        }
+
+        return result;
+    }
+
+    private static readonly HashSet<string> KnownAccessPolicyMembers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "AllowContexts", "DenyContexts", "AllowEntities", "DenyEntities",
+    };
+
+    /// <summary>Parses and shape-validates the required <c>AccessPolicy</c> section for a single
+    /// connection: presence, no unknown members, no malformed selectors, no duplicate selectors
+    /// within any one list. Deliberately does not check whether any selector resolves against a
+    /// loaded model - no target assembly is loaded yet when the registry is constructed, so that
+    /// check is deferred to <see cref="ConnectionAccessPolicy.EnsureResolvable"/>, invoked the first
+    /// time a connection is used against a loaded assembly.</summary>
+    private static ConnectionAccessPolicy LoadAccessPolicy(string name, IConfigurationSection section)
+    {
+        if (!section.Exists())
+        {
+            throw new ConnectionRegistryConfigurationException(
+                $"Connection '{name}' is missing a required 'AccessPolicy' section. Every connection must " +
+                "declare an explicit AccessPolicy (AllowContexts, DenyContexts, AllowEntities, DenyEntities); " +
+                "there is no default policy.");
+        }
+
+        var unknownMembers = section.GetChildren()
+            .Select(c => c.Key)
+            .Where(key => !KnownAccessPolicyMembers.Contains(key))
+            .ToArray();
+        if (unknownMembers.Length > 0)
+        {
+            throw new ConnectionRegistryConfigurationException(
+                $"Connection '{name}' has an AccessPolicy with unknown member(s): {string.Join(", ", unknownMembers)}. " +
+                $"Allowed members: {string.Join(", ", KnownAccessPolicyMembers)}.");
+        }
+
+        var allowContexts = LoadContextSelectorList(name, "AllowContexts", section);
+        var denyContexts = LoadContextSelectorList(name, "DenyContexts", section);
+        var allowEntities = LoadEntitySelectorList(name, "AllowEntities", section);
+        var denyEntities = LoadEntitySelectorList(name, "DenyEntities", section);
+
+        return new ConnectionAccessPolicy
+        {
+            AllowContexts = allowContexts,
+            DenyContexts = denyContexts,
+            AllowEntities = allowEntities,
+            DenyEntities = denyEntities,
+        };
+    }
+
+    private static IReadOnlyList<string> LoadContextSelectorList(string name, string member, IConfigurationSection policySection)
+    {
+        var values = policySection.GetSection(member).GetChildren()
+            .Select(c => c.Value)
+            .ToArray();
+
+        var result = new List<string>(values.Length);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in values)
+        {
+            if (string.IsNullOrEmpty(raw))
+            {
+                throw new ConnectionRegistryConfigurationException(
+                    $"Connection '{name}' has a malformed AccessPolicy.{member} entry: selectors must be non-empty " +
+                    "CLR DbContext full names.");
+            }
+
+            if (!seen.Add(raw))
+            {
+                throw new ConnectionRegistryConfigurationException(
+                    $"Connection '{name}' has a duplicate AccessPolicy.{member} selector '{raw}'.");
+            }
+
+            result.Add(raw);
+        }
+
+        return result;
+    }
+
+    private static IReadOnlyList<EntitySelector> LoadEntitySelectorList(string name, string member, IConfigurationSection policySection)
+    {
+        var values = policySection.GetSection(member).GetChildren()
+            .Select(c => c.Value)
+            .ToArray();
+
+        var result = new List<EntitySelector>(values.Length);
+        var seen = new HashSet<EntitySelector>();
+        foreach (var raw in values)
+        {
+            if (!EntitySelector.TryParse(raw, out var selector))
+            {
+                throw new ConnectionRegistryConfigurationException(
+                    $"Connection '{name}' has a malformed AccessPolicy.{member} entry '{raw}'. Expected the exact " +
+                    "form '<context full name>:<entity name>'.");
+            }
+
+            if (!seen.Add(selector))
+            {
+                throw new ConnectionRegistryConfigurationException(
+                    $"Connection '{name}' has a duplicate AccessPolicy.{member} selector '{selector}'.");
+            }
+
+            result.Add(selector);
         }
 
         return result;
