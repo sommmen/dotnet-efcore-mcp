@@ -204,14 +204,14 @@ connection or command activity.
 
 ## Proposed open work — P0 #7: query complexity limits beyond row count
 
-`MaxTake`, `DefaultTake`, and `MaxIncludedCollectionItems` already bound result *size*.
-`MaxQueryLength`, `MaxExpressionNodes`, `MaxExpressionDepth`, and `MaxQueryOperators` now bound the
-shape of Roslyn-authored `run_query` input before provider work begins. All are server-side
-configuration under `QueryExecution`, not per-request overrides.
+`MaxTake` and `DefaultTake` already bound result *size*.
+`MaxQueryLength` is the only shape constraint currently enforced on Roslyn-authored `run_query` input
+before provider work begins; it is server-side configuration under `QueryExecution`, not a per-request override.
 
-Enforce these caps immediately after binding the incoming request and before Roslyn compilation
+Proposed future work: add `MaxIncludedCollectionItems`, `MaxExpressionNodes`, `MaxExpressionDepth`, 
+and `MaxQueryOperators` constraints to enforce further complexity limits before Roslyn compilation
 reaches provider translation or database access. Reject oversized or overly-complex queries before
-execution or preview. Command timeout and capped paging still bound valid but expensive provider
+execution or preview. Command timeout and capped paging will continue to bound valid but expensive provider
 work.
 
 Violations throw the existing `QueryExecutionException`, consistent with every other validation
