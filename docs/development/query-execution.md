@@ -148,8 +148,11 @@ thrown for:
 out-of-process/pooled query host boundary — never a live, unexecuted `IQueryable`. Extending that
 wire protocol to carry an unexecuted query would be substantially more invasive (a new protocol
 version, DTOs, host process branches, and pool/worker plumbing) for no added safety benefit, since
-previewing never opens a database connection either way. This requirement is enforced by
-`EfCoreMcpTools.PreviewQuerySqlCore` (which rejects non-`InProcess` modes), and then calls
+the `ToQueryString()` call itself never opens a database connection or executes a command. Note that
+the preceding compilation/invocation step executes the caller-supplied C# expression as ordinary code
+(via `RoslynQueryExecutor.CompileAndInvokeAsync`), and such an expression can force early enumeration
+(e.g., `Customers.ToList().AsQueryable()`) before `ToQueryString()` is reached. This requirement is
+enforced by `EfCoreMcpTools.PreviewQuerySqlCore` (which rejects non-`InProcess` modes), and then calls
 `RoslynQueryExecutor.PreviewSqlAsync` directly instead of going through `run_query`'s
 `ExecuteRoslynAsync` mode switch.
 
