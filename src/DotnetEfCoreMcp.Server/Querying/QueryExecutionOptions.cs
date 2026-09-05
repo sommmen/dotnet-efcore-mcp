@@ -42,4 +42,20 @@ public sealed class QueryExecutionOptions
 
     /// <summary>Maximum accepted query-expression length.</summary>
     public int MaxQueryLength { get; init; } = 4_000;
+
+    /// <summary>Maximum number of syntax nodes allowed in the parsed query expression tree.</summary>
+    public int MaxExpressionNodes { get; init; } = 500;
+
+    /// <summary>Maximum nesting depth allowed in the parsed query expression tree.</summary>
+    public int MaxExpressionDepth { get; init; } = 32;
+
+    /// <summary>Maximum number of LINQ query-operator method calls (e.g. <c>Where</c>, <c>Select</c>,
+    /// <c>OrderBy</c>) allowed in the parsed query expression.</summary>
+    public int MaxQueryOperators { get; init; } = 20;
+
+    /// <summary>Maximum number of <c>Include</c>/<c>ThenInclude</c> calls allowed in the parsed query
+    /// expression. This is a static, AST-level cap on how many included navigations may be requested -
+    /// it does not itself bound how many rows each included collection may materialize in the
+    /// database (see P0 #8 in the work tracker for that follow-up).</summary>
+    public int MaxIncludedCollectionItems { get; init; } = 5;
 }
