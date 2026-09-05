@@ -1,0 +1,6 @@
+{
+  "platform": "github",
+  "repositories": [
+    "sommmen/dotnet-efcore-mcp"
+  ]
+}
