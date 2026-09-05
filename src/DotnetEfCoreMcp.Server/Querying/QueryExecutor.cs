@@ -97,7 +97,7 @@ public static class QueryExecutor
 
     /// <summary>Materializes <paramref name="sequence"/> up to <paramref name="effectiveTake"/> rows,
     /// reporting whether at least one further row exists (P0 #2 <c>hasMoreRows</c>). The Roslyn engine
-    /// hands back a filtered, ordered, skipped <see cref="IQueryable"/> at this point, so a
+    /// hands back a filtered, skipped <see cref="IQueryable"/> (ordering is optional and depends on caller; add OrderBy for stable pagination) at this point, so a
     /// sentinel-row approach is used to detect further rows without over-fetching.
     /// For a positive <paramref name="effectiveTake"/>, requests <c>effectiveTake + 1</c> rows and
     /// treats a returned extra row solely as a sentinel: it is discarded before projection and never

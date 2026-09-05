@@ -405,14 +405,14 @@ public sealed class EfCoreMcpTools(
     [McpServerTool(Name = "run_query"), Description(
         "Executes a safe, read-only LINQPad-style C# expression rooted at a public DbSet property on the selected DbContext. " +
         "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: " +
-        "results are always materialized and capped server-side at 50 rows by default, up to a configured maximum of 200 (terminal scalar aggregates/element operators such as " +
-        "Count/FirstOrDefault/Single/Any are not paginated). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. " +
+        "IQueryable results are materialized and capped server-side at 50 rows by default, up to a configured maximum of 200 (scalar aggregates/element operators such as " +
+        "Count/FirstOrDefault/Single/Any return single values; already-materialized results like .ToList() return as-is without capping). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. " +
         "The full LINQPad surface is supported: Where, Select, GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, " +
         "Distinct, Count, LongCount, Sum, Average, Min, Max, First, FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, " +
         "Zip, and the set operators Concat/Union/Except/Intersect (which may reference another public DbSet by name, e.g. " +
         "Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). " +
-        "The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are always capped at " +
-        "effectiveTake); it is false for take:0 and for terminal scalar/element results.")]
+        "The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are capped at " +
+        "effectiveTake for IQueryable results); it is false for take:0, scalar results, and already-materialized collections.")]
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
