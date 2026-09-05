@@ -1,0 +1,22 @@
+query {
+  repository(owner: "sommmen", name: "dotnet-efcore-mcp") {
+    pullRequest(number: 48) {
+      reviewThreads(first: 100) {
+        edges {
+          node {
+            id
+            comments(first: 1) {
+              edges {
+                node {
+                  id
+                  databaseId
+                  body
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

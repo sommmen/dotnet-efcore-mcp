@@ -42,10 +42,10 @@ internal static class QueryComplexityValidator
     /// reports the syntax error with its own sanitized message.</summary>
     internal static void Validate(string query, QueryExecutionOptions options)
     {
-        if (options.MaxExpressionNodes <= 0) throw new InvalidOperationException("Query execution option MaxExpressionNodes must be positive.");
-        if (options.MaxExpressionDepth <= 0) throw new InvalidOperationException("Query execution option MaxExpressionDepth must be positive.");
-        if (options.MaxQueryOperators <= 0) throw new InvalidOperationException("Query execution option MaxQueryOperators must be positive.");
-        if (options.MaxIncludedCollectionItems <= 0) throw new InvalidOperationException("Query execution option MaxIncludedCollectionItems must be positive.");
+        if (options.MaxExpressionNodes <= 0) throw new QueryExecutionException("The server-configured MaxExpressionNodes value must be positive.");
+        if (options.MaxExpressionDepth <= 0) throw new QueryExecutionException("The server-configured MaxExpressionDepth value must be positive.");
+        if (options.MaxQueryOperators <= 0) throw new QueryExecutionException("The server-configured MaxQueryOperators value must be positive.");
+        if (options.MaxIncludedCollectionItems <= 0) throw new QueryExecutionException("The server-configured MaxIncludedCollectionItems value must be positive.");
 
         var root = TryParse(query);
         if (root is null) return;
@@ -74,23 +74,22 @@ internal static class QueryComplexityValidator
                 else if (QueryOperatorNames.Contains(methodName)) operatorCount++;
             }
 
-            // Push children onto the stack in reverse order to maintain left-to-right traversal
-            // (since stack is LIFO, reversing ensures children are processed in the correct order).
+            // Push children onto the stack in reverse order to maintain
+            // left-to-right processing when popping from the stack.
             foreach (var child in node.ChildNodes().Reverse())
             {
                 stack.Push((child, depth + 1));
             }
         }
 
-        // Final validation after walk completes.
         if (nodeCount > options.MaxExpressionNodes)
-            throw new QueryExecutionException($"The query expression contains {nodeCount} syntax nodes, exceeding the configured maximum of {options.MaxExpressionNodes} (MaxExpressionNodes).");
+            throw new QueryExecutionException($"Query syntax tree contains {nodeCount} nodes, exceeding the configured maximum of {options.MaxExpressionNodes} (MaxExpressionNodes).");
         if (maxDepth > options.MaxExpressionDepth)
-            throw new QueryExecutionException($"The query expression has a nesting depth of {maxDepth}, exceeding the configured maximum of {options.MaxExpressionDepth} (MaxExpressionDepth).");
+            throw new QueryExecutionException($"Query syntax tree has maximum nesting depth of {maxDepth}, exceeding the configured maximum of {options.MaxExpressionDepth} (MaxExpressionDepth).");
         if (operatorCount > options.MaxQueryOperators)
-            throw new QueryExecutionException($"The query expression contains {operatorCount} query operators, exceeding the configured maximum of {options.MaxQueryOperators} (MaxQueryOperators).");
+            throw new QueryExecutionException($"Query contains {operatorCount} query operators, exceeding the configured maximum of {options.MaxQueryOperators} (MaxQueryOperators).");
         if (includeCount > options.MaxIncludedCollectionItems)
-            throw new QueryExecutionException($"The query expression contains {includeCount} Include/ThenInclude calls, exceeding the configured maximum of {options.MaxIncludedCollectionItems} (MaxIncludedCollectionItems).");
+            throw new QueryExecutionException($"Query contains {includeCount} Include/ThenInclude calls, exceeding the configured maximum of {options.MaxIncludedCollectionItems} (MaxIncludedCollectionItems).");
     }
 
     private static SyntaxNode? TryParse(string query)
