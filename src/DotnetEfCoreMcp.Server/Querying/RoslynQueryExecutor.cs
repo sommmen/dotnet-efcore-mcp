@@ -23,10 +23,13 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
 
     /// <summary>Compiles and evaluates the user's query up to (but not including) materializing any
     /// rows, obtaining the query's final in-memory value (an <see cref="IQueryable"/>, a scalar, or
-    /// an already-materialized sequence) without ever opening a database connection, executing a
-    /// command, or calling <c>SaveChanges</c>. Used to preview the SQL that <c>run_query</c> would
-    /// issue, via the returned <see cref="IQueryable"/>'s <c>ToQueryString()</c>, which - like this
-    /// method - never touches the database.
+    /// an already-materialized sequence). Used to preview the SQL that <c>run_query</c> would issue,
+    /// via the returned <see cref="IQueryable"/>'s <c>ToQueryString()</c> call, which itself never
+    /// opens a database connection, executes a command, or calls <c>SaveChanges</c>.
+    /// <para>That guarantee applies to the <c>ToQueryString()</c> call itself, not to evaluating the
+    /// caller-supplied expression: if the expression has side effects (e.g. an inline method call),
+    /// those may execute - including database access - while this method compiles and evaluates it,
+    /// before <c>ToQueryString()</c> is ever reached.</para>
     /// <para>Only <see cref="IQueryable"/> results have SQL to preview; a
     /// <see cref="QueryExecutionException"/> is thrown for scalars, already-materialized sequences,
     /// and plain <see cref="IEnumerable"/> results produced by operators with no SQL translation

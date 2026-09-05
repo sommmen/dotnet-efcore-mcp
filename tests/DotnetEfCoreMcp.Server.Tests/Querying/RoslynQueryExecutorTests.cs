@@ -245,20 +245,18 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task PreviewSqlAsync_ValidQuery_SucceedsAndExercisesExceptionHandlingCodePath()
+    public async Task PreviewSqlAsync_ValidQuery_SucceedsWithExceptionWrapperPresent()
     {
         // This test verifies that PreviewSqlAsync correctly returns SQL for a valid query.
-        // It exercises the code path that wraps ToQueryString() in a try-catch block (added in FINDING 2
-        // of the review feedback). While a direct test of the exception handling when ToQueryString() throws
-        // would be ideal, triggering a real InvalidOperationException from ToQueryString() during EF Core 
-        // translation is extremely difficult in practice:
+        // It exercises the success path including the try-catch wrapper around ToQueryString().
+        // While a direct test of the exception handling when ToQueryString() throws would be ideal,
+        // triggering a real translation failure is not practical with valid compiled queries:
         // - Most LINQ expressions that compile in C# also translate successfully to SQL
         // - The Roslyn compiler validates the C# before we ever call ToQueryString()
         // - EF Core's Sqlite provider has very broad translation support
-        // Therefore, this test verifies the method works correctly with a valid query, which exercises
-        // the normal execution path including the try-catch wrapper. The exception handling itself is
-        // present in the code and would activate if ToQueryString() threw, but reliably triggering that
-        // condition is not feasible with real queries.
+        // This test-design limitation means the exception-handling code path is present in the codebase
+        // (the try-catch wrapper around ToQueryString() would activate if it threw), but the catch
+        // branch itself is not directly exercised by this test.
         var result = await CreateExecutor().PreviewSqlAsync(
             _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest { Query = "Customers.Where(c => c.Age >= 18)" },

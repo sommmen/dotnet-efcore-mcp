@@ -131,8 +131,10 @@ supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates 
 entity-level access-policy checks, `MaxQueryLength` enforcement, and Roslyn compilation front end
 (`EfCoreMcpTools.PreviewQuerySqlCore` mirrors `RunQueryCore` up through query compilation). Instead
 of materializing rows, it returns the SQL the query would issue, obtained solely from the compiled
-query's still-unexecuted `IQueryable.ToQueryString()` — the query is never enumerated, no database
-connection is opened, no command is created or executed, and `SaveChanges` is never reached.
+query's still-unexecuted `IQueryable.ToQueryString()`. When successful, the `ToQueryString()` call 
+itself does not enumerate the query, open a database connection, create or execute a command, or 
+call `SaveChanges` — however, the preceding compilation step executes the user-supplied C# 
+expression, which may force early enumeration or side effects.
 
 Only queries whose final value is an unexecuted `IQueryable` have SQL to preview. A
 `QueryExecutionException` (surfaced with an actionable "Next step" hint via `FormatQueryError`) is
@@ -142,15 +144,18 @@ thrown for:
 - results produced by operators with no SQL translation, e.g. `Zip` (which returns a
   client-side-evaluated `IEnumerable<T>`, not an `IQueryable`).
 
-**Execution mode is always forced to in-process for preview, regardless of the server's configured
-`QueryExecution:Mode`.** `ToQueryString()` requires local, live access to the compiled
+**Execution mode is required to be in-process for preview; the tool rejects all non-`InProcess`
+`QueryExecution:Mode` settings.** `ToQueryString()` requires local, live access to the compiled
 `IQueryable`/query provider, and only a fully materialized `QueryResultWire` ever crosses the
 out-of-process/pooled query host boundary — never a live, unexecuted `IQueryable`. Extending that
 wire protocol to carry an unexecuted query would be substantially more invasive (a new protocol
 version, DTOs, host process branches, and pool/worker plumbing) for no added safety benefit, since
-previewing never opens a database connection either way, whichever executor runs it. This is
-implemented via `RoslynQueryExecutor.PreviewSqlAsync`, called directly by
-`EfCoreMcpTools.PreviewQuerySqlCore` instead of going through `run_query`'s
+the `ToQueryString()` call itself never opens a database connection or executes a command. Note that
+the preceding compilation/invocation step executes the caller-supplied C# expression as ordinary code
+(via `RoslynQueryExecutor.CompileAndInvokeAsync`), and such an expression can force early enumeration
+(e.g., `Customers.ToList().AsQueryable()`) before `ToQueryString()` is reached. This requirement is
+enforced by `EfCoreMcpTools.PreviewQuerySqlCore` (which rejects non-`InProcess` modes), and then calls
+`RoslynQueryExecutor.PreviewSqlAsync` directly instead of going through `run_query`'s
 `ExecuteRoslynAsync` mode switch.
 
 ## Access-policy scope and limitations
