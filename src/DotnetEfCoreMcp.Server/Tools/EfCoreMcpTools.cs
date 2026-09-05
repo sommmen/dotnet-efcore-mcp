@@ -434,10 +434,10 @@ public sealed class EfCoreMcpTools(
         EnsureContextReachable(contextType, entry);
         try
         {
-            // TODO P0 #9: NormalizeAndGetRoot enforces single-expression mode (rejects ';' and requires root DbSet name
-            // at start), which breaks the documented statement-mode queries. Access-policy enforcement must be
-            // refactored to parse statement-mode syntax for root DbSet name extraction without requiring single-expression
-            // constraint, or to analyze compiled results post-binding.
+            // TODO P0 #9: NormalizeAndGetRoot enforces single-expression mode (strips trailing ';' but rejects
+            // multi-statement and top-level blocks) and requires root DbSet name at start, which breaks the documented
+            // statement-mode queries. Access-policy enforcement must be refactored to parse statement-mode syntax for
+            // root DbSet name extraction without requiring single-expression constraint, or to analyze compiled results post-binding.
             var (rootName, expressionText) = QueryExecutor.NormalizeAndGetRoot(query, queryExecutionOptions.MaxQueryLength);
             foreach (var entityName in QueryExecutor.ResolveReferencedEntityNames(contextType, rootName, expressionText))
             {
