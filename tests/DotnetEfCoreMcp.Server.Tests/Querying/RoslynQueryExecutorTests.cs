@@ -476,7 +476,12 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" }, CancellationToken.None));
 
-        Assert.Contains("exceeding the configured maximum of", ex.Message, StringComparison.Ordinal);
+        // Verify exactly one limit identifier appears (fail closed: name only one limit).
+        var limitIdentifiers = new[] { "MaxExpressionNodes", "MaxExpressionDepth", "MaxQueryOperators", "MaxIncludedCollectionItems" };
+        var matchCount = limitIdentifiers.Count(id => ex.Message.Contains(id, StringComparison.Ordinal));
+        Assert.Equal(1, matchCount);
+
+        // Verify query text is not leaked.
         Assert.DoesNotContain("Age", ex.Message, StringComparison.Ordinal);
     }
 

@@ -54,19 +54,16 @@ internal static class QueryComplexityValidator
         var operatorCount = 0;
         var includeCount = 0;
         var maxDepth = 0;
-        Walk(root, 1);
 
-        if (nodeCount > options.MaxExpressionNodes)
-            throw new QueryExecutionException($"The query expression contains {nodeCount} syntax nodes, exceeding the configured maximum of {options.MaxExpressionNodes} (MaxExpressionNodes).");
-        if (maxDepth > options.MaxExpressionDepth)
-            throw new QueryExecutionException($"The query expression has a nesting depth of {maxDepth}, exceeding the configured maximum of {options.MaxExpressionDepth} (MaxExpressionDepth).");
-        if (operatorCount > options.MaxQueryOperators)
-            throw new QueryExecutionException($"The query expression contains {operatorCount} query operators, exceeding the configured maximum of {options.MaxQueryOperators} (MaxQueryOperators).");
-        if (includeCount > options.MaxIncludedCollectionItems)
-            throw new QueryExecutionException($"The query expression contains {includeCount} Include/ThenInclude calls, exceeding the configured maximum of {options.MaxIncludedCollectionItems} (MaxIncludedCollectionItems).");
+        // Use an explicit stack to walk the AST iteratively instead of recursively,
+        // preventing stack overflow on deeply nested user-controlled syntax trees.
+        var stack = new Stack<(SyntaxNode Node, int Depth)>();
+        stack.Push((root, 1));
 
-        void Walk(SyntaxNode node, int depth)
+        while (stack.Count > 0)
         {
+            var (node, depth) = stack.Pop();
+
             nodeCount++;
             if (depth > maxDepth) maxDepth = depth;
 
@@ -77,11 +74,23 @@ internal static class QueryComplexityValidator
                 else if (QueryOperatorNames.Contains(methodName)) operatorCount++;
             }
 
-            foreach (var child in node.ChildNodes())
+            // Push children onto the stack in reverse order to maintain left-to-right traversal
+            // (since stack is LIFO, reversing ensures children are processed in the correct order).
+            foreach (var child in node.ChildNodes().Reverse())
             {
-                Walk(child, depth + 1);
+                stack.Push((child, depth + 1));
             }
         }
+
+        // Final validation after walk completes.
+        if (nodeCount > options.MaxExpressionNodes)
+            throw new QueryExecutionException($"The query expression contains {nodeCount} syntax nodes, exceeding the configured maximum of {options.MaxExpressionNodes} (MaxExpressionNodes).");
+        if (maxDepth > options.MaxExpressionDepth)
+            throw new QueryExecutionException($"The query expression has a nesting depth of {maxDepth}, exceeding the configured maximum of {options.MaxExpressionDepth} (MaxExpressionDepth).");
+        if (operatorCount > options.MaxQueryOperators)
+            throw new QueryExecutionException($"The query expression contains {operatorCount} query operators, exceeding the configured maximum of {options.MaxQueryOperators} (MaxQueryOperators).");
+        if (includeCount > options.MaxIncludedCollectionItems)
+            throw new QueryExecutionException($"The query expression contains {includeCount} Include/ThenInclude calls, exceeding the configured maximum of {options.MaxIncludedCollectionItems} (MaxIncludedCollectionItems).");
     }
 
     private static SyntaxNode? TryParse(string query)
