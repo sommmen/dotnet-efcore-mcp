@@ -468,7 +468,8 @@ public sealed class EfCoreMcpTools(
 
     [McpServerTool(Name = "preview_query_sql"), Description(
         "Previews the SQL a run_query expression would issue, without executing it: no database connection is opened, no command " +
-        "is run, and no rows are read or written. Accepts the exact same LINQPad-style expression syntax as run_query, e.g. " +
+        "is run, and no rows are read or written. However, a caller-supplied expression may force enumeration or side effects before that point. " +
+        "Accepts the exact same LINQPad-style expression syntax as run_query, e.g. " +
         "Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL " +
         "to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and " +
         "operators with no SQL translation (Zip) are rejected - use run_query for those instead; also rejected when the server's " +

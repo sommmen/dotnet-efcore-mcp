@@ -31,7 +31,9 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
     /// <see cref="QueryExecutionException"/> is thrown for scalars, already-materialized sequences,
     /// and plain <see cref="IEnumerable"/> results produced by operators with no SQL translation
     /// (e.g. <c>Zip</c>), matching the same distinction <see cref="ShapeResultAsync"/> draws between
-    /// row-shaped and scalar results.</para></summary>
+    /// row-shaped and scalar results.</para>
+    /// <para>Note: if the caller-supplied expression itself has side effects (e.g., an inline method call),
+    /// those may execute during this evaluation before the guarantee above applies.</para></summary>
     public async Task<QuerySqlPreviewResult> PreviewSqlAsync(
         LoadedAssemblyHandle target,
         Type contextType,
