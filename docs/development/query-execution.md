@@ -131,8 +131,10 @@ supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates 
 entity-level access-policy checks, `MaxQueryLength` enforcement, and Roslyn compilation front end
 (`EfCoreMcpTools.PreviewQuerySqlCore` mirrors `RunQueryCore` up through query compilation). Instead
 of materializing rows, it returns the SQL the query would issue, obtained solely from the compiled
-query's still-unexecuted `IQueryable.ToQueryString()` — the query is never enumerated, no database
-connection is opened, no command is created or executed, and `SaveChanges` is never reached.
+query's still-unexecuted `IQueryable.ToQueryString()`. When successful, the `ToQueryString()` call 
+itself does not enumerate the query, open a database connection, create or execute a command, or 
+call `SaveChanges` — however, the preceding compilation step executes the user-supplied C# 
+expression, which may force early enumeration or side effects.
 
 Only queries whose final value is an unexecuted `IQueryable` have SQL to preview. A
 `QueryExecutionException` (surfaced with an actionable "Next step" hint via `FormatQueryError`) is
