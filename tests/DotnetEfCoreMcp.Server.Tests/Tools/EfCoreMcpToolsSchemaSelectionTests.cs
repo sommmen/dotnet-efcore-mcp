@@ -96,7 +96,7 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     [Fact]
     public async Task RunQuery_WhenAnUnexpectedExceptionOccurs_ReturnsRedactedErrorByDefault()
     {
-        var tools = CreateTools();
+        var tools = CreateTools(queryExecutionOptions: new QueryExecutionOptions { Mode = QueryExecutionMode.InProcess });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
@@ -110,7 +110,9 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     [Fact]
     public async Task RunQuery_WhenAnUnexpectedExceptionOccursAndDiagnosticsAreEnabled_ExposesSafeCategoryOnly()
     {
-        var tools = CreateTools(toolDiagnosticsOptions: new ToolDiagnosticsOptions { ExposeSafeErrorDetails = true });
+        var tools = CreateTools(
+            toolDiagnosticsOptions: new ToolDiagnosticsOptions { ExposeSafeErrorDetails = true },
+            queryExecutionOptions: new QueryExecutionOptions { Mode = QueryExecutionMode.InProcess });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
@@ -135,7 +137,8 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
 
     private static EfCoreMcpTools CreateTools(
         IToolResultFormatter? resultFormatter = null,
-        ToolDiagnosticsOptions? toolDiagnosticsOptions = null)
+        ToolDiagnosticsOptions? toolDiagnosticsOptions = null,
+        QueryExecutionOptions? queryExecutionOptions = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -149,16 +152,17 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
+        queryExecutionOptions ??= new QueryExecutionOptions();
 
         return new EfCoreMcpTools(
             new AssemblyLoaderService(),
             new AssemblyDiscoveryService(),
             new ConnectionRegistry(configuration),
             new SchemaCache(),
-            new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
-            new RoslynQueryExecutor(new QueryExecutionOptions(), new QueryCompiler(new QueryCompilationOptions())),
-            new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions()),
-            new QueryExecutionOptions(),
+            new QueryExecutor(queryExecutionOptions, NullLogger<QueryExecutor>.Instance),
+            new RoslynQueryExecutor(queryExecutionOptions, new QueryCompiler(new QueryCompilationOptions())),
+            new OutOfProcessRoslynQueryExecutor(queryExecutionOptions),
+            queryExecutionOptions,
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new MigrationsOptions(),

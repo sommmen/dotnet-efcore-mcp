@@ -5,10 +5,10 @@
 Code: `src/DotnetEfCoreMcp.Server/Querying` (rewritten) + new `src/DotnetEfCoreMcp.Server/Compilation` ·
 Tests: `tests/DotnetEfCoreMcp.Server.Tests/Querying` + new `tests/DotnetEfCoreMcp.Server.Tests/Compilation`
 
-> **Status: in progress.** The Roslyn compilation pipeline (`Compilation/`) and its executor
-> (`Querying/RoslynQueryExecutor.cs`) are implemented and covered by tests, but the Dynamic-LINQ
-> path in [Query execution](./query-execution.md) remains the default `run_query` engine during
-> migration; `System.Linq.Dynamic.Core` has not yet been removed (see
+> **Status: cutover complete; removal pending.** The Roslyn compilation pipeline (`Compilation/`)
+> and its executor (`Querying/RoslynQueryExecutor.cs`) are implemented, covered by tests, and are
+> now the default `run_query` engine. The Dynamic-LINQ path remains as a temporary explicit
+> compatibility escape hatch; `System.Linq.Dynamic.Core` has not yet been removed (see
 > [Package removal](#package-removal)).
 
 ## Why
@@ -426,7 +426,9 @@ and pins this behavior.
    `System.IO.File.ReadAllText(...)` or `System.Diagnostics.Process.Start(...)` fails to *compile*
    with a sanitized diagnostic, not that it throws at runtime).
 4. **Flip the default engine to `Roslyn`** once (2) and (3) are green, keeping the
-   `DynamicLinq` toggle available for one release as an escape hatch.
+   `DynamicLinq` toggle available for one release as an escape hatch. **Done:**
+   `QueryExecutionOptions.Engine` now defaults to `Roslyn`; operators can still explicitly select
+   `DynamicLinq` for temporary compatibility.
 5. **Remove `System.Linq.Dynamic.Core`** (see [Package removal](#package-removal)) and delete the
    `DynamicLinq` engine path, `QueryExecutor`'s expression-tree-building code, and the
    toggle itself once the Roslyn engine has been the sole default for at least one release with no

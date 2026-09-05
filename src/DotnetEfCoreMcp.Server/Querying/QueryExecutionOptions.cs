@@ -4,10 +4,10 @@ namespace DotnetEfCoreMcp.Server.Querying;
 public sealed class QueryExecutionOptions
 {
     /// <summary>Which engine <c>run_query</c> uses to execute the caller's query. See
-    /// <c>docs/development/roslyn-user-query.md</c>; defaults to <see cref="QueryEngine.DynamicLinq"/>
-    /// during the migration so the two engines can be validated side by side before the default
-    /// flips.</summary>
-    public QueryEngine Engine { get; init; } = QueryEngine.DynamicLinq;
+    /// <c>docs/development/roslyn-user-query.md</c>; defaults to <see cref="QueryEngine.Roslyn"/>
+    /// while <see cref="QueryEngine.DynamicLinq"/> remains an explicit, temporary compatibility
+    /// escape hatch.</summary>
+    public QueryEngine Engine { get; init; } = QueryEngine.Roslyn;
 
     /// <summary>Where Roslyn queries execute. Auto safely selects an isolated process.</summary>
     public QueryExecutionMode Mode { get; init; } = QueryExecutionMode.Auto;
