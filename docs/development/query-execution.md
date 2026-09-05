@@ -142,16 +142,15 @@ thrown for:
 - results produced by operators with no SQL translation, e.g. `Zip` (which returns a
   client-side-evaluated `IEnumerable<T>`, not an `IQueryable`).
 
-**Execution mode is always forced to in-process for preview, regardless of the server's configured
-`QueryExecution:Mode`.** `ToQueryString()` requires local, live access to the compiled
+**Execution mode is required to be in-process for preview; the tool rejects all non-`InProcess`
+`QueryExecution:Mode` settings.** `ToQueryString()` requires local, live access to the compiled
 `IQueryable`/query provider, and only a fully materialized `QueryResultWire` ever crosses the
 out-of-process/pooled query host boundary — never a live, unexecuted `IQueryable`. Extending that
 wire protocol to carry an unexecuted query would be substantially more invasive (a new protocol
 version, DTOs, host process branches, and pool/worker plumbing) for no added safety benefit, since
-previewing never opens a database connection either way, whichever executor runs it. This is
-implemented via `RoslynQueryExecutor.PreviewSqlAsync`, called directly by
-`EfCoreMcpTools.PreviewQuerySqlCore` instead of going through `run_query`'s
-`ExecuteRoslynAsync` mode switch.
+previewing never opens a database connection either way. This requirement is enforced by
+`RoslynQueryExecutor.PreviewSqlAsync`, called directly by `EfCoreMcpTools.PreviewQuerySqlCore`
+instead of going through `run_query`'s `ExecuteRoslynAsync` mode switch.
 
 ## Access-policy scope and limitations
 
