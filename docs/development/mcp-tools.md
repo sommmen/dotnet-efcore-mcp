@@ -167,16 +167,15 @@ unknown names, matching/order, caps and `truncated`, invalid input, and policy-s
 ## Proposed open work — P0 #7: query complexity limits beyond row count
 
 `run_query` and `preview_query_sql` add no caller-controlled limits for this item. The relevant
-server-side caps are the `QueryExecution` settings described in
-[Query execution](./query-execution.md#proposed-open-work--p0-7-query-complexity-limits-beyond-row-count):
-`MaxQueryLength`, `MaxExpressionNodes`, `MaxExpressionDepth`, and `MaxQueryOperators`. All
-requests share the same validated pipeline, so an oversized or overly-complex query is rejected
+server-side cap currently in place is the `QueryExecution` setting `MaxQueryLength` (described in
+[Query execution](./query-execution.md)). Additional constraints (`MaxExpressionNodes`, `MaxExpressionDepth`, 
+`MaxQueryOperators`, `MaxIncludedCollectionItems`) are proposed open work (P0 #7).
+All requests share the same validated pipeline, so an oversized query is rejected
 before provider translation or a database round-trip.
 
 Tool descriptions should note that `run_query` and `preview_query_sql` are subject to
-server-configured complexity limits in addition to the existing row-count cap, without hard-coding
-numeric limits. Failures surface through the existing `QueryExecutionException`-to-MCP-error
-mapping and name only the exceeded limit and its configured maximum — never caller query text.
+server-configured limits, without hard-coding numeric limits. Failures surface through the existing 
+`QueryExecutionException`-to-MCP-error mapping and name only the exceeded limit and its configured maximum — never caller query text.
 
 Focused tool-surface tests should verify rejection at every applicable cap, that errors do not echo
 caller input, and that requests at or under every cap bind and forward as intended.
