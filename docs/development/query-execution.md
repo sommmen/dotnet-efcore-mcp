@@ -149,8 +149,9 @@ out-of-process/pooled query host boundary — never a live, unexecuted `IQueryab
 wire protocol to carry an unexecuted query would be substantially more invasive (a new protocol
 version, DTOs, host process branches, and pool/worker plumbing) for no added safety benefit, since
 previewing never opens a database connection either way. This requirement is enforced by
-`RoslynQueryExecutor.PreviewSqlAsync`, called directly by `EfCoreMcpTools.PreviewQuerySqlCore`
-instead of going through `run_query`'s `ExecuteRoslynAsync` mode switch.
+`EfCoreMcpTools.PreviewQuerySqlCore` (which rejects non-`InProcess` modes), and then calls
+`RoslynQueryExecutor.PreviewSqlAsync` directly instead of going through `run_query`'s
+`ExecuteRoslynAsync` mode switch.
 
 ## Access-policy scope and limitations
 
