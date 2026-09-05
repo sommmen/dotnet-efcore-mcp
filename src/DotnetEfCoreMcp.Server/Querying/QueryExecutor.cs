@@ -15,7 +15,12 @@ public static class QueryExecutor
     /// name it is rooted at. Made <c>internal</c> (rather than <c>private</c>) so
     /// <c>EfCoreMcpTools.RunQueryCore</c> can extract the same root name to enforce entity-level
     /// access policy (P0 #9) before the Roslyn engine compiles and executes the query, without
-    /// duplicating this parsing logic.</summary>
+    /// duplicating this parsing logic.
+    /// 
+    /// IMPORTANT: This method enforces expression-mode only (rejects statements with ';'). Statement-mode
+    /// queries are not supported for policy enforcement reasons; see P0 #9. The parsed root name is later
+    /// validated by <see cref="TryGetDbSetEntityType"/> to ensure it actually refers to a DbSet property,
+    /// preventing policy bypass via DbContext.Set<T>(), Database.ExecuteSqlRaw(), or other non-DbSet access.</summary>
     internal static (string Root, string Expression) NormalizeAndGetRoot(string? query, int maxQueryLength)
     {
         var value = query?.Trim();
@@ -24,7 +29,7 @@ public static class QueryExecutor
             throw new QueryExecutionException("`query` exceeds the configured maximum length.");
         if (string.IsNullOrWhiteSpace(value)) throw new QueryExecutionException("`query` must be a non-empty LINQ expression.");
         if (value.EndsWith(';')) value = value[..^1].TrimEnd();
-        if (value.Contains(';')) throw new QueryExecutionException("`query` must contain one expression only.");
+        if (value.Contains(';')) throw new QueryExecutionException("`query` must contain one expression only (statement-mode is not supported).");
         var match = System.Text.RegularExpressions.Regex.Match(value, "^(?<root>[A-Za-z_][A-Za-z0-9_]*)");
         if (!match.Success) throw new QueryExecutionException("`query` must start with a DbSet property name.");
         return (match.Groups["root"].Value, value);
@@ -43,6 +48,14 @@ public static class QueryExecutor
     /// whose name appears as a whole word in <paramref name="expressionText"/> (e.g. via
     /// <c>Union</c>/<c>Concat</c>/<c>Except</c>/<c>Intersect</c>) contributes its entity type name too.
     /// </summary>
+    /// <summary>Collects all referenced entity names from an expression by scanning for DbSet property names
+    /// using word-boundary regex matching on the raw expression text. LIMITATION: This detection is text-based
+    /// and can be bypassed via unicode escapes in identifiers or false positives from matching text in string
+    /// literals/comments. However, this limitation is acceptable because (1) Roslyn compilation will fail
+    /// if a referenced property doesn't exist or isn't accessible, and (2) policy enforcement via
+    /// <see cref="TryGetDbSetEntityType"/> ensures only DbSet-rooted access is evaluated. Access via
+    /// DbContext.Set<T>(), Database.ExecuteSqlRaw(), or reflection is outside the policy scope and remains
+    /// controlled by EF Core and the hosting application's own DbContext-level restrictions.</summary>
     internal static IReadOnlyList<string> ResolveReferencedEntityNames(Type contextType, string rootName, string expressionText)
     {
         ArgumentNullException.ThrowIfNull(contextType);

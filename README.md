@@ -310,11 +310,7 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 `query` is Roslyn-compiled C# rooted at an exact, public `DbSet<T>` property on the selected
 context, such as `Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`.
 If the trimmed text parses as one complete expression, the server wraps it as `return <query>;` (this is the currently supported execution path). An optional single trailing `;` is accepted and stripped.
-If the query uses a top-level `{ ... }` block or contains multiple statements, the server would treat it as statement mode and expects
-the query text itself to `return` the final value (this is not yet fully supported; see the [development guide](docs/development/query-execution.md) for P0 #9 status).
-When statement-mode support is complete, `run_query` will support the full LINQ surface available to the loaded app and referenced assemblies, including
-`Join`, `GroupJoin`, `SelectMany`, cross-`DbSet` set operations, and local variables in
-statement-mode queries.
+If the query uses a top-level `{ ... }` block or contains multiple statements, the server rejects it: statement mode is **not supported** by design due to access-policy enforcement constraints. Expression-mode queries (the currently supported path) allow the server to validate entity access before compilation. For full P0 #9 status, see the [development guide](docs/development/query-execution.md).
 
 `IQueryable` results are materialized server-side and capped at 50 rows by default (up to a configured maximum of 200 rows, unless
 reconfigured); no terminal `.ToList()`/`.FirstOrDefault()` call is required. Results are not

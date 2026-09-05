@@ -95,8 +95,7 @@ Authoring has two modes:
   `return <query>;`. This is the currently supported execution path in `run_query`. A single optional trailing `;` is stripped and accepted.
 - **Statement mode:** if the trimmed text uses a top-level `{ ... }` block or contains multiple statements,
   the server would treat it as a statement body for local variables, multiple steps, and explicit
-  `return` statements. This is **not yet fully supported** in `run_query` due to access-policy
-  enforcement limitations (see P0 #9); it is planned as future work.
+  `return` statements. This is **not supported** in `run_query` by design: entity-level access policy enforcement (described below) requires parsing and validating the query at compile time before execution, which is only feasible for expression-mode queries. Statement-mode queries would require a full statement-level parser and policy analyzer, tracked as future work in P0 #9.
 
 Because the query is compiled as real C#, the supported operator surface is the full LINQ surface
 available to the loaded app and referenced assemblies. Common provider-translatable shapes include
@@ -108,8 +107,7 @@ deliberately after `AsEnumerable()` or materialization, but once the result is n
 
 The server enforces safety boundaries: only configured metadata references are available at
 compile time; `unsafe` code is disabled; query length is capped (via `MaxQueryLength`); and compile/runtime failures are sanitized without logging raw query
-text or sensitive provider data. Other complexity-limit options (`MaxExpressionNodes`, `MaxExpressionDepth`,
-`MaxQueryOperators`) are proposed (see P0 #7 below).
+text or sensitive provider data. Currently enforced limits are query length only; additional complexity-limit options are proposed as future work.
 
 No terminal call is required for `IQueryable` results — `run_query` materializes them server-side
 and applies an automatic take cap, so fragments like
@@ -125,6 +123,23 @@ command timeout and server cancellation. An explicit `.AsTracking()` can opt bac
 `QueryExecution:AllowMutationsInRunQuery=true` **and** the resolved connection is non-production
 `ReadWrite`. Sequence results receive the configured default page when no `Take` is
 supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated.
+
+## Access-policy scope and limitations
+
+**Protected by policy:** `run_query` enforces entity-level access control via `EfCoreMcpTools.RunQueryCore` pre-check:
+the parsed root identifier must match an existing public `DbSet<T>` property on the selected `DbContext`, and all
+referenced entities (detected via regex word-match on property names in the expression text) must also be DbSet-backed.
+This ensures queries can only access data through configured entity sets.
+
+**Not protected by policy:** The following access patterns are **outside the policy scope** and are controlled entirely by
+your EF Core configuration and DbContext design:
+- **DbContext.Set<T>()** — dynamic entity access not rooted in a DbSet property
+- **Database.ExecuteSqlRaw()** / **Database.ExecuteSqlInterpolated()** — raw SQL execution
+- **Reflection-based access** to internal DbContext members
+
+These patterns require statement-mode or explicit API calls unsupported in `run_query` expression-mode. If your security
+model requires blocking these patterns, ensure your DbContext class itself does not expose them, or use your hosting
+application's own authorization layer (e.g., role-based access control on the MCP server endpoint).
 
 ## P0 #2 — `run_query` continuation indicator
 
