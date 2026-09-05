@@ -43,6 +43,9 @@ queries, and local variables in statement-mode queries. Client-side operators re
 `AsEnumerable()` or materialization, but non-`IQueryable` results are returned through the scalar
 slot instead of row-shaped output.
 
+**Note:** Full statement-mode support (including access-policy pre-checks) is currently incomplete and tracked in P0 #9.
+Expression-mode queries are the primary execution path; statement-mode is planned but requires further implementation work.
+
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
 cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
 default row-count capping (200 by default) when no `Take` is present, and any supplied `Take` is clamped 

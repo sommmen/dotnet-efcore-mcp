@@ -194,6 +194,9 @@ means statement-mode queries are valid only when their final `return` value is s
 should be rejected for preview because they do not have a provider-translatable SQL
 representation.
 
+**Note:** Full statement-mode support in `run_query` execution and access-policy pre-checks is incomplete and tracked in P0 #9.
+Expression-mode queries are the primary execution path; statement-mode support requires completing root-extraction and access-policy validation for multi-statement input.
+
 Apply the same root-name validation, allowed-reference surface, ordering/take behavior, and
 complexity limits before SQL generation. Reject invalid, unsafe, or unsupported requests with the
 existing sanitized `QueryExecutionException`-style errors; never expose connection strings,
