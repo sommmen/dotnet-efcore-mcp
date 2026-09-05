@@ -405,7 +405,7 @@ public sealed class EfCoreMcpTools(
     [McpServerTool(Name = "run_query"), Description(
         "Executes a safe, read-only LINQPad-style C# expression rooted at a public DbSet property on the selected DbContext. " +
         "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: " +
-        "results are always materialized and capped server-side at 200 rows by default (terminal scalar aggregates/element operators such as " +
+        "results are always materialized and capped server-side at 50 rows by default, up to a configured maximum of 200 (terminal scalar aggregates/element operators such as " +
         "Count/FirstOrDefault/Single/Any are not paginated). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. " +
         "The full LINQPad surface is supported: Where, Select, GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, " +
         "Distinct, Count, LongCount, Sum, Average, Min, Max, First, FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, " +
