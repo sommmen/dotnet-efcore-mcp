@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Renovate
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "renovate-config.json"
+      - ".github/workflows/renovate.yml"
+  workflow_dispatch: # Allow running the workflow manually from the GitHub UI
+  schedule:
+    - cron: "0 8 * * *"
+
+permissions:
+  contents: read
+  security-events: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Self-hosted Renovate
+        uses: renovatebot/github-action@v46.2.4
+        with:
+          configurationFile: renovate-config.json
+        env:
+          # A PAT (not GITHUB_TOKEN) is required so automerge can trigger
+          # further workflow runs (e.g. required status checks).
+          RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+#          LOG_LEVEL: "debug"
