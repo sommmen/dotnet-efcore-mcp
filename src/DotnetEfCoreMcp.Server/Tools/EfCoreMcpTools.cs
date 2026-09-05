@@ -471,7 +471,8 @@ public sealed class EfCoreMcpTools(
         "is run, and no rows are read or written. Accepts the exact same LINQPad-style expression syntax as run_query, e.g. " +
         "Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL " +
         "to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and " +
-        "operators with no SQL translation (Zip) are rejected - use run_query for those instead.")]
+        "operators with no SQL translation (Zip) are rejected - use run_query for those instead; also rejected when the server's " +
+        "QueryExecution:Mode is not InProcess, since previewing requires compiling and evaluating the query locally.")]
     public Task<string> PreviewQuerySql(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
@@ -497,12 +498,19 @@ public sealed class EfCoreMcpTools(
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
 
-            // Deliberately always runs in-process, regardless of the server's configured
-            // QueryExecution:Mode: ToQueryString() requires local access to the live IQueryable,
-            // which never crosses the out-of-process/pooled wire protocol (only a materialized
-            // QueryResultWire does). Since previewing never opens a database connection or executes
-            // a command either way, forcing in-process execution here is safe and far simpler than
-            // extending the wire protocol to carry an unexecuted IQueryable. See query-execution.md.
+            // preview_query_sql must compile and evaluate the query's C# expression locally to build
+            // the IQueryable for ToQueryString(). It only works when QueryExecution:Mode is InProcess
+            // because the out-of-process/pooled wire protocol only carries materialized QueryResultWire,
+            // never an unexecuted IQueryable. Reject if the operator has configured isolation.
+            if (queryExecutionOptions.Mode != QueryExecutionMode.InProcess)
+            {
+                throw new QueryExecutionException(
+                    "preview_query_sql requires QueryExecution:Mode to be InProcess because it must compile " +
+                    "and evaluate the query's C# expression locally to build the IQueryable for ToQueryString(); " +
+                    "the current mode ('" + queryExecutionOptions.Mode + "') isolates user-authored query " +
+                    "execution in a separate process, which preview_query_sql does not use.");
+            }
+
             var target = RequireLoadedAssembly(targetName);
             var provider = ResolveEffectiveProvider(contextType, entry);
             var request = new QueryRequest { Query = expressionText };

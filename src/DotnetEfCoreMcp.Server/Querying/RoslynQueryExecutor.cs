@@ -49,7 +49,15 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
                 "no SQL translation (e.g. Zip).");
         }
 
-        return new QuerySqlPreviewResult("C#", sequence.ToQueryString());
+        try
+        {
+            var sql = sequence.ToQueryString();
+            return new QuerySqlPreviewResult("C#", sql);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or TargetInvocationException)
+        {
+            throw new QueryExecutionException("The query could not be translated by the database provider.", ex);
+        }
     }
 
     /// <summary>Compiles the query, constructs the generated query DbContext, and invokes the

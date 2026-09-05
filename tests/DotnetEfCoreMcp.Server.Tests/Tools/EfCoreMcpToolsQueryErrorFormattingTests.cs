@@ -38,13 +38,10 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
     [Fact]
     public async Task PreviewQuerySql_WithScalarResult_ReportsAPreviewNotAvailableHint()
     {
-        // QueryExecution:Mode is deliberately OutOfProcess here: preview_query_sql must still work
-        // (and still surface its own preview-specific hint, not the out-of-process one) because it
-        // always forces in-process execution regardless of the server's configured mode.
+        // Use InProcess mode, which is required for preview_query_sql to work.
         var tools = CreateTools(new QueryExecutionOptions
         {
-            Mode = QueryExecutionMode.OutOfProcess,
-            OutOfProcessHostPath = null,
+            Mode = QueryExecutionMode.InProcess,
         });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
@@ -60,6 +57,25 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         Assert.Contains("is not an IQueryable and has no SQL to preview", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Next step: Rewrite the query", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("server-side configuration problem", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PreviewQuerySql_WithOutOfProcessMode_RejectsPreviewBecauseModeRequiresInProcess()
+    {
+        var tools = CreateTools(new QueryExecutionOptions
+        {
+            Mode = QueryExecutionMode.OutOfProcess,
+            OutOfProcessHostPath = null,
+        });
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.PreviewQuerySql(
+                "SampleAppDbContext",
+                "Customers.Where(c => c.Age >= 18)"));
+
+        Assert.Contains("requires QueryExecution:Mode to be InProcess", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("OutOfProcess", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
