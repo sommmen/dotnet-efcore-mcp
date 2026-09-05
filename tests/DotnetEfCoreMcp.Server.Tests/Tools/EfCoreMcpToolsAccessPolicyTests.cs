@@ -240,6 +240,35 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
     }
 
     [Fact]
+    public async Task PreviewQuerySql_AllowedEntity_ReturnsSqlWithoutTouchingTheDatabase()
+    {
+        // Deliberately does not create the schema (no EnsureCreated): preview_query_sql shares the
+        // same access-policy enforcement as run_query, but must succeed here purely from the
+        // compiled query's ToQueryString() - proving it never opens the connection or requires the
+        // schema to already exist.
+        var tools = CreateTools(allowEntities: [new EntitySelector("SampleApp.SampleAppDbContext", "Customer")]);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var result = await tools.PreviewQuerySql("SampleAppDbContext", "Customers.Select(c => c.Name)");
+
+        Assert.DoesNotContain("not permitted", result, StringComparison.Ordinal);
+        Assert.Contains("SELECT", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreviewQuerySql_DeniedEntityReferencedViaUnion_RejectsBeforeCompilingTheQuery()
+    {
+        var tools = CreateTools(allowEntities: [new EntitySelector("SampleApp.SampleAppDbContext", "Order")]);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.PreviewQuerySql("SampleAppDbContext", "Orders.Select(o => o.Id).Union(Customers.Select(c => c.Id))"));
+
+        Assert.Contains("Customer", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("not permitted", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RunQuery_DeniedEntityReferencedViaUnion_RejectsBeforeExecutingAgainstTheDatabase()
     {
         // Regression for the same DbSet-name-vs-entity-name mismatch, exercised through the

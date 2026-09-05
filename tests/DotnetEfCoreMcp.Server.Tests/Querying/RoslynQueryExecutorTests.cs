@@ -178,6 +178,72 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task PreviewSqlAsync_ExpressionQuery_ReturnsQueryStringForFinalIQueryable()
+    {
+        var result = await CreateExecutor().PreviewSqlAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" },
+            CancellationToken.None);
+
+        Assert.Equal("C#", result.Entity);
+        Assert.Contains("SELECT", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WHERE", result.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreviewSqlAsync_NeverOpensADatabaseConnection()
+    {
+        // Deliberately does not call EnsureCreated: if PreviewSqlAsync ever opened a connection or
+        // executed a command, this would fail with "no such table: Customer" instead of succeeding.
+        using var emptyDb = new SqliteTestDatabase();
+
+        var result = await CreateExecutor().PreviewSqlAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).OrderBy(c => c.Name)" },
+            CancellationToken.None);
+
+        Assert.Equal("C#", result.Entity);
+        Assert.Contains("SELECT", result.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreviewSqlAsync_ScalarResult_Throws()
+    {
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().PreviewSqlAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Count()" }, CancellationToken.None));
+
+        Assert.Contains("is not an IQueryable and has no SQL to preview", ex.Message);
+    }
+
+    [Fact]
+    public async Task PreviewSqlAsync_MaterializedResult_Throws()
+    {
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().PreviewSqlAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.ToList()" }, CancellationToken.None));
+
+        Assert.Contains("is not an IQueryable and has no SQL to preview", ex.Message);
+    }
+
+    [Fact]
+    public async Task PreviewSqlAsync_NonTranslatableEnumerableResult_Throws()
+    {
+        // Zip returns a lazily-evaluated IEnumerable<T>, not an IQueryable, and - because it is
+        // never enumerated here (no ToList/foreach) - this also proves no query is executed for a
+        // rejected preview.
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().PreviewSqlAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Id).AsEnumerable().Zip(Orders.OrderBy(o => o.Id).AsEnumerable(), (c, o) => new { c.Name, o.Amount })"
+            },
+            CancellationToken.None));
+
+        Assert.Contains("is not an IQueryable and has no SQL to preview", ex.Message);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ParameterlessOnConfiguringContext_OverridesHardcodedConnectionString()
     {
         var contextType = DbContextScanner.FindDbContextTypes(_handle.Assembly).Descriptors.Single(d => d.Name == "LegacyOnConfiguringDbContext").ClrType;

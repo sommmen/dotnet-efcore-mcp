@@ -465,6 +465,56 @@ public sealed class EfCoreMcpTools(
             _ => throw new InvalidOperationException($"Unsupported query execution mode '{queryExecutionOptions.Mode}'."),
         };
     }
+
+    [McpServerTool(Name = "preview_query_sql"), Description(
+        "Previews the SQL a run_query expression would issue, without executing it: no database connection is opened, no command " +
+        "is run, and no rows are read or written. Accepts the exact same LINQPad-style expression syntax as run_query, e.g. " +
+        "Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL " +
+        "to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and " +
+        "operators with no SQL translation (Zip) are rejected - use run_query for those instead.")]
+    public Task<string> PreviewQuerySql(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
+        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("preview_query_sql", () => PreviewQuerySqlCore(contextName, query, connectionName, targetName, cancellationToken));
+
+    private async Task<string> PreviewQuerySqlCore(string contextName, string query, string? connectionName, string? targetName, CancellationToken cancellationToken)
+    {
+        var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry, targetName);
+
+        // Shares the exact same access-policy/validation pipeline as run_query (see RunQueryCore):
+        // context-level reachability, then entity-level allow-listing for the root DbSet and any
+        // other DbSet referenced via set operators (Union/Concat/...).
+        EnsureContextReachable(contextType, entry);
+        try
+        {
+            var (rootName, expressionText) = QueryExecutor.NormalizeAndGetRoot(query, queryExecutionOptions.MaxQueryLength);
+            foreach (var entityName in QueryExecutor.ResolveReferencedEntityNames(contextType, rootName, expressionText))
+            {
+                EnsureEntityAllowed(contextType, entry, entityName);
+            }
+
+            // Deliberately always runs in-process, regardless of the server's configured
+            // QueryExecution:Mode: ToQueryString() requires local access to the live IQueryable,
+            // which never crosses the out-of-process/pooled wire protocol (only a materialized
+            // QueryResultWire does). Since previewing never opens a database connection or executes
+            // a command either way, forcing in-process execution here is safe and far simpler than
+            // extending the wire protocol to carry an unexecuted IQueryable. See query-execution.md.
+            var target = RequireLoadedAssembly(targetName);
+            var provider = ResolveEffectiveProvider(contextType, entry);
+            var request = new QueryRequest { Query = expressionText };
+            var result = await roslynQueryExecutor.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken);
+            return resultFormatter.Format(result);
+        }
+        catch (QueryExecutionException ex)
+        {
+            throw new McpException(FormatQueryError(ex));
+        }
+    }
+
     [McpServerTool(Name = "run_sql_query"), Description(
         "Executes a parameterized raw SQL command against a Development ReadWrite connection. This potentially " +
         "destructive tool is unavailable unless RawSqlExecution:Enabled is explicitly set to true on the server; " +
@@ -926,6 +976,11 @@ public sealed class EfCoreMcpTools(
         if (message.Contains("cannot be used with the Roslyn query engine", StringComparison.OrdinalIgnoreCase))
         {
             return $"{message} Next step: Add a public parameterless constructor or a DbContextOptions<T> constructor to the DbContext.";
+        }
+
+        if (message.Contains("is not an IQueryable and has no SQL to preview", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{message} Next step: Rewrite the query so it ends on a translatable IQueryable operator (e.g. Where/Select/OrderBy), or call run_query instead if you actually need the scalar/materialized result.";
         }
 
         if (message.Contains("QueryExecution:OutOfProcessHostPath", StringComparison.OrdinalIgnoreCase) ||

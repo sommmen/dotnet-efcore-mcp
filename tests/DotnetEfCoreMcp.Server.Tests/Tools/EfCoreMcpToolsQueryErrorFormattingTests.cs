@@ -36,6 +36,33 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
     }
 
     [Fact]
+    public async Task PreviewQuerySql_WithScalarResult_ReportsAPreviewNotAvailableHint()
+    {
+        // QueryExecution:Mode is deliberately OutOfProcess here: preview_query_sql must still work
+        // (and still surface its own preview-specific hint, not the out-of-process one) because it
+        // always forces in-process execution regardless of the server's configured mode.
+        var tools = CreateTools(new QueryExecutionOptions
+        {
+            Mode = QueryExecutionMode.OutOfProcess,
+            OutOfProcessHostPath = null,
+        });
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        // Zip has no SQL translation and returns a lazily-evaluated IEnumerable<T>, not an
+        // IQueryable (unlike Count(), which would execute immediately against the schema-less
+        // in-memory database and fail with an unrelated evaluation error instead), so this
+        // exercises the "not an IQueryable" rejection itself without touching the database.
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.PreviewQuerySql(
+                "SampleAppDbContext",
+                "Customers.OrderBy(c => c.Id).AsEnumerable().Zip(Orders.OrderBy(o => o.Id).AsEnumerable(), (c, o) => new { c.Name, o.Amount })"));
+
+        Assert.Contains("is not an IQueryable and has no SQL to preview", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Next step: Rewrite the query", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("server-side configuration problem", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RunQuery_WithOutOfProcessModeAndNoHostConfigured_ReportsAServerConfigurationHint()
     {
         var tools = CreateTools(new QueryExecutionOptions

@@ -124,6 +124,35 @@ command timeout and server cancellation. An explicit `.AsTracking()` can opt bac
 `ReadWrite`. Sequence results receive the configured default page when no `Take` is
 supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated.
 
+## `preview_query_sql`
+
+`preview_query_sql` accepts the same request shape as `run_query` (`contextName`, `query`, optional
+`connectionName`, optional `targetName`) and reuses `run_query`'s exact root-name resolution,
+entity-level access-policy checks, `MaxQueryLength` enforcement, and Roslyn compilation front end
+(`EfCoreMcpTools.PreviewQuerySqlCore` mirrors `RunQueryCore` up through query compilation). Instead
+of materializing rows, it returns the SQL the query would issue, obtained solely from the compiled
+query's still-unexecuted `IQueryable.ToQueryString()` — the query is never enumerated, no database
+connection is opened, no command is created or executed, and `SaveChanges` is never reached.
+
+Only queries whose final value is an unexecuted `IQueryable` have SQL to preview. A
+`QueryExecutionException` (surfaced with an actionable "Next step" hint via `FormatQueryError`) is
+thrown for:
+- scalar/element results, e.g. `Count()`, `FirstOrDefault()`, `Sum()`;
+- already-materialized sequences, e.g. `.ToList()`;
+- results produced by operators with no SQL translation, e.g. `Zip` (which returns a
+  client-side-evaluated `IEnumerable<T>`, not an `IQueryable`).
+
+**Execution mode is always forced to in-process for preview, regardless of the server's configured
+`QueryExecution:Mode`.** `ToQueryString()` requires local, live access to the compiled
+`IQueryable`/query provider, and only a fully materialized `QueryResultWire` ever crosses the
+out-of-process/pooled query host boundary — never a live, unexecuted `IQueryable`. Extending that
+wire protocol to carry an unexecuted query would be substantially more invasive (a new protocol
+version, DTOs, host process branches, and pool/worker plumbing) for no added safety benefit, since
+previewing never opens a database connection either way, whichever executor runs it. This is
+implemented via `RoslynQueryExecutor.PreviewSqlAsync`, called directly by
+`EfCoreMcpTools.PreviewQuerySqlCore` instead of going through `run_query`'s
+`ExecuteRoslynAsync` mode switch.
+
 ## Access-policy scope and limitations
 
 **Protected by policy:** `run_query` enforces entity-level access control via `EfCoreMcpTools.RunQueryCore` pre-check:
@@ -190,36 +219,6 @@ windows, and `take: 0`.
   - `QueryExecutionException` messages never include connection strings (only entity/
     context/parameter-shape information); provider exceptions are wrapped, not passed
     through verbatim.
-
-## Proposed open work — P0 #4: generated SQL preview
-
-Add a read-only `preview_query_sql` tool with the same request inputs as `run_query`:
-`contextName`, `query`, optional `connectionName`, and optional `targetName`. It should use the
-same root resolution, access-policy checks, Roslyn compilation, and sequence-shaping front end as
-`run_query`, but stop at provider-generated SQL instead of materializing rows.
-
-Previewing has a strict non-execution boundary: it must not enumerate or materialize the query, open a
-database connection, create or execute a command, invoke `SaveChanges`, or otherwise read or write
-database state. It does not use the separately enabled `SqlQueryExecutor` raw-SQL path. SQL formatting
-and parameter declarations may differ by provider, but they must represent the same validated LINQ
-shape as `run_query`.
-
-The preview path must obtain SQL only from an unexecuted `IQueryable` via `ToQueryString()`. That
-means statement-mode queries are valid only when their final `return` value is still an
-`IQueryable`; scalar results, client-side `IEnumerable` pipelines, and already-materialized lists
-should be rejected for preview because they do not have a provider-translatable SQL
-representation.
-
-**Note:** Full statement-mode support in `run_query` execution and access-policy pre-checks is incomplete and tracked in P0 #9.
-Expression-mode queries are the primary execution path; statement-mode support requires completing root-extraction and access-policy validation for multi-statement input.
-
-Apply the same root-name validation, allowed-reference surface, ordering/take behavior, and
-complexity limits before SQL generation. Reject invalid, unsafe, or unsupported requests with the
-existing sanitized `QueryExecutionException`-style errors; never expose connection strings,
-credentials, provider internals, or stack traces in SQL or failure responses. Focused tests should
-cover equivalent SQL for valid expression- and statement-mode `IQueryable` queries, shared
-validation rejection paths, provider-specific SQL rendering, and proof that preview produces no
-connection or command activity.
 
 ## Proposed open work — P0 #7: query complexity limits beyond row count
 
