@@ -55,7 +55,7 @@ to the configured maximum. Scalar results remain scalars. The generated `UserQue
 `SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
 selected connection is non-production `ReadWrite`. Focused executor tests cover expression-mode queries,
 joins, projections, aggregates, mutation gating, and paging
-behavior (statement-mode support is tracked in P0 #9, complexity limits beyond `MaxQueryLength` are proposed future work). See [Query execution](./query-execution.md) for the full operator/behavior reference.
+behavior (statement-mode support is tracked in P0 #9). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`) enforced alongside `MaxQueryLength`.
 
 Execution location is configured with `QueryExecution:Mode` (`InProcess`, `OutOfProcess`,
 `Pooled`, or `Auto`), and Roslyn compilation settings live under `QueryCompilation`; see
@@ -162,21 +162,30 @@ public contract. See [Schema discovery](./schema-discovery.md#p0-6--schema-slici
 full contract and MCP binding/forwarding, cache-only, slice fidelity, unknown-name, matching/order,
 cap/`truncated`, invalid-input, and policy-seam test coverage.
 
-## Proposed open work — P0 #7: query complexity limits beyond row count
+## Roslyn query complexity limits (implemented)
 
-`run_query` and `preview_query_sql` add no caller-controlled limits for this item. The relevant
-server-side cap currently in place is the `QueryExecution` setting `MaxQueryLength` (described in
-[Query execution](./query-execution.md)). Additional constraints (`MaxExpressionNodes`, `MaxExpressionDepth`, 
-`MaxQueryOperators`, `MaxIncludedCollectionItems`) are proposed open work (P0 #7).
-All requests share the same validated pipeline, so an oversized query is rejected
+`run_query` and `preview_query_sql` add no caller-controlled limits for this item; all four are
+server-side `QueryExecution` configuration. In addition to `MaxQueryLength` (described in
+[Query execution](./query-execution.md)), the server enforces `MaxExpressionNodes`,
+`MaxExpressionDepth`, `MaxQueryOperators`, and `MaxIncludedCollectionItems` by parsing the query
+text into a Roslyn syntax tree and checking node count, nesting depth, LINQ query-operator call
+count, and `Include`/`ThenInclude` call count, respectively - before Roslyn compilation, provider
+translation, or any database access. `MaxIncludedCollectionItems` here is a static cap on how many
+`Include`/`ThenInclude` calls a query may contain, not a per-parent row cap on materialized included
+collections (that database-side limit is tracked separately as P0 #8 below).
+
+All requests share the same validated pipeline (`RoslynQueryExecutor.CompileAndInvokeAsync`), so an
+oversized or overly-complex query is rejected identically for `run_query` and `preview_query_sql`,
 before provider translation or a database round-trip.
 
-Tool descriptions should note that `run_query` and `preview_query_sql` are subject to
-server-configured limits, without hard-coding numeric limits. Failures surface through the existing 
-`QueryExecutionException`-to-MCP-error mapping and name only the exceeded limit and its configured maximum — never caller query text.
+Tool descriptions note that `run_query` and `preview_query_sql` are subject to server-configured
+limits, without hard-coding numeric limits. Failures surface through the existing
+`QueryExecutionException`-to-MCP-error mapping and name only the exceeded limit, its configured
+maximum, and the observed count — never caller query text.
 
-Focused tool-surface tests should verify rejection at every applicable cap, that errors do not echo
-caller input, and that requests at or under every cap bind and forward as intended.
+Focused executor tests (`RoslynQueryExecutorTests`) cover each cap at its exact boundary and one
+over, a combined-violation case exceeding several caps at once, and prove — using an uncreated
+SQLite database — that rejected input never reaches provider translation or the database.
 
 ## Proposed open work — P0 #8: database-side `run_query` collection-include cap
 

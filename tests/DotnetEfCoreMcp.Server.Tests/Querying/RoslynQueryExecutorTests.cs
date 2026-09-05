@@ -5,6 +5,9 @@ using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.EntityFrameworkCore;
 
 namespace DotnetEfCoreMcp.Server.Tests.Querying;
@@ -320,6 +323,182 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_QueryAtMaxExpressionNodesLimit_Succeeds()
+    {
+        const string query = "Customers.Where(c => c.Age >= 18)";
+        var (nodeCount, _) = ComputeQueryComplexity(query);
+        
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxExpressionNodes = nodeCount },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var result = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None);
+
+        Assert.Equal(1, result.RowCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryExceedingMaxExpressionNodes_ThrowsWithoutDatabaseAccess()
+    {
+        const string query = "Customers.Where(c => c.Age >= 18)";
+        var (nodeCount, _) = ComputeQueryComplexity(query);
+        
+        // Deliberately does not call EnsureCreated: if the check ran after provider work began, this
+        // would fail with "no such table" instead of the sanitized complexity error.
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxExpressionNodes = nodeCount - 1 },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None));
+
+        Assert.Contains($"exceeding the configured maximum of {nodeCount - 1} (MaxExpressionNodes)", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Age", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PreviewSqlAsync_QueryExceedingMaxExpressionNodes_ThrowsWithoutDatabaseAccess()
+    {
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxExpressionNodes = 12 },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.PreviewSqlAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18)" }, CancellationToken.None));
+
+        Assert.Contains("exceeding the configured maximum of 12 (MaxExpressionNodes)", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryAtMaxExpressionDepthLimit_Succeeds()
+    {
+        const string query = "Customers.Where(c => c.Age >= 18)";
+        var (_, maxDepth) = ComputeQueryComplexity(query);
+        
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxExpressionDepth = maxDepth },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var result = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None);
+
+        Assert.Equal(1, result.RowCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryExceedingMaxExpressionDepth_ThrowsWithoutDatabaseAccess()
+    {
+        const string query = "Customers.Where(c => c.Age >= 18)";
+        var (_, maxDepth) = ComputeQueryComplexity(query);
+        
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxExpressionDepth = maxDepth - 1 },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None));
+
+        Assert.Contains($"exceeding the configured maximum of {maxDepth - 1} (MaxExpressionDepth)", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryAtMaxQueryOperatorsLimit_Succeeds()
+    {
+        // Exactly two query operators: Where, Select.
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxQueryOperators = 2 },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var result = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" }, CancellationToken.None);
+
+        Assert.Equal(1, result.RowCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryExceedingMaxQueryOperators_ThrowsWithoutDatabaseAccess()
+    {
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxQueryOperators = 1 },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" }, CancellationToken.None));
+
+        Assert.Contains("exceeding the configured maximum of 1 (MaxQueryOperators)", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryAtMaxIncludedCollectionItemsLimit_Succeeds()
+    {
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxIncludedCollectionItems = 1 },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var result = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Include(c => c.Orders)" }, CancellationToken.None);
+
+        Assert.Equal(2, result.RowCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryExceedingMaxIncludedCollectionItems_ThrowsWithoutDatabaseAccess()
+    {
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions { MaxIncludedCollectionItems = 1 },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Include(c => c.Orders).ThenInclude(o => o.Customer)" }, CancellationToken.None));
+
+        Assert.Contains("exceeding the configured maximum of 1 (MaxIncludedCollectionItems)", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_QueryExceedingMultipleLimitsAtOnce_ThrowsNamingOnlyOneLimit()
+    {
+        // Exceeds MaxExpressionNodes, MaxExpressionDepth, and MaxQueryOperators simultaneously; the
+        // validator must still fail closed and name exactly one limit rather than leaking anything
+        // about the query itself.
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions
+            {
+                MaxExpressionNodes = 5,
+                MaxExpressionDepth = 3,
+                MaxQueryOperators = 1,
+            },
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" }, CancellationToken.None));
+
+        // Verify exactly one limit identifier appears (fail closed: name only one limit).
+        var limitIdentifiers = new[] { "MaxExpressionNodes", "MaxExpressionDepth", "MaxQueryOperators", "MaxIncludedCollectionItems" };
+        var matchCount = limitIdentifiers.Count(id => ex.Message.Contains(id, StringComparison.Ordinal));
+        Assert.Equal(1, matchCount);
+
+        // Verify query text is not leaked.
+        Assert.DoesNotContain("Age", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_DefaultNoTracking_DoesNotTrackMaterializedEntities()
     {
         var result = await CreateExecutor().ExecuteAsync(
@@ -432,6 +611,49 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         Assert.True(result.IsScalar);
         Assert.Equal(3, result.Scalar);
+    }
+
+    /// <summary>Computes the query complexity metrics (node count and max depth) for a query expression,
+    /// using the same algorithm as <see cref="QueryComplexityValidator"/>. This is used to derive
+    /// test boundary values dynamically rather than hard-coding them, ensuring tests remain correct
+    /// even if the Roslyn parser's tree shape changes in future SDK updates.</summary>
+    private static (int NodeCount, int MaxDepth) ComputeQueryComplexity(string query)
+    {
+        var syntaxTree = CSharpSyntaxTree.ParseText(query);
+        var root = (CompilationUnitSyntax)syntaxTree.GetRoot();
+        
+        ExpressionSyntax? expression = null;
+        
+        // Try to extract the expression from the parsed tree
+        if (root.Members.Count > 0 && root.Members[0] is GlobalStatementSyntax globalStmt)
+        {
+            if (globalStmt.Statement is ExpressionStatementSyntax exprStmt)
+            {
+                expression = exprStmt.Expression;
+            }
+        }
+
+        if (expression is null)
+            return (0, 0);
+
+        var nodeCount = 0;
+        var maxDepth = 0;
+        var stack = new Stack<(SyntaxNode Node, int Depth)>();
+        stack.Push((expression, 1));
+
+        while (stack.Count > 0)
+        {
+            var (node, depth) = stack.Pop();
+            nodeCount++;
+            if (depth > maxDepth) maxDepth = depth;
+
+            foreach (var child in node.ChildNodes().Reverse())
+            {
+                stack.Push((child, depth + 1));
+            }
+        }
+
+        return (nodeCount, maxDepth);
     }
 
     private DbContext NewContext() => DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);

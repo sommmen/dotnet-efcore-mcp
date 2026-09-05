@@ -107,7 +107,13 @@ deliberately after `AsEnumerable()` or materialization, but once the result is n
 
 The server enforces safety boundaries: only configured metadata references are available at
 compile time; `unsafe` code is disabled; query length is capped (via `MaxQueryLength`); and compile/runtime failures are sanitized without logging raw query
-text or sensitive provider data. Currently enforced limits are query length only; additional complexity-limit options are proposed as future work.
+text or sensitive provider data. Query *complexity* (as opposed to length) is additionally bounded
+before compilation: `MaxExpressionNodes` caps the total number of parsed syntax nodes,
+`MaxExpressionDepth` caps nesting depth, `MaxQueryOperators` caps the number of LINQ query-operator
+calls (`Where`, `Select`, `OrderBy`, etc.), and `MaxIncludedCollectionItems` caps the number of
+`Include`/`ThenInclude` calls. All four are enforced purely from the parsed syntax tree, before
+`UserQuerySourceGenerator` builds the generated query context and before Roslyn compilation, provider
+translation, or database access can occur; see "Roslyn query complexity limits" below for details.
 
 No terminal call is required for `IQueryable` results — `run_query` materializes them server-side
 and applies an automatic take cap, so fragments like
@@ -210,9 +216,9 @@ windows, and `take: 0`.
     `Cause` when available plus a next step to check `get_schema`, verify `@p0`-style placeholders,
     and consult server logs.
   - The Roslyn query surface is bounded by a curated metadata-reference list, disabled `unsafe`
-    code, and the `MaxQueryLength` cap (enforced before provider work begins). Additional
-    complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) are
-    proposed future work (see P0 #7 below).
+    code, and the `MaxQueryLength` cap (enforced before provider work begins). Complexity limits
+    (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`)
+    are enforced the same way - see "Roslyn query complexity limits" below.
   - `IQueryable` results are capped before materialization through `MaxTake`/`DefaultTake`;
     non-`IQueryable` results (including client-side `IEnumerable` pipelines) are returned via the
     scalar slot instead of row-shaped paging semantics.
@@ -225,28 +231,33 @@ windows, and `take: 0`.
     context/parameter-shape information); provider exceptions are wrapped, not passed
     through verbatim.
 
-## Proposed open work — P0 #7: query complexity limits beyond row count
+## Roslyn query complexity limits
 
-`MaxTake` and `DefaultTake` already bound result *size*.
-`MaxQueryLength` is the only shape constraint currently enforced on Roslyn-authored `run_query` input
-before provider work begins; it is server-side configuration under `QueryExecution`, not a per-request override.
+`MaxTake` and `DefaultTake` bound result *size*; `MaxQueryLength` bounds the raw query *text*
+length. `QueryComplexityValidator` additionally bounds query *shape* by parsing the query text into
+a Roslyn syntax tree (the same expression-or-statement parse `UserQuerySourceGenerator` performs)
+and checking it against four caps, all configured under `QueryExecution` and all enforced in
+`RoslynQueryExecutor.CompileAndInvokeAsync` immediately after the `MaxQueryLength` check - before
+`UserQuerySourceGenerator.Generate`, Roslyn compilation, or any provider/database access:
 
-Proposed future work: add `MaxIncludedCollectionItems`, `MaxExpressionNodes`, `MaxExpressionDepth`, 
-and `MaxQueryOperators` constraints to enforce further complexity limits before Roslyn compilation
-reaches provider translation or database access. Reject oversized or overly-complex queries before
-execution or preview. Command timeout and capped paging will continue to bound valid but expensive provider
-work.
+- `MaxExpressionNodes` (default 500) - the total number of syntax nodes in the parsed tree.
+- `MaxExpressionDepth` (default 32) - the deepest nesting level in the parsed tree.
+- `MaxQueryOperators` (default 20) - the number of LINQ query-operator method-call nodes (`Where`,
+  `Select`, `SelectMany`, `OrderBy`, `GroupBy`, `Join`, aggregates, element operators, `ToList`, etc.).
+- `MaxIncludedCollectionItems` (default 5) - the number of `Include`/`ThenInclude` method-call nodes.
+  This is a static, AST-level cap on how many included navigations a single query may request; it
+  does not itself bound how many rows each included collection materializes from the database once
+  compiled and executed (a database-side per-parent cap is tracked separately as P0 #8).
 
-Violations throw the existing `QueryExecutionException`, consistent with every other validation
-failure. The message names only the exceeded limit and configured maximum (for example, "expression
-length 812 exceeds the configured maximum of 500 characters") — never caller `where`, `orderBy`,
-`include`, expression, or parameter text. Because `run_query` and `preview_query_sql` share the
-pipeline, their error shape and enforcement are identical.
-
-Focused validation: cover each cap at its exact boundary and one over, including multiple
-violations. Prove that rejected input never reaches provider translation or the database with a
-provider/connection spy. Add MCP contract tests for `run_query` and `preview_query_sql` proving
-sanitized errors do not echo supplied query text.
+Because all four limits are checked from the parsed syntax tree alone - no symbol resolution, no
+compilation, no DbContext construction - none of these checks can themselves reach the database.
+Violations throw the existing `QueryExecutionException`, naming only the exceeded limit, its
+configured maximum, and the observed count (for example, "The query expression contains 812 syntax
+nodes, exceeding the configured maximum of 500 (MaxExpressionNodes)") - never the caller's query
+text, `where`/`orderBy`/`include` values, or parameter data. Because `run_query` and
+`preview_query_sql` both route through `RoslynQueryExecutor.CompileAndInvokeAsync`, their
+enforcement and error shape are identical, including for the out-of-process and pooled execution
+modes, which construct the same executor.
 
 ## Proposed open work — P0 #8: database-side collection-include cap
 

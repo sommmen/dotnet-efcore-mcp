@@ -79,6 +79,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         var query = request.Query?.Trim();
         if (string.IsNullOrWhiteSpace(query)) throw new QueryExecutionException("`query` must be non-empty C# code.");
         if (query.Length > executionOptions.MaxQueryLength) throw new QueryExecutionException("`query` exceeds the configured maximum length.");
+        QueryComplexityValidator.Validate(query, executionOptions);
 
         var shape = DbContextActivator.DetermineConstructorShape(contextType);
         if (shape is DbContextConstructorShape.DesignTimeFactory or DbContextConstructorShape.Unsupported)
