@@ -105,24 +105,24 @@ same context can be referenced by name inside the query. Client-side operators c
 deliberately after `AsEnumerable()` or materialization, but once the result is no longer an
 `IQueryable` it is returned through `QueryResult.Scalar` instead of row-shaped output.
 
-The server still enforces safety boundaries: only configured metadata references are available at
-compile time; `unsafe` code is disabled; query length, expression-tree node count, tree depth, and
-operator count are capped; and compile/runtime failures are sanitized without logging raw query
-text or sensitive provider data.
+The server enforces safety boundaries: only configured metadata references are available at
+compile time; `unsafe` code is disabled; query length is capped (via `MaxQueryLength`); and compile/runtime failures are sanitized without logging raw query
+text or sensitive provider data. Other complexity-limit options (`MaxExpressionNodes`, `MaxExpressionDepth`,
+`MaxQueryOperators`) are proposed (see P0 #7 below).
 
 No terminal call is required for `IQueryable` results — `run_query` materializes them server-side
-and applies deterministic key ordering plus an automatic take cap, so fragments like
+and applies an automatic take cap, so fragments like
 `Orders.Where(o => o.Number == "123NL")` work without an explicit
 `.ToList()`/`.ToListAsync()`/`.FirstOrDefault()`. Adding a terminal element operator or explicit
 `Take(n)` still narrows the result. By contrast, already-materialized results or client-side
-`IEnumerable` pipelines are returned as scalars, not paged row sets.
+`IEnumerable` pipelines are returned as scalars, not paged row sets. **Deterministic result ordering
+requires an explicit `OrderBy` — the server applies no automatic ordering.**
 
 Execution defaults to `QueryTrackingBehavior.NoTracking`, subject to the selected connection's
 command timeout and server cancellation. An explicit `.AsTracking()` can opt back into tracking.
 `SaveChanges()`/`SaveChangesAsync()` remain blocked unless
 `QueryExecution:AllowMutationsInRunQuery=true` **and** the resolved connection is non-production
-`ReadWrite`. Root primary-key ordering supplies deterministic ordering for un-ordered root
-`IQueryable` sequences. Sequence results receive the configured default page when no `Take` is
+`ReadWrite`. Sequence results receive the configured default page when no `Take` is
 supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated.
 
 ## P0 #2 — `run_query` continuation indicator
