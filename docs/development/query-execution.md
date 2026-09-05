@@ -92,9 +92,9 @@ grouping, joining, paging, and aggregate semantics all live in caller-authored C
 Authoring has two modes:
 
 - **Expression mode:** if the trimmed text parses as one complete C# expression, the server emits
-  `return <query>;`. This is the currently supported execution path in `run_query`.
-- **Statement mode:** if the trimmed text ends with `;` or uses a top-level `{ ... }` block, the
-  server would treat it as a statement body for local variables, multiple steps, and explicit
+  `return <query>;`. This is the currently supported execution path in `run_query`. A single optional trailing `;` is stripped and accepted.
+- **Statement mode:** if the trimmed text uses a top-level `{ ... }` block or contains multiple statements,
+  the server would treat it as a statement body for local variables, multiple steps, and explicit
   `return` statements. This is **not yet fully supported** in `run_query` due to access-policy
   enforcement limitations (see P0 #9); it is planned as future work.
 
