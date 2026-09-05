@@ -245,7 +245,7 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task PreviewSqlAsync_ValidQuery_SucceedsAndExercisesExceptionHandlingCodePath()
+    public async Task PreviewSqlAsync_ValidQuery_SucceedsWithExceptionWrapperPresent()
     {
         // This test verifies that PreviewSqlAsync correctly returns SQL for a valid query.
         // It exercises the success path including the try-catch wrapper around ToQueryString().
@@ -255,7 +255,8 @@ public sealed class RoslynQueryExecutorTests : IDisposable
         // - The Roslyn compiler validates the C# before we ever call ToQueryString()
         // - EF Core's Sqlite provider has very broad translation support
         // This test-design limitation means the exception-handling code path is present in the codebase
-        // and would activate if ToQueryString() threw, but is not directly exercised by this test.
+        // (the try-catch wrapper around ToQueryString() would activate if it threw), but the catch
+        // branch itself is not directly exercised by this test.
         var result = await CreateExecutor().PreviewSqlAsync(
             _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest { Query = "Customers.Where(c => c.Age >= 18)" },
