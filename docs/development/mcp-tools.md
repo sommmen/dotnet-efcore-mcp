@@ -43,10 +43,10 @@ queries, and local variables in statement-mode queries. Client-side operators re
 `AsEnumerable()` or materialization, but non-`IQueryable` results are returned through the scalar
 slot instead of row-shaped output.
 
-`QueryExecutor` still applies access policy, cancellation/timeout, take caps, and safe result
-projection. `IQueryable` results receive the configured default row-count capping (200 by default);
-page when no `Take` is present, and any supplied `Take` is clamped to the configured maximum.
-Scalar results remain scalars. The generated `UserQuery` type defaults to
+Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
+cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
+default row-count capping (200 by default) when no `Take` is present, and any supplied `Take` is clamped 
+to the configured maximum. Scalar results remain scalars. The generated `UserQuery` type defaults to
 `QueryTrackingBehavior.NoTracking`; an explicit `.AsTracking()` can opt back into tracking, but
 `SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
 selected connection is non-production `ReadWrite`. Focused executor tests cover expression mode,
