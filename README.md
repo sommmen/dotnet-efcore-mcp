@@ -316,7 +316,7 @@ Because this is real C#, when implemented, `run_query` will support the full LIN
 `Join`, `GroupJoin`, `SelectMany`, cross-`DbSet` set operations, and local variables in
 statement-mode queries.
 
-`IQueryable` results are materialized server-side and capped at 200 rows by default (unless
+`IQueryable` results are materialized server-side and capped at 50 rows by default (up to a configured maximum of 200 rows, unless
 reconfigured); no terminal `.ToList()`/`.FirstOrDefault()` call is required. Results are not
 automatically ordered; add an explicit `OrderBy()` when using `Skip()`/`Take()` to ensure stable
 pagination. Scalars are returned as scalars. Non-`IQueryable` results (for example a client-side

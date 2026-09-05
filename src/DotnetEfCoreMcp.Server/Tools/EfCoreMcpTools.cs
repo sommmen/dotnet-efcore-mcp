@@ -444,7 +444,7 @@ public sealed class EfCoreMcpTools(
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
 
-            var result = await ExecuteRoslynAsync(contextType, entry, query, targetName, cancellationToken);
+            var result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, cancellationToken);
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)

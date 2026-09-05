@@ -48,13 +48,13 @@ Expression-mode queries are the primary execution path; statement-mode is planne
 
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
 cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
-default row-count capping (200 by default) when no `Take` is present, and any supplied `Take` is clamped 
+default row-count capping (50 by default, clamped to a configured maximum of 200) when no `Take` is present, and any supplied `Take` is clamped 
 to the configured maximum. Scalar results remain scalars. The generated `UserQuery` type defaults to
 `QueryTrackingBehavior.NoTracking`; an explicit `.AsTracking()` can opt back into tracking, but
 `SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
-selected connection is non-production `ReadWrite`. Focused executor tests cover expression mode,
-statement mode, joins, projections, aggregates, mutation gating, complexity limits, and paging
-behavior. See [Query execution](./query-execution.md) for the full operator/behavior reference.
+selected connection is non-production `ReadWrite`. Focused executor tests cover expression-mode queries,
+joins, projections, aggregates, mutation gating, and paging
+behavior (statement-mode support is tracked in P0 #9, complexity limits beyond `MaxQueryLength` are proposed future work). See [Query execution](./query-execution.md) for the full operator/behavior reference.
 
 Execution location is configured with `QueryExecution:Mode` (`InProcess`, `OutOfProcess`,
 `Pooled`, or `Auto`), and Roslyn compilation settings live under `QueryCompilation`; see
