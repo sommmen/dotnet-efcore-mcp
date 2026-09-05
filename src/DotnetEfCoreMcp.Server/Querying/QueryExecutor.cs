@@ -48,14 +48,15 @@ public static class QueryExecutor
     /// whose name appears as a whole word in <paramref name="expressionText"/> (e.g. via
     /// <c>Union</c>/<c>Concat</c>/<c>Except</c>/<c>Intersect</c>) contributes its entity type name too.
     /// </summary>
-    /// <summary>Collects all referenced entity names from an expression by scanning for DbSet property names
-    /// using word-boundary regex matching on the raw expression text. LIMITATION: This detection is text-based
-    /// and can be bypassed via unicode escapes in identifiers or false positives from matching text in string
-    /// literals/comments. However, this limitation is acceptable because (1) Roslyn compilation will fail
-    /// if a referenced property doesn't exist or isn't accessible, and (2) policy enforcement via
+    /// <remarks>Detection is text-based: it scans for DbSet property names using word-boundary regex
+    /// matching on the raw expression text. LIMITATION: this can be bypassed via unicode escapes in
+    /// identifiers, or produce false positives from matching text inside string literals/comments.
+    /// However, this limitation is acceptable because (1) Roslyn compilation will fail if a referenced
+    /// property doesn't exist or isn't accessible, and (2) policy enforcement via
     /// <see cref="TryGetDbSetEntityType"/> ensures only DbSet-rooted access is evaluated. Access via
-    /// DbContext.Set<T>(), Database.ExecuteSqlRaw(), or reflection is outside the policy scope and remains
-    /// controlled by EF Core and the hosting application's own DbContext-level restrictions.</summary>
+    /// <c>DbContext.Set&lt;T&gt;()</c>, <c>Database.ExecuteSqlRaw()</c>, or reflection is outside the
+    /// policy scope and remains controlled by EF Core and the hosting application's own
+    /// DbContext-level restrictions.</remarks>
     internal static IReadOnlyList<string> ResolveReferencedEntityNames(Type contextType, string rootName, string expressionText)
     {
         ArgumentNullException.ThrowIfNull(contextType);

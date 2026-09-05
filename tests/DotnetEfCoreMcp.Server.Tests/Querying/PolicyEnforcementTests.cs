@@ -94,44 +94,43 @@ public sealed class PolicyEnforcementTests : IDisposable
     [Fact]
     public void ResolveReferencedEntityNames_IgnoresNonDbSetProperties()
     {
-        // Valid: query that mentions a non-DbSet property should not be added to the access list
-        // (SampleAppDbContext should have IdGenerator or similar; if not, this test validates graceful handling)
-        var names = QueryExecutor.ResolveReferencedEntityNames(_contextType, "Customers", "Customers.Where(c => c.Id > 0)");
-        
-        // Only Customer should be in the list; other properties don't match the regex
+        // Valid: mentioning a non-DbSet public member (e.g. DbContext.Database) should not add any
+        // extra entity name to the access list, since Database isn't a DbSet<T> property.
+        var names = QueryExecutor.ResolveReferencedEntityNames(_contextType, "Customers", "Customers.Where(c => c.Id > 0 && Database != null)");
+
+        // Only Customer should be in the list; Database doesn't match a DbSet<T> property.
         Assert.Single(names, n => n == "Customer");
     }
 
     [Fact]
     public void ResolveReferencedEntityNames_HandlesUnicodeEscapesBypassAttempt()
     {
-        // This test documents the limitation: unicode escapes in identifiers can bypass text-based detection.
-        // However, this is acceptable because (1) Roslyn compilation will fail if the identifier is invalid,
-        // and (2) policy enforcement is DbSet-based, not source-text-based.
-        
-        var names = QueryExecutor.ResolveReferencedEntityNames(_contextType, "Customers", @"Customers.Where(c => c.Id > 0)");
-        // The regex should still identify Customers as the root
+        // This test pins the documented limitation: a unicode-escaped reference to another DbSet
+        // ("\u004Frders" == "Orders") is not detected by the word-boundary regex, which only matches
+        // the literal property name text, so the policy engine will NOT flag Order access this way.
+        // This is acceptable because Roslyn compilation resolves the escape and will still only allow
+        // access to a real, public DbSet<T> property - policy enforcement via TryGetDbSetEntityType
+        // (not source text) is what ultimately gates entity access.
+        var names = QueryExecutor.ResolveReferencedEntityNames(_contextType, "Customers", "Customers.Union(\\u004Frders)");
+
         Assert.Contains("Customer", names);
+        Assert.DoesNotContain("Order", names);
     }
 
     [Fact]
     public void ResolveReferencedEntityNames_DocumentsStringLiteralFalsePositive()
     {
-        // This test documents the limitation: entity names in string literals will be detected as false positives.
-        // Example: Customers.Select(c => new { Description = "Also Orders" })
-        // The word "Orders" appears in the string literal and will be flagged as a reference.
-        // However, this is acceptable because EF Core's compile-time validation will fail if the entity
-        // is actually accessed, and false positives are caught by policy enforcement.
-        
+        // This test pins the documented limitation: entity names appearing inside a string literal are
+        // still detected as false positives by the word-boundary regex, because detection is purely
+        // text-based and does not distinguish code from string/comment content.
         var names = QueryExecutor.ResolveReferencedEntityNames(
             _contextType,
             "Customers",
             @"Customers.Select(c => new { Description = ""This mentions Orders"" })");
-        
-        // Policy should flag both Customer and Order due to the string literal
-        // (This is a false positive, but acceptable per design)
+
+        // Policy flags both Customer (the root) and Order (false positive from the string literal).
         Assert.Contains("Customer", names);
-        // Note: Orders may or may not be flagged depending on regex matching
+        Assert.Contains("Order", names);
     }
 
     public void Dispose()
