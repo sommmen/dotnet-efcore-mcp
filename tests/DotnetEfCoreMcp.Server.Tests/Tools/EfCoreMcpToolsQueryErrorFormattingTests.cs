@@ -14,11 +14,9 @@ using ModelContextProtocol;
 namespace DotnetEfCoreMcp.Server.Tests.Tools;
 
 /// <summary>Covers <c>run_query</c>'s structured error formatting (<c>FormatQueryError</c>) for
-/// Roslyn compile/configuration failures - complementing the existing Dynamic LINQ-focused
-/// coverage in <see cref="EfCoreMcpToolsSchemaSelectionTests"/> - to ensure the caller gets an
-/// actionable "Next step" hint tailored to the actual failure instead of the generic Dynamic
-/// LINQ-flavored hint, which is misleading for e.g. a C# compile error or a misconfigured
-/// out-of-process query host.</summary>
+/// Roslyn compile/configuration failures, ensuring the caller gets an actionable "Next step" hint
+/// tailored to the actual failure instead of the generic LINQ-flavored hint, which is misleading
+/// for e.g. a C# compile error or a misconfigured out-of-process query host.</summary>
 public sealed class EfCoreMcpToolsQueryErrorFormattingTests
 {
     [Fact]
@@ -26,7 +24,6 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
     {
         var tools = CreateTools(new QueryExecutionOptions
         {
-            Engine = QueryEngine.Roslyn,
             Mode = QueryExecutionMode.InProcess,
         });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
@@ -43,7 +40,6 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
     {
         var tools = CreateTools(new QueryExecutionOptions
         {
-            Engine = QueryEngine.Roslyn,
             Mode = QueryExecutionMode.OutOfProcess,
             OutOfProcessHostPath = null,
         });
@@ -76,7 +72,6 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
             new AssemblyDiscoveryService(),
             new ConnectionRegistry(configuration),
             new SchemaCache(),
-            new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
             new RoslynQueryExecutor(queryExecutionOptions, new QueryCompiler(new QueryCompilationOptions())),
             new OutOfProcessRoslynQueryExecutor(queryExecutionOptions),
             queryExecutionOptions,

@@ -43,7 +43,6 @@ builder.Services.AddSingleton<SchemaCache>();
 // section (env vars, user secrets, etc., same layering as "Connections" above) so they can be
 // tightened per-deployment without a code change, while still defaulting to safe values if unset.
 builder.Services.AddSingleton(builder.Configuration.GetSection("QueryExecution").Get<QueryExecutionOptions>() ?? new QueryExecutionOptions());
-builder.Services.AddSingleton<QueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("QueryCompilation").Get<QueryCompilationOptions>() ?? new QueryCompilationOptions());
 builder.Services.AddSingleton<QueryCompiler>();
 builder.Services.AddSingleton<RoslynQueryExecutor>();

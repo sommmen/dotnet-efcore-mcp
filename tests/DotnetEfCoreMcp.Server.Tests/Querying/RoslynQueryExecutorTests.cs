@@ -218,7 +218,7 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     public async Task ExecuteAsync_QueryExceedingConfiguredMaximum_Throws()
     {
         var executor = new RoslynQueryExecutor(
-            new QueryExecutionOptions { Engine = QueryEngine.Roslyn, MaxQueryLength = 10 },
+            new QueryExecutionOptions { MaxQueryLength = 10 },
             new QueryCompiler(new QueryCompilationOptions()));
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
@@ -346,6 +346,6 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     private DbContext NewContext() => DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
     private static RoslynQueryExecutor CreateExecutor(int maxTake = 200, bool allowMutationsInRunQuery = false) => new(
-        new QueryExecutionOptions { Engine = QueryEngine.Roslyn, MaxTake = maxTake, AllowMutationsInRunQuery = allowMutationsInRunQuery },
+        new QueryExecutionOptions { MaxTake = maxTake, AllowMutationsInRunQuery = allowMutationsInRunQuery },
         new QueryCompiler(new QueryCompilationOptions()));
 }

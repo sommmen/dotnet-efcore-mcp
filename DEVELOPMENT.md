@@ -27,9 +27,9 @@ Each module has its own implementation checklist, design decisions, and notes:
 | [`DbContext` discovery](./docs/development/dbcontext-discovery.md) | Finding and constructing `DbContext` types in a loaded assembly. |
 | [Connection management](./docs/development/connections.md) | Server-side connection registry, secret storage, provider allowlisting (security-sensitive). |
 | [Schema / model discovery](./docs/development/schema-discovery.md) | Building and caching an agent-friendly serialization of the EF Core model. |
-| [Query execution](./docs/development/query-execution.md) | Safe Dynamic-LINQ query translation, read-only enforcement, result limits. |
+| [Query execution](./docs/development/query-execution.md) | Roslyn/LINQPad-style `run_query` execution, read-only defaults, result shaping, and limits. |
 | [Out-of-process query host pooling](./docs/development/query-execution-host-pooling.md) | Design background and implementation notes for the opt-in bounded pooled out-of-process `run_query` host (`QueryExecution:Mode=Pooled`). |
-| [Roslyn-compiled `UserQuery`](./docs/development/roslyn-user-query.md) | In-progress rewrite: LINQPad-style `UserQuery : TDbContext` compiled with Roslyn. Implemented and covered by tests behind an opt-in `Engine` toggle; not yet the default, and `System.Linq.Dynamic.Core` has not yet been removed. |
+| [Roslyn-compiled `UserQuery`](./docs/development/roslyn-user-query.md) | Current LINQPad-style `UserQuery : TDbContext` model, statement-mode authoring guidance, safety boundaries, and result-shaping notes. |
 | [MCP tool surface](./docs/development/mcp-tools.md) | The `list_contexts` / `get_schema` / `run_query` / `run_sql_query` / `load_assembly` tools and their exposure decisions. |
 | [Migration inspection](./docs/development/migrations.md) | Planned P1 #11: structured `list_migrations`/`generate_migration_script` tooling. |
 | [Structured mutations](./docs/development/mutations.md) | Planned P1 #12: gated single-entity insert, update, and delete tooling. |

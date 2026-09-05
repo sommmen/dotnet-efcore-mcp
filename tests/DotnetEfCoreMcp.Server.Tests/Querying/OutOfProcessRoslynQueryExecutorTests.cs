@@ -63,7 +63,6 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
     {
         var executor = new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions
         {
-            Engine = QueryEngine.Roslyn,
             Mode = QueryExecutionMode.OutOfProcess,
             OutOfProcessHostPath = Path.Combine(AppContext.BaseDirectory, "missing-query-host.dll"),
         });
@@ -245,7 +244,6 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
 
     private static QueryExecutionOptions CreateOneShotOptions() => new()
     {
-        Engine = QueryEngine.Roslyn,
         Mode = QueryExecutionMode.OutOfProcess,
         OutOfProcessHostPath = FixturePaths.QueryHostDllPath,
     };
@@ -257,7 +255,6 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
         int poolIdleTimeoutSeconds = 300,
         TimeSpan? cancellationMargin = null) => new()
     {
-        Engine = QueryEngine.Roslyn,
         Mode = QueryExecutionMode.Pooled,
         OutOfProcessHostPath = FixturePaths.QueryHostDllPath,
         PoolMaxWorkersPerTarget = poolMaxWorkersPerTarget,

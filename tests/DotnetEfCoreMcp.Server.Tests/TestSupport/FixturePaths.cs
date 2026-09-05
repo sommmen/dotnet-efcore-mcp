@@ -32,8 +32,6 @@ public static class FixturePaths
 
     public static string PackageDependencyAppDllPath => GetFixtureDllPath("PackageDependencyApp", "PackageDependencyApp.dll");
 
-    public static string ManyDbSetsAppDllPath => GetFixtureDllPath("ManyDbSetsApp", "ManyDbSetsApp.dll");
-
     public static string IdentityAppDllPath => GetFixtureDllPath("IdentityApp", "IdentityApp.dll");
 
     /// <summary>The DbContext-only half of the split-assembly fixture pair: contains

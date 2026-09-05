@@ -146,7 +146,8 @@ In other words:
 
 The first isolated-execution phase is implemented for Roslyn queries. `QueryExecution:Mode`
 selects `InProcess`, `OutOfProcess`, or `Auto`; `Auto` currently selects the isolated host until
-compatibility fingerprinting is available. Dynamic LINQ remains an in-process execution engine.
+compatibility fingerprinting is available. The supported `run_query` engine is the Roslyn-generated
+`UserQuery` model described on this page.
 
 The host processes one versioned JSON request from standard input and writes one serialized result
 or sanitized error response to standard output. The server generates and validates a request ID.

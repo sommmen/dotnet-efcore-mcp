@@ -72,6 +72,5 @@ internal static class SharedFrameworkAssemblyNames
         "SQLitePCLRaw.batteries_v2",
         "Npgsql",
         "Npgsql.EntityFrameworkCore.PostgreSQL",
-        "System.Linq.Dynamic.Core",
     };
 }

@@ -1,15 +1,14 @@
-# Roslyn-compiled `UserQuery` execution (replacing System.Linq.Dynamic.Core)
+# Roslyn-compiled `UserQuery` execution
 
 [← Back to Development Guide](../../DEVELOPMENT.md)
 
 Code: `src/DotnetEfCoreMcp.Server/Querying` (rewritten) + new `src/DotnetEfCoreMcp.Server/Compilation` ·
 Tests: `tests/DotnetEfCoreMcp.Server.Tests/Querying` + new `tests/DotnetEfCoreMcp.Server.Tests/Compilation`
 
-> **Status: cutover complete; removal pending.** The Roslyn compilation pipeline (`Compilation/`)
-> and its executor (`Querying/RoslynQueryExecutor.cs`) are implemented, covered by tests, and are
-> now the default `run_query` engine. The Dynamic-LINQ path remains as a temporary explicit
-> compatibility escape hatch; `System.Linq.Dynamic.Core` has not yet been removed (see
-> [Package removal](#package-removal)).
+> **Status: current `run_query` model.** The Roslyn compilation pipeline (`Compilation/`) and its
+> executor (`Querying/RoslynQueryExecutor.cs`) define the supported `run_query` behavior described
+> in the public docs: LINQPad-style `UserQuery : TDbContext`, expression or statement-mode authoring,
+> default no-tracking, and out-of-process execution options.
 
 ## Why
 
@@ -226,15 +225,14 @@ default-context fallback logic into a small shared base type both `TargetAssembl
 
 ### Request shape (mostly unchanged)
 
-Keep the `run_query(contextName, query, connectionName?)` tool signature. `query` still accepts
-everything it does today, but the grammar restriction disappears — any real C# expression or
-(new) statement block compiles. Two authoring modes, both compiled the same way:
+Keep the `run_query(contextName, query, connectionName?)` tool signature. `query` now compiles as
+real C# rather than a parser-specific expression grammar. Two authoring modes, both compiled the
+same way:
 
-- **Expression mode (today's only mode, kept working identically):** `query` is a single C#
-  expression, wrapped as `return <query>;` inside `RunUserAuthoredQuery()`. Every example in
-  today's `query-execution.md`/`mcp-tools.md` docs keeps working unchanged.
-- **Statement mode (new capability, opt-in via content shape):** if `query`'s trimmed text ends
-  with `;` or contains a top-level `{`, treat it as a statement block body instead of a single
+- **Expression mode:** `query` is a single C# expression, wrapped as `return <query>;` inside
+  `RunUserAuthoredQuery()`. Ordinary LINQ fragments stay concise in this form.
+- **Statement mode:** if `query`'s trimmed text ends with `;` or contains a top-level `{`, treat
+  it as a statement block body instead of a single
   expression, e.g. `var recent = Orders.Where(o => o.Created >= DateTime.Today.AddDays(-30)); return recent.Join(Customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Id, c.Name });`
   This is what actually unlocks `Join`/`GroupJoin`/`SelectMany`/`Zip` and multi-step queries with
   intermediate `var` bindings — the exact class of query the Dynamic-LINQ parser could never
@@ -268,16 +266,16 @@ Because `UserQuery_{token} : TContext` inherits the *entire* context surface, `S
 reachable from query code the moment tracking is enabled for an entity — this is a direct,
 unavoidable consequence of the inheritance model (it is also exactly how LINQPad's own EF Core
 driver behaves; the reference notes show `SaveChanges()` as explicitly available).
-`run_query` is documented today as strictly read-only, and this plan keeps that promise for the
-initial rollout by **gating writes at the policy layer, not by trying to strip members from the
+`run_query` is documented as read-only by default, and the current implementation keeps that
+promise by **gating writes at the policy layer, not by trying to strip members from the
 compiled surface**:
 - Keep `UseQueryTrackingBehavior(NoTracking)` as the default (previous section) — with no
   tracked entities, `SaveChanges()` is a no-op even if called, for the common case of a query that
   never explicitly re-attaches/tracks something.
-- Add an explicit runtime guard: wrap the `DbContext`'s `SavingChanges` (or override
-  `SaveChanges`/`SaveChangesAsync` on `UserQuery_{token}` itself, since it's a real subclass and we
-  control its generated source) to throw a sanitized `QueryExecutionException` unless the active
-  connection is non-production `ReadWrite` **and** a new `QueryExecution:AllowMutationsInRunQuery`
+- Add an explicit runtime guard: override `SaveChanges`/`SaveChangesAsync` on
+  `UserQuery_{token}` itself, since it's a real subclass we control, and throw a sanitized
+  `QueryExecutionException` unless the active
+  connection is non-production `ReadWrite` **and** `QueryExecution:AllowMutationsInRunQuery`
   flag (default `false`) is enabled — mirroring the exact gating shape already used for
   `EntityMutations:Enabled` in [Structured mutations](./mutations.md). This keeps `run_query`
   read-only by default while leaving a clearly-labeled, explicitly opt-in escape hatch for the
@@ -353,7 +351,8 @@ kept boundary earns its place.
 - **Sanitized error responses stay enforced** (see [Error sanitization](#error-sanitization)) —
   relaxing *what LINQ you can write* is unrelated to *what a stack trace may disclose*.
 - **`run_query` mutation capability (`SaveChanges()` etc.) stays off by default**, gated behind
-  the new opt-in flag from [Change tracking](#change-tracking--mutation-scope--saveChanges) — this
+  the `QueryExecution:AllowMutationsInRunQuery` flag from
+  [Change tracking](#change-tracking--mutation-scope--saveChanges) — this
   is the one place this plan intentionally does *not* immediately grant everything the inheritance
   model exposes, because `run_query` is documented today as read-only and changing that default
   silently would be a behavioral break, not a safety-model judgment call. Enabling it is a
@@ -408,62 +407,15 @@ This was a deliberate decision, not an oversight:
 See `RoslynQueryExecutorTests.ExecuteAsync_Zip_PairsTwoRootsPositionally` for a test that exercises
 and pins this behavior.
 
-## Migration / rollout plan
-
-1. **Add the new compilation pipeline alongside the existing one**, behind an internal
-   feature toggle (e.g. `QueryExecution:Engine = "DynamicLinq" | "Roslyn"`, defaulting to
-   `DynamicLinq` initially) so the two can be validated side by side without breaking `run_query`
-   callers mid-development. This mirrors how other in-flight features in this repo stay
-   dark-launched behind config until their tests are green (see the `Enabled`-flag pattern used
-   throughout `mutations.md`/`migrations.md`).
-2. **Port `QueryExecutorTests.cs`'s existing cases onto the new engine first**, unchanged in
-   intent (same inputs, same expected outputs) — every currently-passing expression-mode test
-   must keep passing byte-for-byte through the new compiler-based path before anything new is
-   added. This is the regression safety net for the rewrite.
-3. **Add new tests for previously-impossible shapes**: `Join`, `GroupJoin`, `SelectMany`, `Zip`,
-   statement-block queries with intermediate `var`s, custom context members, and the
-   reference-list containment guarantees (assert that a query attempting
-   `System.IO.File.ReadAllText(...)` or `System.Diagnostics.Process.Start(...)` fails to *compile*
-   with a sanitized diagnostic, not that it throws at runtime).
-4. **Flip the default engine to `Roslyn`** once (2) and (3) are green, keeping the
-   `DynamicLinq` toggle available for one release as an escape hatch. **Done:**
-   `QueryExecutionOptions.Engine` now defaults to `Roslyn`; operators can still explicitly select
-   `DynamicLinq` for temporary compatibility.
-5. **Remove `System.Linq.Dynamic.Core`** (see [Package removal](#package-removal)) and delete the
-   `DynamicLinq` engine path, `QueryExecutor`'s expression-tree-building code, and the
-   toggle itself once the Roslyn engine has been the sole default for at least one release with no
-   regressions reported.
-6. **Rewrite `query-execution.md` and `mcp-tools.md`** to describe the new grammar (expression +
-   statement modes), the removed `Join`/`GroupJoin`/`SelectMany`/`Zip` restriction (now lifted),
-   the reference-list safety model, and the `GetType()` behavioral note. Update
-   `DEVELOPMENT.md`'s one-line description of the Query execution module (currently "Safe
-   Dynamic-LINQ query translation...") accordingly. **Done for the opt-in state**: both docs now
-   cross-reference the `Roslyn` engine and this plan; a full rewrite of `query-execution.md`'s
-   grammar section to describe the new engine as the primary path is still deferred until step 4
-   (flip the default) actually happens, to avoid documenting behavior most callers don't yet get
-   by default.
-
-### Package removal
-
-Once step 5 above is reached: remove the `<PackageReference Include="System.Linq.Dynamic.Core" .../>`
-line from `DotnetEfCoreMcp.Server.csproj`, delete its associated `using System.Linq.Dynamic.Core*;`
-imports from `QueryExecutor.cs`/`TargetAssemblyLoadContext.cs`, and add:
-
-- `Microsoft.CodeAnalysis.CSharp` (brings `Microsoft.CodeAnalysis` transitively) — the only new
-  package this plan requires.
-
-No other new runtime dependencies are needed; `AssemblyLoadContext`/`AssemblyDependencyResolver`
-are already part of the BCL and already used by `TargetAssemblyLoadContext`.
-
 ## Compiled-query caching (later)
 
-Out of scope for the initial rollout, but worth recording as a deliberate non-goal for now: since
-compilation cost is paid per request, a follow-on optimization could cache compiled
+Out of scope for the current implementation, but worth recording as a deliberate non-goal for now:
+since compilation cost is paid per request, a follow-on optimization could cache compiled
 `UserQuery_{token}` assemblies keyed by `(contextName, normalizedQueryText)` inside a bounded LRU,
 provided the target assembly hasn't been reloaded since (tie cache invalidation to
 `AssemblyReloadWatcher`, which already exists for detecting target rebuilds). Not needed for
 correctness — only raised here so it isn't rediscovered as a surprise later and mistaken for a
-required part of this rewrite.
+required part of the core Roslyn pipeline.
 
 ## Open items
 
