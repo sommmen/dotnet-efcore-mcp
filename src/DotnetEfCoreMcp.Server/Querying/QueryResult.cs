@@ -16,6 +16,11 @@ public sealed record QueryResult(
     object? Scalar,
     IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
 
+/// <summary>The result of previewing the SQL a query would issue, obtained from an unexecuted
+/// <see cref="IQueryable"/>'s <c>ToQueryString()</c> without ever opening a database connection,
+/// executing a command, or materializing any rows.</summary>
+public sealed record QuerySqlPreviewResult(string Entity, string Sql);
+
 /// <summary>Thrown for invalid, unsafe, or failed query expressions. Messages are sanitized and
 /// never include connection strings or provider-generated SQL.</summary>
 public sealed class QueryExecutionException : Exception

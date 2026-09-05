@@ -17,6 +17,62 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         QueryRequest request,
         CancellationToken cancellationToken)
     {
+        using var invocation = await CompileAndInvokeAsync(target, contextType, entry, provider, request, cancellationToken).ConfigureAwait(false);
+        return await ShapeResultAsync(invocation.Value, entry.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Compiles and evaluates the user's query up to (but not including) materializing any
+    /// rows, obtaining the query's final in-memory value (an <see cref="IQueryable"/>, a scalar, or
+    /// an already-materialized sequence) without ever opening a database connection, executing a
+    /// command, or calling <c>SaveChanges</c>. Used to preview the SQL that <c>run_query</c> would
+    /// issue, via the returned <see cref="IQueryable"/>'s <c>ToQueryString()</c>, which - like this
+    /// method - never touches the database.
+    /// <para>Only <see cref="IQueryable"/> results have SQL to preview; a
+    /// <see cref="QueryExecutionException"/> is thrown for scalars, already-materialized sequences,
+    /// and plain <see cref="IEnumerable"/> results produced by operators with no SQL translation
+    /// (e.g. <c>Zip</c>), matching the same distinction <see cref="ShapeResultAsync"/> draws between
+    /// row-shaped and scalar results.</para></summary>
+    public async Task<QuerySqlPreviewResult> PreviewSqlAsync(
+        LoadedAssemblyHandle target,
+        Type contextType,
+        ConnectionRegistryEntry entry,
+        DatabaseProvider provider,
+        QueryRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var invocation = await CompileAndInvokeAsync(target, contextType, entry, provider, request, cancellationToken).ConfigureAwait(false);
+        if (invocation.Value is not IQueryable sequence)
+        {
+            throw new QueryExecutionException(
+                "The query's final value is not an IQueryable and has no SQL to preview; it is either a scalar/element result " +
+                "(e.g. Count, FirstOrDefault), an already-materialized sequence (e.g. .ToList()), or produced by an operator with " +
+                "no SQL translation (e.g. Zip).");
+        }
+
+        try
+        {
+            var sql = sequence.ToQueryString();
+            return new QuerySqlPreviewResult("C#", sql);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or TargetInvocationException)
+        {
+            throw new QueryExecutionException("The query could not be translated by the database provider.", ex);
+        }
+    }
+
+    /// <summary>Compiles the query, constructs the generated query DbContext, and invokes the
+    /// generated <c>RunUserAuthoredQuery</c> method, returning its result together with the
+    /// <see cref="DbContext"/> and assembly load context that must stay alive while that result -
+    /// if it is an <see cref="IQueryable"/> - is still being shaped or inspected. Disposing the
+    /// returned <see cref="CompiledQueryInvocation"/> disposes the context and unloads the assembly.</summary>
+    private async Task<CompiledQueryInvocation> CompileAndInvokeAsync(
+        LoadedAssemblyHandle target,
+        Type contextType,
+        ConnectionRegistryEntry entry,
+        DatabaseProvider provider,
+        QueryRequest request,
+        CancellationToken cancellationToken)
+    {
         var query = request.Query?.Trim();
         if (string.IsNullOrWhiteSpace(query)) throw new QueryExecutionException("`query` must be non-empty C# code.");
         if (query.Length > executionOptions.MaxQueryLength) throw new QueryExecutionException("`query` exceeds the configured maximum length.");
@@ -51,12 +107,26 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
                 throw new QueryExecutionException("The C# query failed while it was being evaluated.", ex.InnerException ?? ex);
             }
 
-            return await ShapeResultAsync(value, entry.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+            return new CompiledQueryInvocation(context, loadContext, value);
         }
-        finally
+        catch
         {
             context?.Dispose();
             loadContext.Unload();
+            throw;
+        }
+    }
+
+    /// <summary>The generated query DbContext, its assembly load context, and the value returned by
+    /// invoking the generated <c>RunUserAuthoredQuery</c> method. Disposing unloads the assembly and
+    /// disposes the context; the underlying <see cref="IQueryable"/> (if <see cref="Value"/> is one)
+    /// must not be used after disposal.</summary>
+    private sealed record CompiledQueryInvocation(DbContext Context, CompiledQueryLoadContext LoadContext, object? Value) : IDisposable
+    {
+        public void Dispose()
+        {
+            Context.Dispose();
+            LoadContext.Unload();
         }
     }
 
