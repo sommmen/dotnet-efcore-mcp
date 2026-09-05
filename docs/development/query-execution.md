@@ -160,8 +160,9 @@ windows, and `take: 0`.
     `Cause` when available plus a next step to check `get_schema`, verify `@p0`-style placeholders,
     and consult server logs.
   - The Roslyn query surface is bounded by a curated metadata-reference list, disabled `unsafe`
-    code, and the `QueryExecution` complexity caps (`MaxQueryLength`, `MaxExpressionNodes`,
-    `MaxExpressionDepth`, `MaxQueryOperators`) before provider work begins.
+    code, and the `MaxQueryLength` cap (enforced before provider work begins). Additional
+    complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) are
+    proposed future work (see P0 #7 below).
   - `IQueryable` results are capped before materialization through `MaxTake`/`DefaultTake`;
     non-`IQueryable` results (including client-side `IEnumerable` pipelines) are returned via the
     scalar slot instead of row-shaped paging semantics.

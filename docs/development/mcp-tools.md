@@ -44,7 +44,7 @@ queries, and local variables in statement-mode queries. Client-side operators re
 slot instead of row-shaped output.
 
 `QueryExecutor` still applies access policy, cancellation/timeout, take caps, and safe result
-projection. `IQueryable` results receive deterministic root ordering plus the configured default
+projection. `IQueryable` results receive the configured default row-count capping (200 by default);
 page when no `Take` is present, and any supplied `Take` is clamped to the configured maximum.
 Scalar results remain scalars. The generated `UserQuery` type defaults to
 `QueryTrackingBehavior.NoTracking`; an explicit `.AsTracking()` can opt back into tracking, but

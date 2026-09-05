@@ -403,13 +403,14 @@ public sealed class EfCoreMcpTools(
     }
 
     [McpServerTool(Name = "run_query"), Description(
-        "Executes a safe, read-only LINQPad-style expression rooted at a public DbSet property on the selected DbContext. " +
+        "Executes a safe, read-only LINQPad-style C# expression rooted at a public DbSet property on the selected DbContext. " +
         "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: " +
-        "results are always materialized, deterministically ordered, and capped server-side (terminal scalar aggregates/element operators such as " +
-        "Count/FirstOrDefault/Single/Any are not paginated), but adding one still narrows the result as expected. Allowed operators: Where, Select, " +
-        "GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, Distinct, Count, LongCount, Sum, Average, Min, Max, First, " +
-        "FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, Zip, and the set operators Concat/Union/Except/Intersect " +
-        "(which may reference another public DbSet by name, e.g. Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). " +
+        "results are always materialized and capped server-side at 200 rows by default (terminal scalar aggregates/element operators such as " +
+        "Count/FirstOrDefault/Single/Any are not paginated). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. " +
+        "The full LINQPad surface is supported: Where, Select, GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, " +
+        "Distinct, Count, LongCount, Sum, Average, Min, Max, First, FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, " +
+        "Zip, and the set operators Concat/Union/Except/Intersect (which may reference another public DbSet by name, e.g. " +
+        "Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). " +
         "The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are always capped at " +
         "effectiveTake); it is false for take:0 and for terminal scalar/element results.")]
     public Task<string> RunQuery(

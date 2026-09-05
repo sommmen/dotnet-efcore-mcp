@@ -316,9 +316,10 @@ the full LINQ surface available to the loaded app and referenced assemblies, inc
 `Join`, `GroupJoin`, `SelectMany`, cross-`DbSet` set operations, and local variables in
 statement-mode queries.
 
-`IQueryable` results are materialized server-side with deterministic ordering and a capped take
-(200 rows by default unless reconfigured); no terminal `.ToList()`/`.FirstOrDefault()` call is
-required. Scalars are returned as scalars. Non-`IQueryable` results (for example a client-side
+`IQueryable` results are materialized server-side and capped at 200 rows by default (unless
+reconfigured); no terminal `.ToList()`/`.FirstOrDefault()` call is required. Results are not
+automatically ordered; add an explicit `OrderBy()` when using `Skip()`/`Take()` to ensure stable
+pagination. Scalars are returned as scalars. Non-`IQueryable` results (for example a client-side
 `Zip` after `AsEnumerable()` or an already-materialized `List<T>`) are also returned as scalars
 rather than row-shaped query results.
 
