@@ -309,10 +309,10 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 
 `query` is Roslyn-compiled C# rooted at an exact, public `DbSet<T>` property on the selected
 context, such as `Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`.
-If the trimmed text parses as one complete expression, the server wraps it as `return <query>;`.
-If it ends with `;` or uses a top-level block, the server treats it as statement mode and expects
-the query text itself to `return` the final value. Because this is real C#, `run_query` supports
-the full LINQ surface available to the loaded app and referenced assemblies, including
+If the trimmed text parses as one complete expression, the server wraps it as `return <query>;` (this is the currently supported execution path).
+If it ends with `;` or uses a top-level block, the server would treat it as statement mode and expects
+the query text itself to `return` the final value (this is not yet fully supported; see the [development guide](docs/development/query-execution.md) for P0 #9 status).
+Because this is real C#, when implemented, `run_query` will support the full LINQ surface available to the loaded app and referenced assemblies, including
 `Join`, `GroupJoin`, `SelectMany`, cross-`DbSet` set operations, and local variables in
 statement-mode queries.
 
