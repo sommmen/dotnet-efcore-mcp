@@ -10,9 +10,9 @@ See the [README "MCP tool contract"](../../README.md#mcp-tool-contract) for the 
 
 ## Roslyn execution location
 
-`QueryExecution:Engine` selects the query language. The default, `DynamicLinq`, always executes
-in the MCP server process. Execution location is currently configurable only for
-`QueryExecution:Engine=Roslyn`:
+`QueryExecution:Engine` selects the query language. The default is now `Roslyn`; `DynamicLinq`
+remains available as a temporary compatibility escape hatch and always executes in the MCP server
+process. Execution location is configurable only for `QueryExecution:Engine=Roslyn` (the default):
 
 | Setting | Values | Default | Effect |
 | --- | --- | --- | --- |

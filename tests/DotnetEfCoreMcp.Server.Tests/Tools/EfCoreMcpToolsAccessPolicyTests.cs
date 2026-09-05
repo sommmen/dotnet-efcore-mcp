@@ -313,15 +313,16 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         EntityMutationsOptions? entityMutationsOptions = null)
     {
         var rawSqlOptions = new RawSqlExecutionOptions();
+        var queryExecutionOptions = new QueryExecutionOptions { Mode = QueryExecutionMode.InProcess };
         return new EfCoreMcpTools(
             new AssemblyLoaderService(),
             new AssemblyDiscoveryService(),
             new ConnectionRegistry(configuration),
             new SchemaCache(),
-            new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
-            new RoslynQueryExecutor(new QueryExecutionOptions(), new QueryCompiler(new QueryCompilationOptions())),
-            new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions()),
-            new QueryExecutionOptions(),
+            new QueryExecutor(queryExecutionOptions, NullLogger<QueryExecutor>.Instance),
+            new RoslynQueryExecutor(queryExecutionOptions, new QueryCompiler(new QueryCompilationOptions())),
+            new OutOfProcessRoslynQueryExecutor(queryExecutionOptions),
+            queryExecutionOptions,
             rawSqlOptions,
             new SqlQueryExecutor(rawSqlOptions, NullLogger<SqlQueryExecutor>.Instance),
             new MigrationsOptions(),
