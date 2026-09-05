@@ -307,24 +307,28 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `update_entity` | `contextName: string`, `entity: string`, `key: object`, `values: object`, `concurrency?: object`, `connectionName?: string` | Updated scalar values and actual affected rows, or a stable not-found-or-concurrency-conflict result |
 | `delete_entity` | `contextName: string`, `entity: string`, `key: object`, `concurrency?: object`, `connectionName?: string` | Actual affected rows, or a stable not-found-or-concurrency-conflict result |
 
-`query` is a [Dynamic LINQ](https://dynamic-linq.net/) expression rooted at an exact, public
-`DbSet<T>` property name on the selected context, such as
-`Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`. The server accepts one
-strictly allowlisted, provider-translatable `Queryable` expression only; it does not execute
-arbitrary C# or client-side `Enumerable` operations. Allowlisted operators include `Where`,
-`Select`, `GroupBy`, ordering, `Skip`, `Take`, `Distinct`, aggregates (`Count`, `Sum`, `Average`,
-`Min`, `Max`), element operators (`First(OrDefault)`, `Single(OrDefault)`, `Any`, `All`), and the
-set operators `Concat`/`Union`/`Except`/`Intersect`. Sequences receive a deterministic default
-page and any caller `Take` is clamped server-side (200 rows by default); terminal scalar
-aggregates/element operators are not paginated. A terminal call such as `.ToList()`/
-`.ToListAsync()`/`.FirstOrDefault()` is never required — the server always materializes and caps
-the result — but adding one (or an explicit `Take(n)`) still narrows the result as expected.
-`Join`, `GroupJoin`, `SelectMany`, and `Zip` are not supported (a hard limitation of the Dynamic
-LINQ string parser); use a navigation-property predicate
-(`Orders.Where(o => o.Customer.Name == "Alice")`) or `Concat`/`Union`/`Except`/`Intersect` instead.
+`query` is Roslyn-compiled C# rooted at an exact, public `DbSet<T>` property on the selected
+context, such as `Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`.
+If the trimmed text parses as one complete expression, the server wraps it as `return <query>;`.
+If it ends with `;` or uses a top-level block, the server treats it as statement mode and expects
+the query text itself to `return` the final value. Because this is real C#, `run_query` supports
+the full LINQ surface available to the loaded app and referenced assemblies, including
+`Join`, `GroupJoin`, `SelectMany`, cross-`DbSet` set operations, and local variables in
+statement-mode queries.
+
+`IQueryable` results are materialized server-side with deterministic ordering and a capped take
+(200 rows by default unless reconfigured); no terminal `.ToList()`/`.FirstOrDefault()` call is
+required. Scalars are returned as scalars. Non-`IQueryable` results (for example a client-side
+`Zip` after `AsEnumerable()` or an already-materialized `List<T>`) are also returned as scalars
+rather than row-shaped query results.
+
+Queries default to `QueryTrackingBehavior.NoTracking`. An explicit `.AsTracking()` can opt back
+into tracking, but `SaveChanges()` remains blocked unless the server operator enables
+`QueryExecution:AllowMutationsInRunQuery` and the selected connection is both non-production and
+`ReadWrite`.
 
 `run_sql_query` is an explicitly opt-in escape hatch for development diagnostics and migrations;
-prefer the always-on, read-only `run_query` whenever its Dynamic LINQ contract is sufficient.
+prefer the always-on `run_query` whenever its LINQPad-style C# contract is sufficient.
 Enable raw SQL only in a local or development server configuration, then restart the MCP server;
 it cannot be enabled per request or per agent session:
 

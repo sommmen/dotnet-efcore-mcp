@@ -19,7 +19,8 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 
 ## P0 #1 — LINQPad-style `run_query`
 
-`run_query` accepts a required `query: string` containing a LINQPad-style query expression rooted at a `DbSet<>` property on the selected `DbContext`. For example:
+`run_query` accepts a required `query: string` containing Roslyn-compiled LINQPad-style C# rooted
+at a `DbSet<>` property on the selected `DbContext`. For example:
 
 ```csharp
 ShopProducts
@@ -28,13 +29,34 @@ ShopProducts
     .Select(c => new { c.Id, c.Slug })
 ```
 
-The first identifier is case-sensitive and must resolve to an actual public `DbSet<T>` property whose `T` is in the EF model. The rest is a LINQ **query expression** over that set, so it can use `Where`, `Select`, `GroupBy`, ordering, paging, and supported terminal aggregates. This is the only `run_query` request shape: the former structured `entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` parameters are not supported. Projection and aggregate semantics belong to this one read-only query surface.
+The first identifier is case-sensitive and must resolve to an actual public `DbSet<T>` property
+whose `T` is in the EF model. This is the only `run_query` request shape: the former structured
+`entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` parameters are not supported.
+Projection, grouping, joining, paging, and aggregate semantics belong to this one query surface.
 
-This is not permission to execute arbitrary C# on the server. The tool accepts one expression (an optional trailing semicolon is harmless), not declarations, assignments, blocks, statements, type creation, reflection, service access, raw SQL, or arbitrary method calls. Parse the C# expression and allow only a documented, provider-translatable `IQueryable` operator/member subset against model-mapped members. Reject unknown roots, non-`DbSet` roots, forbidden syntax, unsupported methods, client-evaluated operations, and non-translatable query shapes before opening a command, without echoing the expression or values in errors/logs.
+Authoring has two modes. If the trimmed text parses as one complete expression, the server emits
+`return <query>;`. If it ends with `;` or uses a top-level block, the server treats it as
+statement mode and expects the query text itself to `return` the final value. Because the query is
+compiled as real C#, the supported operator surface is the full LINQ surface available to the
+loaded app and referenced assemblies, including `Join`, `GroupJoin`, `SelectMany`, cross-`DbSet`
+queries, and local variables in statement-mode queries. Client-side operators remain possible after
+`AsEnumerable()` or materialization, but non-`IQueryable` results are returned through the scalar
+slot instead of row-shaped output.
 
-`QueryExecutor` always applies `AsNoTracking`, access policy, cancellation/timeout, complexity caps, and safe result projection. For an un-ordered root sequence, it injects deterministic primary-key ordering before the caller expression. Sequence materialization applies the configured default page when no `Take` is present and clamps any supplied `Take` to the configured maximum. Terminal scalar aggregates (`Count`, `LongCount`, `Sum`, `Average`, `Min`, and `Max`) return a scalar result without paging. Focused executor tests cover root binding, chained filters, projection, aggregates, rejected escape syntax, complexity limits, and paging behavior. See [Query execution](./query-execution.md) for the full operator/behavior reference.
+`QueryExecutor` still applies access policy, cancellation/timeout, take caps, and safe result
+projection. `IQueryable` results receive deterministic root ordering plus the configured default
+page when no `Take` is present, and any supplied `Take` is clamped to the configured maximum.
+Scalar results remain scalars. The generated `UserQuery` type defaults to
+`QueryTrackingBehavior.NoTracking`; an explicit `.AsTracking()` can opt back into tracking, but
+`SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
+selected connection is non-production `ReadWrite`. Focused executor tests cover expression mode,
+statement mode, joins, projections, aggregates, mutation gating, complexity limits, and paging
+behavior. See [Query execution](./query-execution.md) for the full operator/behavior reference.
 
-An opt-in `QueryExecution:Engine = "Roslyn"` setting routes `run_query` through a Roslyn-compiled `UserQuery : TDbContext` pipeline instead, implemented and covered by tests but not yet the default; see [Roslyn-compiled `UserQuery`](./roslyn-user-query.md) for its design and rollout status.
+Execution location is configured with `QueryExecution:Mode` (`InProcess`, `OutOfProcess`,
+`Pooled`, or `Auto`), and Roslyn compilation settings live under `QueryCompilation`; see
+[Query execution](./query-execution.md) and
+[Roslyn-compiled `UserQuery`](./roslyn-user-query.md).
 
 ## Proposed open work — P0 #2: `run_query` continuation indicator
 
@@ -73,18 +95,17 @@ an exact effective take, an extra row, a clamped take, nonzero skip, and `take: 
 ## Proposed open work — P0 #4: `preview_query_sql`
 
 Add a read-only `preview_query_sql` MCP tool with the same request inputs as `run_query`:
-`contextName`, `connectionName`, `entity`, optional `where`, positional `parameters`, `orderBy`,
-`skip`, `take`, and `include`. It returns a single `sql` string containing the SQL generated by the
-configured EF Core provider. It is a preview, not a query result: do not return rows, row counts, or
-connection details.
+`contextName`, `query`, optional `connectionName`, and optional `targetName`. It returns a single
+`sql` string containing the SQL generated by the configured EF Core provider for queries whose
+final result is still an `IQueryable`. It is a preview, not a query result: do not return rows,
+row counts, or connection details.
 
-Factor the shared entity resolution, EF-metadata validation, Dynamic LINQ filtering/ordering,
-`AsNoTracking`, include allowlisting, and effective paging into one query-builder path used by both
-`run_query` and `preview_query_sql`. The preview obtains SQL exclusively with EF Core
-`ToQueryString()` from that built `IQueryable`; it must never enumerate the query, open a connection,
-create or execute a database command, call `SaveChanges`, or otherwise mutate state. Preserve the
-current query timeout/cancellation and request-validation behavior where applicable, while recognizing
-that SQL text and parameter declaration syntax are provider-specific.
+Factor the shared root resolution, authorization, Roslyn compilation, and `IQueryable`
+construction into one path used by both `run_query` and `preview_query_sql`. The preview obtains
+SQL exclusively with EF Core `ToQueryString()` from that built `IQueryable`; it must never
+enumerate the query, open a connection, create or execute a database command, call `SaveChanges`,
+or otherwise mutate state. Statement-mode queries that return scalars, lists, or client-side
+`IEnumerable` values should be rejected for preview.
 
 Before formatting a successful response or reporting an error, sanitize the preview: never expose
 connection strings, parameter values, provider exception details, or stack traces. The tool description
@@ -145,21 +166,20 @@ unknown names, matching/order, caps and `truncated`, invalid input, and policy-s
 
 ## Proposed open work — P0 #7: query complexity limits beyond row count
 
-`run_query` and `preview_query_sql` add no caller-controlled limits for this item. The new
-`MaxWhereLength`/`MaxOrderByTerms`/`MaxIncludeCount` caps described in
-[Query execution](./query-execution.md#proposed-open-work--p0-7-query-complexity-limits-beyond-row-count)
-are server-side configuration. The arbitrary-LINQ form additionally needs expression-length, syntax-tree
-node-count, and operator-count caps. All requests share the validated query-plan pipeline, so an oversized
-legacy field or LINQ expression is rejected before parsing beyond its structural limit or making a provider
-round-trip.
+`run_query` and `preview_query_sql` add no caller-controlled limits for this item. The relevant
+server-side caps are the `QueryExecution` settings described in
+[Query execution](./query-execution.md#proposed-open-work--p0-7-query-complexity-limits-beyond-row-count):
+`MaxQueryLength`, `MaxExpressionNodes`, `MaxExpressionDepth`, and `MaxQueryOperators`. All
+requests share the same validated pipeline, so an oversized or overly-complex query is rejected
+before provider translation or a database round-trip.
 
-Tool descriptions should note that legacy fields and arbitrary LINQ are subject to server-configured
-complexity limits in addition to the existing row-count cap, without hard-coding numeric limits. Failures
-surface through the existing `QueryExecutionException`-to-MCP-error mapping and name only the exceeded
-limit and its configured maximum — never caller predicate, ordering, include, expression, or parameter text.
+Tool descriptions should note that `run_query` and `preview_query_sql` are subject to
+server-configured complexity limits in addition to the existing row-count cap, without hard-coding
+numeric limits. Failures surface through the existing `QueryExecutionException`-to-MCP-error
+mapping and name only the exceeded limit and its configured maximum — never caller query text.
 
-Focused tool-surface tests should verify both forms reject every applicable cap, errors do not echo caller
-input, and requests at or under every cap bind and forward as intended.
+Focused tool-surface tests should verify rejection at every applicable cap, that errors do not echo
+caller input, and that requests at or under every cap bind and forward as intended.
 
 ## Proposed open work — P0 #8: database-side `run_query` collection-include cap
 

@@ -19,7 +19,7 @@ Three independently-built projects, with **no compile-time references between th
 | Project | Role | Stands in for |
 |---|---|---|
 | `TargetApp/` | A tiny EF Core app with one `DbContext` (`CatalogDbContext`) and one entity (`Product`), using SQL Server. | The arbitrary already-built target application the real MCP server points at. |
-| `QueryHost/` | A console app that loads `TargetApp.dll` **from a file path**, finds the `DbContext` type and a `DbSet` property by name via reflection, and runs a caller-supplied filter with [System.Linq.Dynamic.Core](https://dynamic-linq.net/) - no compile-time reference to `TargetApp`'s types. | The out-of-process "query host" from the alternatives doc - it would host the Roslyn-compiled `UserQuery` in a real implementation. |
+| `QueryHost/` | A console app that loads `TargetApp.dll` **from a file path**, finds the `DbContext` type and a `DbSet` property by name via reflection, and runs a caller-supplied filter with [System.Linq.Dynamic.Core](https://dynamic-linq.net/) - no compile-time reference to `TargetApp`'s types. This is historical PoC code, not the current server's supported `run_query` engine. | The out-of-process "query host" from the alternatives doc - it would host the Roslyn-compiled `UserQuery` in a real implementation. |
 | `Launcher/` | A console app that locates `TargetApp`'s own `TargetApp.runtimeconfig.json` and `TargetApp.deps.json`, then launches `QueryHost.dll` as a child process via `dotnet exec --runtimeconfig <TargetApp's> --depsfile <TargetApp's> QueryHost.dll ...`. | The MCP server process. |
 
 The key mechanic is the `dotnet exec` invocation `Launcher` runs:

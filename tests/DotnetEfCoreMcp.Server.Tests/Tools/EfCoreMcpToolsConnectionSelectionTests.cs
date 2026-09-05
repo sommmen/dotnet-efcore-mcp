@@ -121,7 +121,6 @@ public sealed class EfCoreMcpToolsConnectionSelectionTests
             new AssemblyDiscoveryService(),
             new ConnectionRegistry(configuration),
             new SchemaCache(),
-            new QueryExecutor(new QueryExecutionOptions(), NullLogger<QueryExecutor>.Instance),
             new RoslynQueryExecutor(new QueryExecutionOptions(), new QueryCompiler(new QueryCompilationOptions())),
             new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions()),
             new QueryExecutionOptions(),

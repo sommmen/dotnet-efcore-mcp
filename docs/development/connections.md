@@ -124,7 +124,8 @@ Tests: [`Connections/ConnectionAccessPolicyTests.cs`](../../tests/DotnetEfCoreMc
     discovered `DbContext`/entity model on every connection resolution (misconfigured policy
     surfaces as `ConnectionRegistryConfigurationException`, distinct from a runtime denial).
   - `EnsureContextReachable`/`EnsureEntityAllowed` gate `GetSchema`, `GetEntitySchema`,
-    `SearchSchema`, `RunQuery` (root `DbSet` name, both the Dynamic LINQ and Roslyn engines),
+    `SearchSchema`, `RunQuery` (root `DbSet` name plus any additional public `DbSet` roots
+    referenced by the Roslyn query),
     and the entity mutation tools (`InsertEntity`/`UpdateEntity`/`DeleteEntity`) — all run
     before a `DbContext` is constructed or a query string is parsed.
 - [x] Hook into `ISchemaAccessPolicy` to filter schema output without mutating the cache

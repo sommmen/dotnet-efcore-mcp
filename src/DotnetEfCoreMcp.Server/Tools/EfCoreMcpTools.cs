@@ -25,7 +25,6 @@ public sealed class EfCoreMcpTools(
     AssemblyDiscoveryService assemblyDiscovery,
     ConnectionRegistry connectionRegistry,
     SchemaCache schemaCache,
-    QueryExecutor queryExecutor,
     RoslynQueryExecutor roslynQueryExecutor,
     OutOfProcessRoslynQueryExecutor outOfProcessRoslynQueryExecutor,
     PooledOutOfProcessRoslynQueryExecutor pooledOutOfProcessRoslynQueryExecutor,
@@ -45,7 +44,6 @@ public sealed class EfCoreMcpTools(
         AssemblyDiscoveryService assemblyDiscovery,
         ConnectionRegistry connectionRegistry,
         SchemaCache schemaCache,
-        QueryExecutor queryExecutor,
         RoslynQueryExecutor roslynQueryExecutor,
         OutOfProcessRoslynQueryExecutor outOfProcessRoslynQueryExecutor,
         QueryExecutionOptions queryExecutionOptions,
@@ -63,7 +61,6 @@ public sealed class EfCoreMcpTools(
             assemblyDiscovery,
             connectionRegistry,
             schemaCache,
-            queryExecutor,
             roslynQueryExecutor,
             outOfProcessRoslynQueryExecutor,
             new PooledOutOfProcessRoslynQueryExecutor(
@@ -411,9 +408,8 @@ public sealed class EfCoreMcpTools(
         "results are always materialized, deterministically ordered, and capped server-side (terminal scalar aggregates/element operators such as " +
         "Count/FirstOrDefault/Single/Any are not paginated), but adding one still narrows the result as expected. Allowed operators: Where, Select, " +
         "GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, Distinct, Count, LongCount, Sum, Average, Min, Max, First, " +
-        "FirstOrDefault, Single, SingleOrDefault, Any, All, and the set operators Concat/Union/Except/Intersect (which may reference another public " +
-        "DbSet by name, e.g. Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). Join, GroupJoin, SelectMany, and Zip are NOT " +
-        "supported (a hard Dynamic LINQ parser limitation) — use a navigation-property predicate instead, e.g. Orders.Where(o => o.Customer.Name == \"Alice\"). " +
+        "FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, Zip, and the set operators Concat/Union/Except/Intersect " +
+        "(which may reference another public DbSet by name, e.g. Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). " +
         "The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are always capped at " +
         "effectiveTake); it is false for take:0 and for terminal scalar/element results.")]
     public Task<string> RunQuery(
@@ -424,23 +420,16 @@ public sealed class EfCoreMcpTools(
         CancellationToken cancellationToken = default)
         => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, cancellationToken));
 
-    private async Task<QueryResult> ExecuteDynamicLinqAsync(Type contextType, ConnectionRegistryEntry entry, string query, CancellationToken cancellationToken)
-    {
-        using var context = CreateContext(contextType, entry);
-        return await queryExecutor.ExecuteAsync(context, new QueryRequest { Query = query }, entry.CommandTimeoutSeconds, cancellationToken);
-    }
-
     private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, CancellationToken cancellationToken)
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry, targetName);
 
-        // Entity-level access policy (P0 #9) is enforced here, before either query engine dispatches,
-        // because the Roslyn engine constructs its own DbContext subclass and never calls
-        // CreateContext (which only enforces context-level reachability). The root DbSet plus any other
-        // DbSet referenced via set operators (Union/Concat/...) are resolved to their entity type names
-        // up front so both engines share one enforcement point using the same names the policy is
-        // configured with.
+        // Entity-level access policy (P0 #9) is enforced here because the Roslyn engine constructs its
+        // own DbContext subclass and never calls CreateContext (which only enforces context-level
+        // reachability). The root DbSet plus any other DbSet referenced via set operators
+        // (Union/Concat/...) are resolved to their entity type names up front so this single
+        // enforcement point uses the same names the policy is configured with.
         EnsureContextReachable(contextType, entry);
         try
         {
@@ -450,12 +439,7 @@ public sealed class EfCoreMcpTools(
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
 
-            var result = queryExecutionOptions.Engine switch
-            {
-                QueryEngine.DynamicLinq => await ExecuteDynamicLinqAsync(contextType, entry, query, cancellationToken),
-                QueryEngine.Roslyn => await ExecuteRoslynAsync(contextType, entry, query, targetName, cancellationToken),
-                _ => throw new InvalidOperationException($"Unsupported query engine '{queryExecutionOptions.Engine}'.")
-            };
+            var result = await ExecuteRoslynAsync(contextType, entry, query, targetName, cancellationToken);
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
@@ -936,7 +920,7 @@ public sealed class EfCoreMcpTools(
 
         if (message.Contains("cannot be used with the Roslyn query engine", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{message} Next step: Add a public parameterless constructor or a DbContextOptions<T> constructor to the DbContext, or ask the server operator to switch QueryExecution:Engine to DynamicLinq.";
+            return $"{message} Next step: Add a public parameterless constructor or a DbContextOptions<T> constructor to the DbContext.";
         }
 
         if (message.Contains("QueryExecution:OutOfProcessHostPath", StringComparison.OrdinalIgnoreCase) ||
@@ -977,7 +961,7 @@ public sealed class EfCoreMcpTools(
     }
 
     private const string GenericQueryRecoveryHint =
-        "verify entity and property names with get_schema, validate Dynamic LINQ syntax, and consult server logs if the problem persists.";
+        "verify entity and property names with get_schema, validate LINQ query syntax, and consult server logs if the problem persists.";
 
     private const string GenericUnexpectedErrorHint =
         "check the server logs using the error reference; diagnostic messages and stack traces are intentionally not returned to MCP callers.";

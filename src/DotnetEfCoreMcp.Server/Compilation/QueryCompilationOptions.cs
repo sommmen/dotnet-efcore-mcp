@@ -1,6 +1,6 @@
 namespace DotnetEfCoreMcp.Server.Compilation;
 
-/// <summary>Server-side configuration for the <see cref="Querying.QueryEngine.Roslyn"/> engine.
+/// <summary>Server-side configuration for the Roslyn/LINQPad-style query execution engine.
 /// See <c>docs/development/roslyn-user-query.md</c>.</summary>
 public sealed class QueryCompilationOptions
 {
