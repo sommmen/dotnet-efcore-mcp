@@ -74,6 +74,11 @@ internal static class QueryComplexityValidator
                 else if (QueryOperatorNames.Contains(methodName)) operatorCount++;
             }
 
+            // Fail fast: if either nodes or depth have already exceeded their limits,
+            // stop walking to avoid wasting CPU on adversarially large expressions.
+            if (nodeCount > options.MaxExpressionNodes || depth > options.MaxExpressionDepth)
+                break;
+
             // Push children onto the stack in reverse order to maintain
             // left-to-right processing when popping from the stack.
             foreach (var child in node.ChildNodes().Reverse())
