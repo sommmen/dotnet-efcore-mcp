@@ -87,6 +87,9 @@ internal static class CursorPaginationExecutor
 
         var selector = Unquote(call.Arguments[1]) as LambdaExpression
             ?? throw new QueryExecutionException("Cursor pagination requires an explicit deterministic OrderBy().");
+        var isPrimaryOrder = call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending);
+        if (isPrimaryOrder)
+            result.Clear();
         result.Add(new Ordering(selector, call.Method.Name.EndsWith("Descending", StringComparison.Ordinal)));
     }
 
@@ -156,6 +159,19 @@ internal static class CursorPaginationExecutor
         return predicate!;
     }
 
+    private static bool HasComparisonOperators(Type type)
+    {
+        var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
+        
+        // Primitive numeric types, DateTime, DateTimeOffset, TimeSpan, char all have comparison operators
+        if (underlyingType.IsPrimitive || underlyingType == typeof(decimal) || underlyingType == typeof(DateTime) || 
+            underlyingType == typeof(DateTimeOffset) || underlyingType == typeof(TimeSpan) || underlyingType == typeof(char))
+            return true;
+        
+        // Check if type defines op_GreaterThan operator
+        return underlyingType.GetMethod("op_GreaterThan", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public, null, new[] { underlyingType, underlyingType }, null) is not null;
+    }
+
     private static Expression BuildComparison(Expression left, Expression right, bool descending)
     {
         if (left.Type == typeof(string))
@@ -164,7 +180,15 @@ internal static class CursorPaginationExecutor
             return descending ? Expression.LessThan(compare, Expression.Constant(0)) : Expression.GreaterThan(compare, Expression.Constant(0));
         }
 
-        return descending ? Expression.LessThan(left, right) : Expression.GreaterThan(left, right);
+        if (HasComparisonOperators(left.Type))
+            return descending ? Expression.LessThan(left, right) : Expression.GreaterThan(left, right);
+
+        var compareTo = Expression.Call(
+            Expression.Convert(left, typeof(IComparable)),
+            nameof(IComparable.CompareTo),
+            Type.EmptyTypes,
+            Expression.Convert(right, typeof(object)));
+        return descending ? Expression.LessThan(compareTo, Expression.Constant(0)) : Expression.GreaterThan(compareTo, Expression.Constant(0));
     }
 
     private static object?[] ReadValues(IReadOnlyList<Ordering> orderings, object value) =>

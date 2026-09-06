@@ -57,13 +57,9 @@ public sealed record QueryExecutionOptions
     /// <c>OrderBy</c>) allowed in the parsed query expression.</summary>
     public int MaxQueryOperators { get; init; } = 20;
 
-    /// <summary>Maximum depth of a structured include path.</summary>
-    public int MaxIncludeDepth { get; init; } = 3;
-
-    /// <summary>Maximum number of structured include paths accepted for one query.</summary>
-    public int MaxIncludeCount { get; init; } = 5;
-
-    /// <summary>Maximum number of rows materialized for each included collection navigation per parent.
-    /// A value of zero is valid and returns empty included collections.</summary>
+    /// <summary>Maximum number of <c>Include</c>/<c>ThenInclude</c> calls allowed in the parsed query
+    /// expression. This is a static, AST-level cap on how many included navigations may be requested -
+    /// it does not itself bound how many rows each included collection may materialize in the
+    /// database (see P0 #8 in the work tracker for that follow-up).</summary>
     public int MaxIncludedCollectionItems { get; init; } = 5;
 }
