@@ -42,11 +42,11 @@ LINQ surface available to the loaded app and referenced assemblies, including `J
 `AsEnumerable()` or materialization, but non-`IQueryable` results are returned through the scalar
 slot instead of row-shaped output.
 
-**Note:** Statement/block C# syntax (a trailing `;`, a top-level block, or local variables) is
-intentionally unsupported. Queries remain expression-mode-only so entity-level access-policy
-enforcement (P0 #9), which relies on compile-time root/entity extraction before compilation, cannot
-be bypassed through arbitrary `DbContext` access. This is a permanent design constraint, not a
-temporary gap.
+**Note:** A single trailing `;` is accepted and stripped; anything beyond one expression is
+intentionally unsupported (multiple statements, extra semicolons, top-level blocks, or local
+variables). Queries remain expression-mode-only so entity-level access-policy enforcement (P0 #9),
+which relies on compile-time root/entity extraction before compilation, cannot be bypassed through
+arbitrary `DbContext` access. This is a permanent design constraint, not a temporary gap.
 
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
 cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
@@ -218,7 +218,7 @@ and `preview_query_sql` evaluate selectors using the selected connection's share
 policy evaluator. Discovery returns a filtered schema view; direct lookup and query
 execution reject denied or unlisted selectors without disclosing excluded names.
 
-See [Connection management](./connections.md#p0-9-per-connection-access-policy-enforcement)
+See [Connection management](./connections.md#p0-9-per-connection-contextentity-access-policy)
 and [Schema discovery](./schema-discovery.md#p0-9-policy-filtered-schema-discovery)
 for configuration, precedence, filtered-view, and non-disclosure details.
 
