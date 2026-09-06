@@ -3,6 +3,10 @@ namespace DotnetEfCoreMcp.Server.Querying;
 /// <summary>Server-wide limits enforced on every query, regardless of what the caller requests.</summary>
 public sealed record QueryExecutionOptions
 {
+    /// <summary>Server-private HMAC key used to sign cursor continuation tokens. A random key is
+    /// generated when one is not configured; set this explicitly to preserve cursors across restarts.</summary>
+    public string CursorSigningKey { get; init; } = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+
     /// <summary>Where Roslyn queries execute. Auto safely selects an isolated process.</summary>
     public QueryExecutionMode Mode { get; init; } = QueryExecutionMode.Auto;
 

@@ -124,7 +124,8 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
 
     internal static QueryResult ToQueryResult(QueryResultWire result) => new(
         result.Entity, result.RowCount, result.EffectiveTake, result.HasMoreRows, result.IsScalar,
-        FromJson(result.Scalar), result.Rows.Select(row => (IReadOnlyDictionary<string, object?>)row.ToDictionary(pair => pair.Key, pair => FromJson(pair.Value))).ToArray());
+        FromJson(result.Scalar), result.Rows.Select(row => (IReadOnlyDictionary<string, object?>)row.ToDictionary(pair => pair.Key, pair => FromJson(pair.Value))).ToArray(),
+        result.NextCursor);
 
     private static object? FromJson(JsonElement value) => value.ValueKind switch
     {

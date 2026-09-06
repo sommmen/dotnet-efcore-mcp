@@ -14,7 +14,8 @@ public sealed record QueryResult(
     bool HasMoreRows,
     bool IsScalar,
     object? Scalar,
-    IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
+    IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows,
+    string? NextCursor = null);
 
 /// <summary>The result of previewing the SQL a query would issue, obtained from an unexecuted
 /// <see cref="IQueryable"/>'s <c>ToQueryString()</c> without ever opening a database connection,

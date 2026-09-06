@@ -11,7 +11,6 @@ document only tracks items that are still outstanding, plus how to add new ones.
 
 | Item | Area | Notes |
 |---|---|---|
-| P1 #14 — keyset/cursor pagination | [Query execution](./query-execution.md) · [MCP tools](./mcp-tools.md) | Add an opt-in `pagination: { mode: "cursor", cursor?: string }`/`nextCursor` keyset-paging mode to `run_query`, mutually exclusive with `skip`. Require a unique deterministic order by auto-appending the primary key as a tie-breaker; encode cursors as opaque tokens bound to entity/context/ordering shape and reject malformed, mismatched, or tampered cursors without disclosing decoded values. Scope v1 to forward-only paging. Keep coexisting with `take`/`hasMoreRows` (P0 #2) and legacy offset `skip`/`take` paging, which stay fully supported when `pagination` is omitted. Cover parity, issuance/resumption, tie-breaking, rejection cases, and `hasMoreRows`/`nextCursor` agreement with focused tests. |
 There are currently no other open items from the original MVP roadmap — [project
 scaffolding](./project-scaffolding.md), [assembly loading](./assembly-loading.md),
 [`DbContext` discovery](./dbcontext-discovery.md), [connection

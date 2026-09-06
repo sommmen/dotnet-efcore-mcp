@@ -143,6 +143,25 @@ command timeout and server cancellation. An explicit `.AsTracking()` can opt bac
 `ReadWrite`. Sequence results receive the configured default page when no `Take` is
 supplied; any caller `Take` is clamped to `MaxTake`. Terminal scalar aggregates are not paginated.
 
+### P1 #14 — cursor pagination
+
+`run_query` also accepts an opt-in `pagination: { mode: "cursor", cursor?: string }`
+object. Cursor pagination is forward-only and applies only to a query whose final
+`IQueryable` element is a mapped entity. The query must specify an `OrderBy`; the
+server appends any missing primary-key properties as ascending tie-breakers, then
+uses the complete ordering for its keyset seek. `Skip()` is mutually exclusive
+with cursor mode.
+
+The first request uses `{ mode: "cursor" }`. When `hasMoreRows` is true, the
+response includes `nextCursor`; pass it back as `cursor` with the same query to
+obtain the next page. Cursors are HMAC-signed opaque tokens bound to the selected
+context, entity, and complete ordering shape. A malformed, altered, or mismatched
+token always fails with the same generic cursor error and never exposes its
+decoded key values. Configure `QueryExecution:CursorSigningKey` when cursors must
+survive a server restart; otherwise a process-local random key is used. Omitting
+`pagination` preserves existing offset/`Take` behavior and does not return a
+cursor.
+
 ## `preview_query_sql`
 
 `preview_query_sql` accepts the same request shape as `run_query` (`contextName`, `query`, optional
@@ -302,48 +321,6 @@ public `DbSet` roots referenced by the query against the selected connection's `
 Denied or unlisted selectors fail closed with a sanitized authorization error and perform no
 model/database work. Focused tests cover both execution tools, allowed-over-denied precedence,
 unmatched-selector rejection, and unchanged allowed-query behavior.
-
-## Proposed open work — P1 #14: keyset/cursor pagination
-
-Add an opt-in keyset ("cursor") pagination mode for final **sequence** results alongside the existing
-offset-based `skip`/`take` paging: a `pagination: { mode: "cursor", cursor?: string }` request object
-selects keyset paging, with an omitted `cursor` requesting its first page; a `nextCursor: string | null`
-response field is populated whenever `hasMoreRows` (P0 #2) is `true`. Terminal scalar aggregates reject
-cursor pagination and expose neither `nextCursor` nor `hasMoreRows`. A request omitting `pagination`
-behaves exactly as today — offset paging and keyset paging are mutually exclusive per request, not
-merged, and cursor mode rejects `skip`.
-
-Keyset correctness depends on a **unique, deterministic order**: when `cursor` is supplied, append the
-root entity's primary key (in a stable direction) to the caller's `orderBy` terms if it is not already
-present, so ties on the caller's ordering columns cannot reorder or duplicate rows across pages. Reject
-a `cursor` request whose resolved ordering is not unique-terminated only if the primary key itself
-cannot be appended (for example, a composite key EF cannot resolve); otherwise the append is automatic
-and transparent to the caller.
-
-The cursor is an opaque, server-encoded token (not a raw offset or exposed key value) containing the
-last-returned row's order-key values and a hash/version tag binding it to the requesting entity,
-context, and the effective ordering shape used to produce it. Validate every incoming cursor before
-building the query: reject malformed encoding, a cursor produced for a different entity/context, and a
-cursor whose bound ordering shape no longer matches the request's current `orderBy` — each with the
-existing sanitized `QueryExecutionException` error, never echoing the decoded key values or raw token
-back to the caller.
-
-Scope v1 to **forward-only** pagination: `cursor` always resumes strictly after the referenced row in
-the effective ascending/descending order already established by `orderBy`. Backward paging (returning
-prior pages from a cursor) is explicitly deferred to a later item; document this bound in the tool
-description so callers do not assume symmetric forward/backward navigation. Keyset paging must
-coexist with, not replace, the current mechanisms: `take` continues to bound the page size the same
-way for both paging styles, `hasMoreRows` keeps its existing sentinel-row semantics (P0 #2) and is
-still how a caller learns whether to request `nextCursor`, and legacy offset (`skip`/`take`) pagination
-remains fully supported and unaffected for requests that do not supply `cursor`.
-
-Focused validation: add executor tests for cursor-absent parity with existing `skip`/`take` behavior,
-first-page cursor issuance, resuming from an issued cursor with and without caller-supplied `orderBy`,
-automatic unique-key tie-breaker append, rejection of a malformed/tampered/mismatched-entity/
-mismatched-ordering cursor, rejection of combining `cursor` with nonzero `skip`, and `hasMoreRows`/
-`nextCursor` agreement (a `null` `nextCursor` whenever `hasMoreRows` is `false`). Add MCP contract
-tests for `cursor` request binding and `nextCursor` response serialization, and confirm the sanitized
-rejection message never discloses decoded key values.
 
 ## Bounded nested include paths (P1 #13 implemented)
 

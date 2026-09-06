@@ -9,4 +9,17 @@ public sealed class QueryRequest
 
     /// <summary>Optional dot-separated EF navigation paths to load, such as <c>Orders.OrderLines</c>.</summary>
     public IReadOnlyList<string>? Include { get; init; }
+
+    /// <summary>Optional forward-only cursor paging request.</summary>
+    public QueryPagination? Pagination { get; init; }
+}
+
+/// <summary>Opt-in forward-only keyset pagination settings for <c>run_query</c>.</summary>
+public sealed class QueryPagination
+{
+    /// <summary>The paging mode. Only <c>cursor</c> is supported.</summary>
+    public required string Mode { get; init; }
+
+    /// <summary>An opaque continuation token returned by a preceding cursor-paged result.</summary>
+    public string? Cursor { get; init; }
 }

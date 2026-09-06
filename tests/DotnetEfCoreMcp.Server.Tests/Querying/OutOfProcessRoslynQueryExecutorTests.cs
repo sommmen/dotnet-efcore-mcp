@@ -48,6 +48,35 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_CursorPagination_RoundTripsContinuationThroughIsolatedHost()
+    {
+        var executor = CreateOneShotExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        var second = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None);
+
+        Assert.True(first.HasMoreRows);
+        Assert.NotNull(first.NextCursor);
+        Assert.False(second.HasMoreRows);
+        Assert.Null(second.NextCursor);
+        Assert.Equal("Bob", second.Rows.Single()["Name"]);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_StatementQuery_ReturnsScalarFromIsolatedHost()
     {
         var result = await CreateOneShotExecutor().ExecuteAsync(
@@ -92,6 +121,35 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
 
         AssertEquivalent(expectedSequence, actualSequence);
         AssertEquivalent(expectedScalar, actualScalar);
+    }
+
+    [Fact]
+    public async Task PooledMode_CursorPagination_RoundTripsContinuation()
+    {
+        await using var pool = await CreateStartedPoolAsync();
+        var executor = new PooledOutOfProcessRoslynQueryExecutor(pool);
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        var second = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None);
+
+        Assert.True(first.HasMoreRows);
+        Assert.NotNull(first.NextCursor);
+        Assert.False(second.HasMoreRows);
+        Assert.Equal("Bob", second.Rows.Single()["Name"]);
     }
 
     [Fact]

@@ -661,6 +661,140 @@ public sealed class RoslynQueryExecutorTests : IDisposable
         Assert.Equal(3, result.Scalar);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_IssuesAndResumesWithPrimaryKeyTieBreaker()
+    {
+        using (var context = NewContext())
+        {
+            var customerType = EntitySeeding.GetEntityClrType(context, "Customer");
+            context.Add(EntitySeeding.CreateEntity(customerType, new Dictionary<string, object?> { ["Name"] = "Carol", ["Age"] = 30 }));
+            context.SaveChanges();
+        }
+
+        var executor = CreateExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.True(first.HasMoreRows);
+        Assert.NotNull(first.NextCursor);
+        Assert.Equal("Bob", first.Rows.Single()["Name"]);
+        Assert.Equal(2, first.Rows.Single()["Id"]);
+
+        var second = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None);
+
+        Assert.True(second.HasMoreRows);
+        Assert.Equal("Alice", second.Rows.Single()["Name"]);
+        Assert.Equal(1, second.Rows.Single()["Id"]);
+
+        var final = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = second.NextCursor },
+            },
+            CancellationToken.None);
+
+        Assert.False(final.HasMoreRows);
+        Assert.Null(final.NextCursor);
+        Assert.Equal("Carol", final.Rows.Single()["Name"]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsInvalidOrMismatchedCursorsWithoutValues()
+    {
+        var executor = CreateExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        var resumed = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None);
+        Assert.Equal("Bob", resumed.Rows.Single()["Name"]);
+
+        var cursors = new[]
+        {
+            "not-a-cursor",
+            first.NextCursor! + "x",
+        };
+        foreach (var cursor in cursors)
+        {
+            var exception = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+                _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+                new QueryRequest
+                {
+                    Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                    Pagination = new QueryPagination { Mode = "cursor", Cursor = cursor },
+                },
+                CancellationToken.None));
+            Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, exception.Message);
+            Assert.DoesNotContain("Alice", exception.Message, StringComparison.Ordinal);
+        }
+
+        var mismatched = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None));
+        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, mismatched.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RequiresOrderingAndRejectsSkip()
+    {
+        var executor = CreateExecutor();
+        var unordered = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Take(1)", Pagination = new QueryPagination { Mode = "cursor" } },
+            CancellationToken.None));
+        Assert.Contains("requires an explicit deterministic OrderBy", unordered.Message, StringComparison.Ordinal);
+
+        var skipped = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id).Skip(1)", Pagination = new QueryPagination { Mode = "cursor" } },
+            CancellationToken.None));
+        Assert.Contains("cannot be combined with LINQ Skip", skipped.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OmittedPagination_PreservesLegacyResponse()
+    {
+        var result = await CreateExecutor(maxTake: 1).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id)" }, CancellationToken.None);
+
+        Assert.True(result.HasMoreRows);
+        Assert.Null(result.NextCursor);
+        Assert.Equal(1, result.RowCount);
+    }
+
     /// <summary>Computes the query complexity metrics (node count and max depth) for a query expression,
     /// using the same algorithm as <see cref="QueryComplexityValidator"/>. This is used to derive
     /// test boundary values dynamically rather than hard-coding them, ensuring tests remain correct
