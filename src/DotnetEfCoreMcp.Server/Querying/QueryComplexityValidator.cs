@@ -45,7 +45,6 @@ internal static class QueryComplexityValidator
         if (options.MaxExpressionNodes <= 0) throw new QueryExecutionException("The server-configured MaxExpressionNodes value must be positive.");
         if (options.MaxExpressionDepth <= 0) throw new QueryExecutionException("The server-configured MaxExpressionDepth value must be positive.");
         if (options.MaxQueryOperators <= 0) throw new QueryExecutionException("The server-configured MaxQueryOperators value must be positive.");
-        if (options.MaxIncludedCollectionItems <= 0) throw new QueryExecutionException("The server-configured MaxIncludedCollectionItems value must be positive.");
 
         var root = TryParse(query);
         if (root is null) return;
@@ -94,7 +93,7 @@ internal static class QueryComplexityValidator
         if (operatorCount > options.MaxQueryOperators)
             throw new QueryExecutionException($"Query contains {operatorCount} query operators, exceeding the configured maximum of {options.MaxQueryOperators} (MaxQueryOperators).");
         if (includeCount > options.MaxIncludedCollectionItems)
-            throw new QueryExecutionException($"Query contains {includeCount} Include/ThenInclude calls, exceeding the configured maximum of {options.MaxIncludedCollectionItems} (MaxIncludedCollectionItems).");
+            throw new QueryExecutionException($"Query contains {includeCount} included collections, exceeding the configured maximum of {options.MaxIncludedCollectionItems} (MaxIncludedCollectionItems).");
     }
 
     private static SyntaxNode? TryParse(string query)

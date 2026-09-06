@@ -11,4 +11,6 @@ public class Order
     public decimal Amount { get; set; }
 
     public DateTime CreatedAtUtc { get; set; }
+
+    public List<OrderLine> OrderLines { get; set; } = new();
 }
