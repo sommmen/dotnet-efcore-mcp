@@ -787,33 +787,20 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     public async Task ExecuteAsync_CursorPagination_BoolOrderingUsesIComparableePath()
     {
         // Regression test for: bool is a primitive type that does NOT have relational operators (</>).
-        // Ensure that ordering by a bool key falls through to the IComparable.CompareTo path instead.
+        // Bool ordering is not SQL-translatable in cursor pagination seek predicates (IComparable.CompareTo
+        // cannot be translated by EF Core), so it must be rejected at validation time with a clear error.
         var executor = CreateExecutor();
-        var first = await executor.ExecuteAsync(
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest
             {
                 Query = "Customers.OrderBy(c => c.Version.HasValue).ThenBy(c => c.Id).Take(1)",
                 Pagination = new QueryPagination { Mode = "cursor" },
             },
-            CancellationToken.None);
+            CancellationToken.None));
 
-        Assert.True(first.HasMoreRows);
-        Assert.NotNull(first.NextCursor);
-
-        // Resume using the cursor - should not throw during seek predicate construction.
-        // This validates that bool ordering keys are correctly identified as needing the
-        // IComparable.CompareTo fallback path (not the relational operator path).
-        var second = await executor.ExecuteAsync(
-            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
-            new QueryRequest
-            {
-                Query = "Customers.OrderBy(c => c.Version.HasValue).ThenBy(c => c.Id).Take(1)",
-                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
-            },
-            CancellationToken.None);
-
-        Assert.NotNull(second.Rows.Single());
+        Assert.Contains("does not support ordering by type", ex.Message);
+        Assert.Contains("Bool", ex.Message);
     }
 
     [Fact]

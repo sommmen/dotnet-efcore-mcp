@@ -37,6 +37,7 @@ internal static class CursorPaginationExecutor
             if (orderings.Count == 0)
                 throw new QueryExecutionException("Cursor pagination requires an explicit deterministic OrderBy().");
 
+            ValidateOrderingTypesAreSupported(orderings);
             AppendMissingPrimaryKeyOrderings(orderings, entityType);
             var orderingShape = orderings.Select(OrderingShape.From).ToArray();
             var baseExpression = RemoveTrailingTakes(sequence.Expression);
@@ -158,6 +159,21 @@ internal static class CursorPaginationExecutor
         }
 
         return predicate!;
+    }
+
+    private static void ValidateOrderingTypesAreSupported(IReadOnlyList<Ordering> orderings)
+    {
+        foreach (var ordering in orderings)
+        {
+            var selectorType = ordering.Selector.ReturnType;
+            var underlyingType = Nullable.GetUnderlyingType(selectorType) ?? selectorType;
+
+            // Reject types that do not have SQL-translatable comparison operators.
+            // bool, IntPtr, and UIntPtr do not have relational operators and cannot be translated to SQL in WHERE predicates.
+            if (underlyingType == typeof(bool) || underlyingType == typeof(IntPtr) || underlyingType == typeof(UIntPtr))
+                throw new QueryExecutionException($"Cursor pagination does not support ordering by type '{underlyingType.Name}'. " +
+                    $"Only types with SQL-translatable comparison operators are supported.");
+        }
     }
 
     private static bool HasComparisonOperators(Type type)
