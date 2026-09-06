@@ -44,7 +44,7 @@ queries, and local variables in statement-mode queries. Client-side operators re
 `AsEnumerable()` or materialization, but non-`IQueryable` results are returned through the scalar
 slot instead of row-shaped output.
 
-**Note:** Full statement-mode support (including access-policy pre-checks) is currently incomplete and tracked in P0 #9.
+**Note:** Statement/block C# syntax is intentionally unsupported. Queries remain expression-mode-only so entity access checks cannot be bypassed through arbitrary `DbContext` access.
 Expression-mode queries are the primary execution path; statement-mode is planned but requires further implementation work.
 
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
@@ -55,7 +55,7 @@ to the configured maximum. Scalar results remain scalars. The generated `UserQue
 `SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
 selected connection is non-production `ReadWrite`. Focused executor tests cover expression-mode queries,
 joins, projections, aggregates, mutation gating, and paging
-behavior (statement-mode support is tracked in P0 #9). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`) enforced alongside `MaxQueryLength`.
+behavior (statement/block syntax remains intentionally unsupported to preserve access-policy enforcement). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`) enforced alongside `MaxQueryLength`.
 
 Execution location is configured with `QueryExecution:Mode` (`InProcess`, `OutOfProcess`,
 `Pooled`, or `Auto`), and Roslyn compilation settings live under `QueryCompilation`; see
@@ -156,8 +156,7 @@ defaults to 10 and cannot exceed 25, with invalid counts rejected, and returns `
 more matches exist than the effective limit.
 
 The cached schema is passed through a policy-ready selector before slicing or searching; P0 #6
-itself does not implement authorization, but this seam permits the future P0 #9 access-policy
-evaluator to filter the visible entities, properties, and relationships without changing either
+itself does not implement authorization; the connection-scoped access-policy evaluator filters the visible entities, properties, and relationships without changing either
 public contract. See [Schema discovery](./schema-discovery.md#p0-6--schema-slicingsearch) for the
 full contract and MCP binding/forwarding, cache-only, slice fidelity, unknown-name, matching/order,
 cap/`truncated`, invalid-input, and policy-seam test coverage.
@@ -209,11 +208,18 @@ and root `skip`/`take`. Capture SQLite commands or translated SQL to prove the c
 server-side limiting/window logic before materialization; a response-only assertion is insufficient
 because it could pass after loading every child row.
 
-## Proposed open work — P0 #9: per-connection policy enforcement
+## P0 #9: per-connection policy enforcement
 
-Keep the public tool parameters unchanged: every existing `connectionName`, `contextName`, and `entity` is evaluated against the selected connection's server-side `AccessPolicy`; clients cannot supply or override policy data. Enforcement covers `list_contexts`, `get_schema`, `get_entity_schema`, `search_schema`, `run_query`, and `preview_query_sql`. Tools that do not select a context or entity remain outside this policy's entity decision.
+Per-connection server-side `AccessPolicy` enforcement is complete. The public tool
+parameters are unchanged, and clients cannot supply or override policy data.
+`list_contexts`, `get_schema`, `get_entity_schema`, `search_schema`, `run_query`,
+and `preview_query_sql` evaluate selectors using the selected connection's shared
+policy evaluator. Discovery returns a filtered schema view; direct lookup and query
+execution reject denied or unlisted selectors without disclosing excluded names.
 
-Each tool uses the same policy evaluator and sanitized authorization failure. Discovery tools return filtered views rather than denied entries, while direct lookup/execution rejects denied or unlisted selectors. Add focused tool-surface tests for forwarding the connection identity to the evaluator, coverage of every listed tool, allowlist-over-deny precedence, and non-disclosure of excluded contexts/entities in list, schema, and search responses.
+See [Connection management](./connections.md#p0-9-per-connection-access-policy-enforcement)
+and [Schema discovery](./schema-discovery.md#p0-9-policy-filtered-schema-discovery)
+for configuration, precedence, filtered-view, and non-disclosure details.
 
 ## P1 #11 — migration inspection & script generation
 
