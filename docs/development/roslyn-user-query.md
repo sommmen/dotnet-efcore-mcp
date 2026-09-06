@@ -5,10 +5,16 @@
 Code: `src/DotnetEfCoreMcp.Server/Querying` (rewritten) + new `src/DotnetEfCoreMcp.Server/Compilation` ·
 Tests: `tests/DotnetEfCoreMcp.Server.Tests/Querying` + new `tests/DotnetEfCoreMcp.Server.Tests/Compilation`
 
-> **Status: current `run_query` model.** The Roslyn compilation pipeline (`Compilation/`) and its
-> executor (`Querying/RoslynQueryExecutor.cs`) define the supported `run_query` behavior described
-> in the public docs: LINQPad-style `UserQuery : TDbContext`, expression or statement-mode authoring,
-> default no-tracking, and out-of-process execution options.
+> **Status: historical design doc, partially superseded.** The Roslyn compilation pipeline
+> (`Compilation/`) and its executor (`Querying/RoslynQueryExecutor.cs`) implement the LINQPad-style
+> `UserQuery : TDbContext` model, default no-tracking, and out-of-process execution options
+> described below. The statement-mode authoring design discussed in this document was **not**
+> carried into the shipped tool contract: `run_query` is expression-mode-only by design, because
+> entity-level access-policy enforcement (P0 #9) needs a single-expression pre-check that can
+> extract a root/entity list syntactically (with documented text/regex-scan limitations — see
+> `QueryExecutor.NormalizeAndGetRoot`). See [mcp-tools.md](./mcp-tools.md) and
+> [query-execution.md](./query-execution.md) for the authoritative, current `run_query` contract;
+> treat the statement-mode sections below as an unimplemented alternative, not current behavior.
 
 ## Why
 
