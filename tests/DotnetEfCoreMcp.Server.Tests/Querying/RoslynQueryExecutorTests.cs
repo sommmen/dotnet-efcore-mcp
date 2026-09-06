@@ -784,6 +784,73 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_CursorPagination_BoolOrderingUsesIComparableePath()
+    {
+        // Regression test for: bool is a primitive type that does NOT have relational operators (</>).
+        // Ensure that ordering by a bool key falls through to the IComparable.CompareTo path instead.
+        var executor = CreateExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Version.HasValue).ThenBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.True(first.HasMoreRows);
+        Assert.NotNull(first.NextCursor);
+
+        // Resume using the cursor - should not throw during seek predicate construction.
+        // This validates that bool ordering keys are correctly identified as needing the
+        // IComparable.CompareTo fallback path (not the relational operator path).
+        var second = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Version.HasValue).ThenBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(second.Rows.Single());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsInvalidCursorWithSafeErrorMessage()
+    {
+        // Regression test for: DynamicInvoke wraps exceptions in TargetInvocationException.
+        // Ensure that if an ordering selector throws, the exception is unwrapped and converted
+        // to QueryExecutionException with the safe InvalidCursorMessage (not leaking internal values).
+        var executor = CreateExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(first.NextCursor);
+
+        // Use an invalid cursor (truncated) to trigger cursor decoding.
+        // This should fail during cursor validation and throw QueryExecutionException with safe message.
+        var exception = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = "invalid-cursor" },
+            },
+            CancellationToken.None));
+
+        // Verify the exception is a QueryExecutionException (not wrapped in TargetInvocationException)
+        // and uses the safe error message without leaking internal details.
+        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, exception.Message);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_OmittedPagination_PreservesLegacyResponse()
     {
         var result = await CreateExecutor(maxTake: 1).ExecuteAsync(

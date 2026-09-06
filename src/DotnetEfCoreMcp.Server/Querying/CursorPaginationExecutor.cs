@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -162,12 +163,17 @@ internal static class CursorPaginationExecutor
     private static bool HasComparisonOperators(Type type)
     {
         var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
-        
-        // Primitive numeric types, DateTime, DateTimeOffset, TimeSpan, char all have comparison operators
-        if (underlyingType.IsPrimitive || underlyingType == typeof(decimal) || underlyingType == typeof(DateTime) || 
+
+        // bool, IntPtr, and UIntPtr are primitive but do not have relational comparison operators.
+        // Exclude them explicitly so they fall through to the IComparable.CompareTo path.
+        if (underlyingType == typeof(bool) || underlyingType == typeof(IntPtr) || underlyingType == typeof(UIntPtr))
+            return false;
+
+        // Primitive numeric types (excluding bool/IntPtr/UIntPtr), DateTime, DateTimeOffset, TimeSpan, char have comparison operators
+        if (underlyingType.IsPrimitive || underlyingType == typeof(decimal) || underlyingType == typeof(DateTime) ||
             underlyingType == typeof(DateTimeOffset) || underlyingType == typeof(TimeSpan) || underlyingType == typeof(char))
             return true;
-        
+
         // Check if type defines op_GreaterThan operator
         return underlyingType.GetMethod("op_GreaterThan", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public, null, new[] { underlyingType, underlyingType }, null) is not null;
     }
@@ -191,8 +197,18 @@ internal static class CursorPaginationExecutor
         return descending ? Expression.LessThan(compareTo, Expression.Constant(0)) : Expression.GreaterThan(compareTo, Expression.Constant(0));
     }
 
-    private static object?[] ReadValues(IReadOnlyList<Ordering> orderings, object value) =>
-        orderings.Select(ordering => ordering.Selector.Compile().DynamicInvoke(value)).ToArray();
+    private static object?[] ReadValues(IReadOnlyList<Ordering> orderings, object value)
+    {
+        try
+        {
+            return orderings.Select(ordering => ordering.Selector.Compile().DynamicInvoke(value)).ToArray();
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        {
+            // DynamicInvoke wraps exceptions; unwrap and convert to QueryExecutionException for consistent error handling
+            throw new QueryExecutionException(InvalidCursorMessage, ex.InnerException);
+        }
+    }
 
     private static string EncodeCursor(Type contextType, IEntityType entityType, OrderingShape[] ordering, object?[] values, string signingKey)
     {

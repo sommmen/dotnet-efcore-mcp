@@ -468,6 +468,7 @@ public sealed class EfCoreMcpTools(
                 throw;
             }
 
+
             metrics.RecordQueryExecution("run_query", ResolveEffectiveProvider(contextType, entry).ToString(), contextType.Name, result.RowCount, succeeded: true);
             return resultFormatter.Format(result);
         }
