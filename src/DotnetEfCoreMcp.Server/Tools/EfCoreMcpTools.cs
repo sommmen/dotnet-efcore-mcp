@@ -406,7 +406,7 @@ public sealed class EfCoreMcpTools(
         "Executes a safe, read-only LINQPad-style C# expression rooted at a public DbSet property on the selected DbContext. " +
         "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: " +
         "IQueryable results are materialized and capped server-side at 50 rows by default, up to a configured maximum of 200 (scalar aggregates/element operators such as " +
-        "Count/FirstOrDefault/Single/Any return single values; already-materialized results like .ToList() return as-is without capping). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. Cursor pagination requires an explicit OrderBy and cannot be combined with Skip. " +
+        "Count/FirstOrDefault/Single/Any return single values; already-materialized results like .ToList() return as-is without capping). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. " +
         "The full LINQPad surface is supported: Where, Select, GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, " +
         "Distinct, Count, LongCount, Sum, Average, Min, Max, First, FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, " +
         "Zip, and the set operators Concat/Union/Except/Intersect (which may reference another public DbSet by name, e.g. " +
@@ -418,11 +418,10 @@ public sealed class EfCoreMcpTools(
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
         [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
-        [Description("Optional forward-only keyset pagination. Use { mode: \"cursor\" } for the first page and pass the returned nextCursor as cursor for later pages. Requires an explicitly ordered entity query and cannot be combined with Skip().")] QueryPagination? pagination = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, pagination, cancellationToken));
+        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, cancellationToken));
 
-    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, QueryPagination? pagination, CancellationToken cancellationToken)
+    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, CancellationToken cancellationToken)
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry, targetName);
@@ -435,18 +434,17 @@ public sealed class EfCoreMcpTools(
         EnsureContextReachable(contextType, entry);
         try
         {
-            // NormalizeAndGetRoot enforces single-expression mode (strips a trailing ';' and rejects
-            // multi-statement and top-level blocks) and requires the root DbSet name at the start. This
-            // behavior is intentional: statement-mode queries remain unsupported by design because entity-
-            // level access-policy enforcement (P0 #9) relies on compile-time root/entity extraction prior to
-            // compilation/execution. See docs/development/query-execution.md for rationale.
+            // TODO P0 #9: NormalizeAndGetRoot enforces single-expression mode (strips trailing ';' but rejects
+            // multi-statement and top-level blocks) and requires root DbSet name at start, which breaks the documented
+            // statement-mode queries. Access-policy enforcement must be refactored to parse statement-mode syntax for
+            // root DbSet name extraction without requiring single-expression constraint, or to analyze compiled results post-binding.
             var (rootName, expressionText) = QueryExecutor.NormalizeAndGetRoot(query, queryExecutionOptions.MaxQueryLength);
             foreach (var entityName in QueryExecutor.ResolveReferencedEntityNames(contextType, rootName, expressionText))
             {
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
 
-            var result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, pagination, cancellationToken);
+            var result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, cancellationToken);
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
@@ -454,11 +452,11 @@ public sealed class EfCoreMcpTools(
             throw new McpException(FormatQueryError(ex));
         }
     }
-    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, QueryPagination? pagination, CancellationToken cancellationToken)
+    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, CancellationToken cancellationToken)
     {
         var target = RequireLoadedAssembly(targetName);
         var provider = ResolveEffectiveProvider(contextType, entry);
-        var request = new QueryRequest { Query = query, Pagination = pagination };
+        var request = new QueryRequest { Query = query };
         return queryExecutionOptions.Mode switch
         {
             QueryExecutionMode.InProcess => roslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
