@@ -17,6 +17,12 @@ Code: logging is emitted from
   - Standard `Microsoft.Extensions.Logging` structured logging (named parameters, not
     string interpolation), verbosity configurable via the normal `Logging:LogLevel`
     configuration section in `appsettings.json`/environment variables.
-- [ ] Add basic metrics/telemetry hooks (optional, later-stage)
-  - Open item — see [`WORK-TRACKER.md`](./WORK-TRACKER.md). No metrics pipeline exists in
-    this repo yet to hook into (would need an OpenTelemetry or similar dependency decision).
+- [x] Add basic metrics/telemetry hooks (optional, later-stage)
+  - OpenTelemetry metrics and tracing instrument MCP tool requests and query execution.
+    Export is disabled by default and uses OTLP/HTTP only when `Telemetry:Enabled` is set;
+    all settings support the existing `DOTNETEFCOREMCP_` environment-variable overrides.
+    Metrics cover request outcomes, latency, active requests, query outcomes, and row counts
+    with bounded production-safe dimensions. Sampling is parent-based and configurable (5%
+    by default). `Telemetry:EnableDevelopmentFullData` permits richer query/model data only
+    when the server runs in Development. The exporter uses bounded batch processing so it
+    never blocks or fails MCP requests; no HTTP metrics endpoint or metrics MCP tool is exposed.
