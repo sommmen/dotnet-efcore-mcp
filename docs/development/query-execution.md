@@ -95,7 +95,7 @@ Authoring has two modes:
   `return <query>;`. This is the currently supported execution path in `run_query`. A single optional trailing `;` is stripped and accepted.
 - **Statement mode:** if the trimmed text uses a top-level `{ ... }` block or contains multiple statements,
   the server would treat it as a statement body for local variables, multiple steps, and explicit
-  `return` statements. This is **not supported** in `run_query` by design: entity-level access policy enforcement (described below) requires a pre-compilation, syntactic root/entity extraction before Roslyn compilation and execution, and the current pre-check only performs that extraction over a single expression. Statement mode remains intentionally unsupported because analyzing arbitrary statement bodies for the same guarantees is not tractable for that pre-check today.
+  `return` statements. This is **not supported** in `run_query` by design: entity-level access policy enforcement (described below) requires a pre-compilation, syntactic root/entity extraction before Roslyn compilation and execution, and the current pre-check only performs that extraction over a single expression. Statement mode remains intentionally unsupported because analyzing arbitrary statement bodies for the same guarantees is not tractable for that pre-check; this is a permanent design constraint, not a temporary gap.
 
 Because the query is compiled as real C#, the supported operator surface is the full LINQ surface
 available to the loaded app and referenced assemblies. Common provider-translatable shapes include

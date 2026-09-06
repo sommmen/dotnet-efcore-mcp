@@ -46,8 +46,8 @@ slot instead of row-shaped output.
 intentionally unsupported (multiple statements, extra semicolons, top-level blocks, or local
 variables). Queries remain expression-mode-only because entity-level access-policy enforcement
 (P0 #9) relies on a pre-compilation, syntactic root/entity extraction over a single expression;
-statement or block bodies are not analyzed by that pre-check and are out of scope for this
-tractable analysis. This is a permanent design constraint, not a temporary gap.
+statement or block bodies are not analyzed by that pre-check. This is a permanent design
+constraint, not a temporary gap.
 
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
 cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
