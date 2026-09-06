@@ -44,9 +44,10 @@ slot instead of row-shaped output.
 
 **Note:** A single trailing `;` is accepted and stripped; anything beyond one expression is
 intentionally unsupported (multiple statements, extra semicolons, top-level blocks, or local
-variables). Queries remain expression-mode-only so entity-level access-policy enforcement (P0 #9),
-which relies on compile-time root/entity extraction before compilation, cannot be bypassed through
-arbitrary `DbContext` access. This is a permanent design constraint, not a temporary gap.
+variables). Queries remain expression-mode-only because entity-level access-policy enforcement
+(P0 #9) relies on compile-time root/entity extraction from a single expression tree; statement or
+block bodies are not analyzed by that pre-check and are out of scope for this tractable, syntactic
+analysis. This is a permanent design constraint, not a temporary gap.
 
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
 cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
