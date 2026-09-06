@@ -439,7 +439,7 @@ public sealed class EfCoreMcpTools(
             // behavior is intentional: statement-mode queries remain unsupported by design because entity-
             // level access-policy enforcement (P0 #9) relies on compile-time root/entity extraction prior to
             // compilation/execution. See docs/development/query-execution.md for rationale.
-var (rootName, expressionText) = QueryExecutor.NormalizeAndGetRoot(query, queryExecutionOptions.MaxQueryLength);
+            var (rootName, expressionText) = QueryExecutor.NormalizeAndGetRoot(query, queryExecutionOptions.MaxQueryLength);
             foreach (var entityName in QueryExecutor.ResolveReferencedEntityNames(contextType, rootName, expressionText))
             {
                 EnsureEntityAllowed(contextType, entry, entityName);

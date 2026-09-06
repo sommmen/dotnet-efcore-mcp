@@ -35,17 +35,18 @@ whose `T` is in the EF model. This is the only `run_query` request shape: the fo
 `entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` parameters are not supported.
 Projection, grouping, joining, paging, and aggregate semantics belong to this one query surface.
 
-Authoring has two modes. If the trimmed text parses as one complete expression, the server emits
-`return <query>;`. If it ends with `;` or uses a top-level block, the server treats it as
-statement mode and expects the query text itself to `return` the final value. Because the query is
-compiled as real C#, the supported operator surface is the full LINQ surface available to the
-loaded app and referenced assemblies, including `Join`, `GroupJoin`, `SelectMany`, cross-`DbSet`
-queries, and local variables in statement-mode queries. Client-side operators remain possible after
+The query text must parse as a single complete expression; the server emits `return <query>;`
+around it. Because the query is compiled as real C#, the supported operator surface is the full
+LINQ surface available to the loaded app and referenced assemblies, including `Join`, `GroupJoin`,
+`SelectMany`, and cross-`DbSet` queries. Client-side operators remain possible after
 `AsEnumerable()` or materialization, but non-`IQueryable` results are returned through the scalar
 slot instead of row-shaped output.
 
-**Note:** Statement/block C# syntax is intentionally unsupported. Queries remain expression-mode-only so entity access checks cannot be bypassed through arbitrary `DbContext` access.
-Expression-mode queries are the primary execution path; statement-mode is planned but requires further implementation work.
+**Note:** Statement/block C# syntax (a trailing `;`, a top-level block, or local variables) is
+intentionally unsupported. Queries remain expression-mode-only so entity-level access-policy
+enforcement (P0 #9), which relies on compile-time root/entity extraction before compilation, cannot
+be bypassed through arbitrary `DbContext` access. This is a permanent design constraint, not a
+temporary gap.
 
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
 cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
