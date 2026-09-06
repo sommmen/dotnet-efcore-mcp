@@ -7,6 +7,7 @@ using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
+using DotnetEfCoreMcp.Server.Telemetry;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
@@ -37,7 +38,8 @@ public sealed class EfCoreMcpTools(
     ToolDiagnosticsOptions toolDiagnosticsOptions,
     ILogger<EfCoreMcpTools> logger,
     EntityMutationsOptions entityMutationsOptions,
-    EntityMutationExecutor entityMutationExecutor)
+    EntityMutationExecutor entityMutationExecutor,
+    IMcpMetrics metrics)
 {
     internal EfCoreMcpTools(
         AssemblyLoaderService assemblyLoader,
@@ -74,7 +76,10 @@ public sealed class EfCoreMcpTools(
             toolDiagnosticsOptions,
             logger,
             entityMutationsOptions,
-            entityMutationExecutor)
+            entityMutationExecutor,
+            // No IMcpMetrics is supplied by this test-only constructor overload, so telemetry is a
+            // no-op here (mirrors production behavior when telemetry is disabled).
+            NullMcpMetrics.Instance)
     {
     }
 
@@ -449,7 +454,18 @@ public sealed class EfCoreMcpTools(
             {
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
-            var result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, include, cancellationToken);
+            QueryResult result;
+            try
+            {
+                result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, include, cancellationToken);
+            }
+            catch (QueryExecutionException)
+            {
+                metrics.RecordQueryExecution("run_query", ResolveEffectiveProvider(contextType, entry).ToString(), contextType.Name, rowCount: null, succeeded: false);
+                throw;
+            }
+
+            metrics.RecordQueryExecution("run_query", ResolveEffectiveProvider(contextType, entry).ToString(), contextType.Name, result.RowCount, succeeded: true);
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
@@ -573,6 +589,7 @@ public sealed class EfCoreMcpTools(
         }
 
         using var context = CreateContext(contextType, entry);
+        var provider = ResolveEffectiveProvider(contextType, entry);
         try
         {
             var result = await sqlQueryExecutor.ExecuteAsync(
@@ -580,10 +597,12 @@ public sealed class EfCoreMcpTools(
                 new SqlQueryRequest { Sql = sql, Parameters = parameters },
                 entry.CommandTimeoutSeconds,
                 cancellationToken);
+            metrics.RecordQueryExecution("run_sql_query", provider.ToString(), contextType.Name, result.AffectedRows ?? result.ReturnedRowCount, succeeded: true);
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
         {
+            metrics.RecordQueryExecution("run_sql_query", provider.ToString(), contextType.Name, rowCount: null, succeeded: false);
             throw new McpException(FormatSqlQueryError(ex));
         }
     }
@@ -805,12 +824,19 @@ public sealed class EfCoreMcpTools(
 
     private T Execute<T>(string operation, Func<T> action)
     {
+        var requestId = Guid.NewGuid().ToString("N");
+        using var activity = McpActivitySource.Instance.StartActivity(operation);
+        activity?.SetTag("mcp.request_id", requestId);
+        using var scope = metrics.BeginToolInvocation(operation, requestId);
         try
         {
-            return action();
+            var result = action();
+            scope.Complete(succeeded: true, errorCategory: null);
+            return result;
         }
         catch (McpException)
         {
+            scope.Complete(succeeded: false, errorCategory: SafeErrorCategory<McpException>());
             throw;
         }
         catch (Exception ex) when (ex is AccessPolicyDeniedException or ConnectionRegistryConfigurationException)
@@ -819,37 +845,58 @@ public sealed class EfCoreMcpTools(
             // directly rather than routing through CreateUnexpectedToolException's opaque, generic
             // "failed unexpectedly" path, which would obscure the actionable denial/misconfiguration
             // reason without adding any further safety.
+            scope.Complete(succeeded: false, errorCategory: SafeErrorCategory(ex));
             throw new McpException(ex.Message);
         }
         catch (Exception ex)
         {
+            scope.Complete(succeeded: false, errorCategory: SafeErrorCategory(ex));
             throw CreateUnexpectedToolException(operation, ex);
         }
     }
 
     private async Task<T> ExecuteAsync<T>(string operation, Func<Task<T>> action)
     {
+        var requestId = Guid.NewGuid().ToString("N");
+        using var activity = McpActivitySource.Instance.StartActivity(operation);
+        activity?.SetTag("mcp.request_id", requestId);
+        using var scope = metrics.BeginToolInvocation(operation, requestId);
         try
         {
-            return await action();
+            var result = await action();
+            scope.Complete(succeeded: true, errorCategory: null);
+            return result;
         }
         catch (McpException)
         {
+            scope.Complete(succeeded: false, errorCategory: SafeErrorCategory<McpException>());
             throw;
         }
         catch (OperationCanceledException)
         {
+            scope.Complete(succeeded: false, errorCategory: SafeErrorCategory<OperationCanceledException>());
             throw;
         }
         catch (Exception ex) when (ex is AccessPolicyDeniedException or ConnectionRegistryConfigurationException)
         {
+            scope.Complete(succeeded: false, errorCategory: SafeErrorCategory(ex));
             throw new McpException(ex.Message);
         }
         catch (Exception ex)
         {
+            scope.Complete(succeeded: false, errorCategory: SafeErrorCategory(ex));
             throw CreateUnexpectedToolException(operation, ex);
         }
     }
+
+    /// <summary>Maps an exception to a bounded, low-cardinality error category for telemetry - the
+    /// exception's CLR type name (e.g. <c>"AccessPolicyDeniedException"</c>), never its message or
+    /// stack trace, which could contain caller-supplied values (connection names, query text, etc.).
+    /// The set of thrown exception types in this codebase is fixed at compile time, so this cannot
+    /// grow unbounded at runtime.</summary>
+    private static string SafeErrorCategory(Exception exception) => exception.GetType().Name;
+
+    private static string SafeErrorCategory<TException>() where TException : Exception => typeof(TException).Name;
 
     private McpException CreateUnexpectedToolException(string operation, Exception exception)
     {

@@ -5,11 +5,15 @@ using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
+using DotnetEfCoreMcp.Server.Telemetry;
 using DotnetEfCoreMcp.Server.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -60,6 +64,57 @@ builder.Services.AddSingleton<EntityMutationExecutor>();
 // refuses to enable it under any other host environment.
 builder.Services.AddSingleton(_ => ToolDiagnosticsOptions.CreateEffective(
     builder.Configuration, builder.Environment.IsDevelopment()));
+
+// Telemetry is disabled by default (TelemetryOptions.Enabled == false), in which case no
+// OpenTelemetry SDK component is registered at all - not even a no-op exporter - so there is zero
+// added startup/runtime overhead unless a deployment explicitly opts in via configuration/env vars.
+var telemetryOptions = TelemetryOptions.CreateEffective(builder.Configuration, builder.Environment.IsDevelopment());
+builder.Services.AddSingleton(telemetryOptions);
+if (telemetryOptions.Enabled)
+{
+    builder.Services.AddSingleton<IMcpMetrics, McpMetrics>();
+    builder.Services
+        .AddOpenTelemetry()
+        .WithTracing(tracing =>
+        {
+            // No trace exporter is configured (export is metrics-only, per scope). This pipeline
+            // exists solely to give the shared McpActivitySource a listener so its parent-based
+            // sampling decision is real: a root request is sampled at TelemetryOptions.SamplingRatio
+            // (a low, production-safe default), and any child activity inherits its parent's
+            // decision rather than being independently re-sampled. The resulting sampled/unsampled
+            // Activity also correlates the request ID with metric exemplars below.
+            tracing
+                .AddSource(McpActivitySource.Name)
+                .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(telemetryOptions.SamplingRatio)));
+        })
+        .WithMetrics(metrics =>
+        {
+            metrics
+                .AddMeter(McpMetrics.MeterName)
+                .SetExemplarFilter(ExemplarFilterType.TraceBased)
+                .AddOtlpExporter((exporterOptions, readerOptions) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(telemetryOptions.OtlpEndpoint))
+                    {
+                        exporterOptions.Endpoint = new Uri(telemetryOptions.OtlpEndpoint);
+                    }
+
+                    exporterOptions.Protocol = OtlpExportProtocol.HttpProtobuf;
+                    exporterOptions.TimeoutMilliseconds = telemetryOptions.ExportTimeoutMilliseconds;
+
+                    // Periodic export is inherently asynchronous and off the request path: instruments
+                    // aggregate in-process between cycles, and a slow/unreachable collector only delays
+                    // (or, past the timeout above, drops) one export cycle rather than blocking or
+                    // failing any MCP tool request.
+                    readerOptions.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = telemetryOptions.ExportIntervalMilliseconds;
+                    readerOptions.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds = telemetryOptions.ExportTimeoutMilliseconds;
+                });
+        });
+}
+else
+{
+    builder.Services.AddSingleton<IMcpMetrics>(NullMcpMetrics.Instance);
+}
 
 var configuredToolOutputFormat = builder.Configuration["ToolOutput:Format"];
 var toolResultFormat = string.IsNullOrWhiteSpace(configuredToolOutputFormat)
