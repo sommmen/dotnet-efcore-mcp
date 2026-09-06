@@ -95,7 +95,7 @@ Authoring has two modes:
   `return <query>;`. This is the currently supported execution path in `run_query`. A single optional trailing `;` is stripped and accepted.
 - **Statement mode:** if the trimmed text uses a top-level `{ ... }` block or contains multiple statements,
   the server would treat it as a statement body for local variables, multiple steps, and explicit
-  `return` statements. This is **not supported** in `run_query` by design: entity-level access policy enforcement (described below) requires parsing and validating the query at compile time before execution, which is only feasible for expression-mode queries. Statement-mode queries would require a full statement-level parser and policy analyzer, tracked as future work in P0 #9.
+  `return` statements. This is **not supported** in `run_query` by design: entity-level access policy enforcement (described below) requires a pre-compilation, syntactic root/entity extraction before Roslyn compilation and execution, and the current pre-check only performs that extraction over a single expression. Statement mode remains intentionally unsupported because analyzing arbitrary statement bodies for the same guarantees is not tractable for that pre-check; this is a permanent design constraint, not a temporary gap.
 
 Because the query is compiled as real C#, the supported operator surface is the full LINQ surface
 available to the loaded app and referenced assemblies. Common provider-translatable shapes include
@@ -276,15 +276,16 @@ SQLite integration tests cover below/exact/above/zero cap boundaries, determinis
 independent parent caps, root paging, and executed child-command SQL containing a provider-translated
 limit before materialization.
 
-## Proposed open work — P0 #9: policy-gated context/entity execution
+## P0 #9: policy-gated context/entity execution
 
-Before any query path constructs a context, compiles Roslyn code, generates SQL, or connects to the
-database, authorize the requested `contextName` plus the root `DbSet`/entity and any additional
-public `DbSet` roots referenced by the query against the selected connection's `AccessPolicy`. The
-same guard is required for `run_query` and `preview_query_sql`; shared entry points must receive
-the already-authorized identities so no alternate execution path can bypass them.
+Before a query path constructs a context, compiles Roslyn code, generates SQL, or connects to the
+database, it authorizes the requested `contextName` plus the root `DbSet`/entity and any additional
+public `DbSet` roots referenced by the query against the selected connection's `AccessPolicy`. Both
+`run_query` and `preview_query_sql` use this shared guard, so no alternate execution path bypasses it.
 
-A denied or unlisted selector fails closed with a sanitized authorization error and performs no model/database work. Focused tests verify each execution tool rejects disallowed context and entity requests before parsing or SQL/database access, permits an explicit allow despite a matching deny, denies unmatched selectors, and preserves existing behavior for allowed requests.
+Denied or unlisted selectors fail closed with a sanitized authorization error and perform no
+model/database work. Focused tests cover both execution tools, allowed-over-denied precedence,
+unmatched-selector rejection, and unchanged allowed-query behavior.
 
 ## Proposed open work — P1 #14: keyset/cursor pagination
 

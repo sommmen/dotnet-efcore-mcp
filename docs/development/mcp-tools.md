@@ -35,17 +35,19 @@ whose `T` is in the EF model. This is the only `run_query` request shape: the fo
 `entity`/`where`/`parameters`/`orderBy`/`skip`/`take`/`include` parameters are not supported.
 Projection, grouping, joining, paging, and aggregate semantics belong to this one query surface.
 
-Authoring has two modes. If the trimmed text parses as one complete expression, the server emits
-`return <query>;`. If it ends with `;` or uses a top-level block, the server treats it as
-statement mode and expects the query text itself to `return` the final value. Because the query is
-compiled as real C#, the supported operator surface is the full LINQ surface available to the
-loaded app and referenced assemblies, including `Join`, `GroupJoin`, `SelectMany`, cross-`DbSet`
-queries, and local variables in statement-mode queries. Client-side operators remain possible after
+The query text must parse as a single complete expression; the server emits `return <query>;`
+around it. Because the query is compiled as real C#, the supported operator surface is the full
+LINQ surface available to the loaded app and referenced assemblies, including `Join`, `GroupJoin`,
+`SelectMany`, and cross-`DbSet` queries. Client-side operators remain possible after
 `AsEnumerable()` or materialization, but non-`IQueryable` results are returned through the scalar
 slot instead of row-shaped output.
 
-**Note:** Full statement-mode support (including access-policy pre-checks) is currently incomplete and tracked in P0 #9.
-Expression-mode queries are the primary execution path; statement-mode is planned but requires further implementation work.
+**Note:** A single trailing `;` is accepted and stripped; anything beyond one expression is
+intentionally unsupported (multiple statements, extra semicolons, top-level blocks, or local
+variables). Queries remain expression-mode-only because entity-level access-policy enforcement
+(P0 #9) relies on a pre-compilation, syntactic root/entity extraction over a single expression;
+statement or block bodies are not analyzed by that pre-check. This is a permanent design
+constraint, not a temporary gap.
 
 Access policy is enforced by `RunQueryCore` pre-check before Roslyn execution. The Roslyn pipeline then applies
 cancellation/timeout, take caps, and safe result projection. `IQueryable` results receive the configured 
@@ -55,7 +57,7 @@ to the configured maximum. Scalar results remain scalars. The generated `UserQue
 `SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
 selected connection is non-production `ReadWrite`. Focused executor tests cover expression-mode queries,
 joins, projections, aggregates, mutation gating, and paging
-behavior (statement-mode support is tracked in P0 #9). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`) enforced alongside `MaxQueryLength`.
+behavior (statement/block syntax remains intentionally unsupported to preserve access-policy enforcement). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`) enforced alongside `MaxQueryLength`.
 
 Execution location is configured with `QueryExecution:Mode` (`InProcess`, `OutOfProcess`,
 `Pooled`, or `Auto`), and Roslyn compilation settings live under `QueryCompilation`; see
@@ -156,8 +158,7 @@ defaults to 10 and cannot exceed 25, with invalid counts rejected, and returns `
 more matches exist than the effective limit.
 
 The cached schema is passed through a policy-ready selector before slicing or searching; P0 #6
-itself does not implement authorization, but this seam permits the future P0 #9 access-policy
-evaluator to filter the visible entities, properties, and relationships without changing either
+itself does not implement authorization; the connection-scoped access-policy evaluator filters the visible entities, properties, and relationships without changing either
 public contract. See [Schema discovery](./schema-discovery.md#p0-6--schema-slicingsearch) for the
 full contract and MCP binding/forwarding, cache-only, slice fidelity, unknown-name, matching/order,
 cap/`truncated`, invalid-input, and policy-seam test coverage.
@@ -200,11 +201,18 @@ Focused MCP and SQLite integration tests verify unchanged `include` binding, all
 independent per-parent caps, deterministic results, root paging, and a limiting clause in the executed
 child SQL command.
 
-## Proposed open work — P0 #9: per-connection policy enforcement
+## P0 #9: per-connection policy enforcement
 
-Keep the public tool parameters unchanged: every existing `connectionName`, `contextName`, and `entity` is evaluated against the selected connection's server-side `AccessPolicy`; clients cannot supply or override policy data. Enforcement covers `list_contexts`, `get_schema`, `get_entity_schema`, `search_schema`, `run_query`, and `preview_query_sql`. Tools that do not select a context or entity remain outside this policy's entity decision.
+Per-connection server-side `AccessPolicy` enforcement is complete. The public tool
+parameters are unchanged, and clients cannot supply or override policy data.
+`list_contexts`, `get_schema`, `get_entity_schema`, `search_schema`, `run_query`,
+and `preview_query_sql` evaluate selectors using the selected connection's shared
+policy evaluator. Discovery returns a filtered schema view; direct lookup and query
+execution reject denied or unlisted selectors without disclosing excluded names.
 
-Each tool uses the same policy evaluator and sanitized authorization failure. Discovery tools return filtered views rather than denied entries, while direct lookup/execution rejects denied or unlisted selectors. Add focused tool-surface tests for forwarding the connection identity to the evaluator, coverage of every listed tool, allowlist-over-deny precedence, and non-disclosure of excluded contexts/entities in list, schema, and search responses.
+See [Connection management](./connections.md#p0-9-per-connection-contextentity-access-policy)
+and [Schema discovery](./schema-discovery.md#p0-9-policy-filtered-schema-discovery)
+for configuration, precedence, filtered-view, and non-disclosure details.
 
 ## P1 #11 — migration inspection & script generation
 
