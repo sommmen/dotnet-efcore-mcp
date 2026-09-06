@@ -442,8 +442,9 @@ public sealed class EfCoreMcpTools(
             // NormalizeAndGetRoot enforces single-expression mode (strips a trailing ';' and rejects
             // multi-statement and top-level blocks) and requires the root DbSet name at the start. This
             // behavior is intentional: statement-mode queries remain unsupported by design because entity-
-            // level access-policy enforcement (P0 #9) relies on compile-time root/entity extraction prior to
-            // compilation/execution. See docs/development/query-execution.md for rationale.
+            // level access-policy enforcement (P0 #9) relies on this pre-compilation, syntactic root/entity
+            // extraction (string/regex-based, not a full AST or expression-tree analysis) performed before
+            // Roslyn compilation/execution. See docs/development/query-execution.md for rationale.
             var (rootName, expressionText) = QueryExecutor.NormalizeAndGetRoot(query, queryExecutionOptions.MaxQueryLength);
             foreach (var entityName in QueryExecutor.ResolveReferencedEntityNames(contextType, rootName, expressionText))
             {
