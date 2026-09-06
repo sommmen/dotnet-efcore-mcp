@@ -488,14 +488,14 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     {
         using var emptyDb = new SqliteTestDatabase();
         var executor = new RoslynQueryExecutor(
-            new QueryExecutionOptions { MaxIncludedCollectionItems = 1 },
+            new QueryExecutionOptions { MaxIncludeCount = 1 },
             new QueryCompiler(new QueryCompilationOptions()));
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest { Query = "Customers.Include(c => c.Orders).ThenInclude(o => o.Customer)" }, CancellationToken.None));
 
-        Assert.Contains("exceeding the configured maximum of 1 (MaxIncludedCollectionItems)", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("exceeding the configured maximum of 1 (MaxIncludeCount)", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -15,7 +15,7 @@ internal static class QueryComplexityValidator
     /// <summary>LINQ/EF Core query-operator method names counted toward
     /// <see cref="QueryExecutionOptions.MaxQueryOperators"/>. Deliberately excludes
     /// <c>Include</c>/<c>ThenInclude</c>, which are counted separately toward
-    /// <see cref="QueryExecutionOptions.MaxIncludedCollectionItems"/>.</summary>
+    /// <see cref="QueryExecutionOptions.MaxIncludeCount"/>.</summary>
     private static readonly HashSet<string> QueryOperatorNames = new(StringComparer.Ordinal)
     {
         "Where", "Select", "SelectMany", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending",
@@ -92,8 +92,8 @@ internal static class QueryComplexityValidator
             throw new QueryExecutionException($"Query syntax tree has maximum nesting depth of {maxDepth}, exceeding the configured maximum of {options.MaxExpressionDepth} (MaxExpressionDepth).");
         if (operatorCount > options.MaxQueryOperators)
             throw new QueryExecutionException($"Query contains {operatorCount} query operators, exceeding the configured maximum of {options.MaxQueryOperators} (MaxQueryOperators).");
-        if (includeCount > options.MaxIncludedCollectionItems)
-            throw new QueryExecutionException($"Query contains {includeCount} included collections, exceeding the configured maximum of {options.MaxIncludedCollectionItems} (MaxIncludedCollectionItems).");
+        if (includeCount > options.MaxIncludeCount)
+            throw new QueryExecutionException($"Query contains {includeCount} included collections, exceeding the configured maximum of {options.MaxIncludeCount} (MaxIncludeCount).");
     }
 
     private static SyntaxNode? TryParse(string query)

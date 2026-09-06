@@ -332,8 +332,8 @@ rejection message never discloses decoded key values.
 ## Bounded nested include paths (P1 #13 implemented)
 
 `QueryRequest.Include` accepts case-sensitive, dot-separated EF navigation paths such as
-`Orders.OrderLines.Product`; existing one-segment entries remain valid. Before execution, each segment
-is resolved from the current EF model navigation metadata. Empty, unknown, scalar, duplicate,
+`Orders.OrderLines`; existing one-segment entries remain valid. Before execution, each segment
+is resolved from the current EF model navigation metadata as a navigation property. Empty, unknown, scalar, duplicate,
 over-depth, repeated-navigation, and cyclic paths fail the request with `QueryExecutionException`
 before query construction or database execution.
 

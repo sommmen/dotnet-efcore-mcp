@@ -422,7 +422,7 @@ public sealed class EfCoreMcpTools(
         "query's entity type; each path is validated against the EF model before execution (unknown/scalar/duplicate/cyclic paths, or paths " +
         "exceeding the server-configured max depth/count, are rejected). Included collections are ordered deterministically by primary key and " +
         "capped server-side (database-side, via a filtered Take()) at the configured per-parent maximum; included reference navigations are not " +
-        "capped. When include is supplied, only the requested scalar properties and navigation branches are returned per row.")]
+        "capped. When include is supplied, all mapped scalar properties are returned along with only the requested navigation branches per row.")]
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
