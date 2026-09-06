@@ -16,6 +16,8 @@ public class SampleAppDbContext : DbContext
 
     public DbSet<Order> Orders => Set<Order>();
 
+    public DbSet<OrderLine> OrderLines => Set<OrderLine>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Customer>(builder =>
@@ -50,6 +52,11 @@ public class SampleAppDbContext : DbContext
             builder.Property(o => o.CreatedAtUtc)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .ValueGeneratedOnAdd();
+
+            builder.HasMany(o => o.OrderLines)
+                .WithOne(line => line.Order)
+                .HasForeignKey(line => line.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

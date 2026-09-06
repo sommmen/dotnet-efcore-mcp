@@ -417,16 +417,22 @@ public sealed class EfCoreMcpTools(
         "Zip, and the set operators Concat/Union/Except/Intersect (which may reference another public DbSet by name, e.g. " +
         "Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). " +
         "The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are capped at " +
-        "effectiveTake for IQueryable results); it is false for take:0, scalar results, and already-materialized collections.")]
+        "effectiveTake for IQueryable results); it is false for take:0, scalar results, and already-materialized collections. " +
+        "Optionally accepts include: an array of dot-separated EF navigation paths (e.g. [\"Orders\", \"Orders.OrderLines\"]) rooted at the " +
+        "query's entity type; each path is validated against the EF model before execution (unknown/scalar/duplicate/cyclic paths, or paths " +
+        "exceeding the server-configured max depth/count, are rejected). Included collections are ordered deterministically by primary key and " +
+        "capped server-side (database-side, via a filtered Take()) at the configured per-parent maximum; included reference navigations are not " +
+        "capped. When include is supplied, all mapped scalar properties are returned along with only the requested navigation branches per row.")]
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
         [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
+        [Description("Optional dot-separated EF navigation paths to include, e.g. [\"Orders\", \"Orders.OrderLines\"]. Each included collection is capped server-side at a configured per-parent maximum and ordered deterministically by primary key.")] IReadOnlyList<string>? include = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, cancellationToken));
+        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, include, cancellationToken));
 
-    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, CancellationToken cancellationToken)
+    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, IReadOnlyList<string>? include, CancellationToken cancellationToken)
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry, targetName);
@@ -450,11 +456,10 @@ public sealed class EfCoreMcpTools(
             {
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
-
             QueryResult result;
             try
             {
-                result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, cancellationToken);
+                result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, include, cancellationToken);
             }
             catch (QueryExecutionException)
             {
@@ -470,11 +475,11 @@ public sealed class EfCoreMcpTools(
             throw new McpException(FormatQueryError(ex));
         }
     }
-    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, CancellationToken cancellationToken)
+    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, IReadOnlyList<string>? include, CancellationToken cancellationToken)
     {
         var target = RequireLoadedAssembly(targetName);
         var provider = ResolveEffectiveProvider(contextType, entry);
-        var request = new QueryRequest { Query = query };
+        var request = new QueryRequest { Query = query, Include = include };
         return queryExecutionOptions.Mode switch
         {
             QueryExecutionMode.InProcess => roslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
@@ -491,16 +496,19 @@ public sealed class EfCoreMcpTools(
         "Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL " +
         "to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and " +
         "operators with no SQL translation (Zip) are rejected - use run_query for those instead; also rejected when the server's " +
-        "QueryExecution:Mode is not InProcess, since previewing requires compiling and evaluating the query locally.")]
+        "QueryExecution:Mode is not InProcess, since previewing requires compiling and evaluating the query locally. " +
+        "Optionally accepts include, with the same syntax and validation as run_query's include parameter, to preview the SQL including " +
+        "the filtered/capped Include()/ThenInclude() calls it would issue.")]
     public Task<string> PreviewQuerySql(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
         [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
+        [Description("Optional dot-separated EF navigation paths to include, e.g. [\"Orders\", \"Orders.OrderLines\"]. Same validation and capping rules as run_query's include parameter.")] IReadOnlyList<string>? include = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("preview_query_sql", () => PreviewQuerySqlCore(contextName, query, connectionName, targetName, cancellationToken));
+        => ExecuteAsync("preview_query_sql", () => PreviewQuerySqlCore(contextName, query, connectionName, targetName, include, cancellationToken));
 
-    private async Task<string> PreviewQuerySqlCore(string contextName, string query, string? connectionName, string? targetName, CancellationToken cancellationToken)
+    private async Task<string> PreviewQuerySqlCore(string contextName, string query, string? connectionName, string? targetName, IReadOnlyList<string>? include, CancellationToken cancellationToken)
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry, targetName);
@@ -532,7 +540,7 @@ public sealed class EfCoreMcpTools(
 
             var target = RequireLoadedAssembly(targetName);
             var provider = ResolveEffectiveProvider(contextType, entry);
-            var request = new QueryRequest { Query = expressionText };
+            var request = new QueryRequest { Query = expressionText, Include = include };
             var result = await roslynQueryExecutor.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken);
             return resultFormatter.Format(result);
         }

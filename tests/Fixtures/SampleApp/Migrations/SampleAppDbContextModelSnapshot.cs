@@ -77,6 +77,26 @@ namespace SampleApp.Migrations
                     b.ToTable("Orders");
                 });
 
+            modelBuilder.Entity("SampleApp.OrderLine", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("OrderId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Product")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId");
+
+                    b.ToTable("OrderLines");
+                });
+
             modelBuilder.Entity("SampleApp.Order", b =>
                 {
                     b.HasOne("SampleApp.Customer", "Customer")
@@ -88,9 +108,25 @@ namespace SampleApp.Migrations
                     b.Navigation("Customer");
                 });
 
+            modelBuilder.Entity("SampleApp.OrderLine", b =>
+                {
+                    b.HasOne("SampleApp.Order", "Order")
+                        .WithMany("OrderLines")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Order");
+                });
+
             modelBuilder.Entity("SampleApp.Customer", b =>
                 {
                     b.Navigation("Orders");
+                });
+
+            modelBuilder.Entity("SampleApp.Order", b =>
+                {
+                    b.Navigation("OrderLines");
                 });
 #pragma warning restore 612, 618
         }

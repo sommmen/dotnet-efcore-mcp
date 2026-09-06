@@ -259,35 +259,22 @@ text, `where`/`orderBy`/`include` values, or parameter data. Because `run_query`
 enforcement and error shape are identical, including for the out-of-process and pooled execution
 modes, which construct the same executor.
 
-## Proposed open work — P0 #8: database-side collection-include cap
+## Database-side collection-include caps (P0 #8 implemented)
 
-`MaxIncludedCollectionItems` must bound each requested collection navigation **in the database**,
-before EF materializes entities. The current `run_query` path invokes ordinary string-based `Include`,
-materializes the root graph, and then passes the configured maximum to projection. That sequence can
-trim the response shape, but it has already read an unbounded child collection and therefore does not
-provide the required execution-time limit.
+`MaxIncludedCollectionItems` bounds every requested collection navigation **per parent** in the
+database query plan, before response projection. Each validated collection navigation uses a
+provider-translatable filtered include with a deterministic primary-key ordering and `Take`; collection
+queries use split-query execution to retain the per-parent bound without N+1 queries. Reference
+navigations remain regular includes.
 
-Replace the collection-include path with provider-translatable filtered include expressions: for each
-validated direct collection navigation, apply a stable ordering (the child primary key unless an
-explicit supported ordering is introduced) and `Take(MaxIncludedCollectionItems)` inside the include.
-If expression construction makes that impractical, use an equivalent split-query plan that applies the
-same per-parent limit in generated SQL (for example, a partitioned `ROW_NUMBER`/`Skip`/`Take` plan)
-and avoids N+1 child queries. Reference navigations remain ordinary one-level includes. Do not use
-post-materialization `Take`, since it still loads every child row. `0` fetches/materializes no members
-for requested collection navigations while retaining their empty collection shape.
+The cap applies independently to every parent, requested branch, and nested collection level. A value
+of `0` produces an empty included collection. Root `skip`/`take`, no-tracking execution, cancellation,
+timeout handling, and safe scalar projection are unchanged. The response is never made compliant by
+truncating an already-materialized collection.
 
-Preserve validation, `AsNoTracking`, command timeout/cancellation, root `skip`/`take`, safe scalar
-projection, and the existing one-level include restriction. The cap is independent for every parent
-and every requested collection navigation; its deterministic child ordering must make repeated calls
-stable.
-
-Focused validation: seed a parent above the cap and assert only the cap is returned; seed multiple
-parents and prove each receives up to the cap rather than sharing a global limit; cover below-cap,
-exact-cap, and zero-cap collections, omitted includes, and reference navigations. Combine root
-`skip`/`take` with a capped collection include and, if multiple collection includes are supported,
-cover each independently. In SQLite integration tests, capture executed SQL/commands (or inspect the
-translated query) and assert the child query contains provider-translated limiting/window logic, so the
-test demonstrates rows are limited before materialization rather than merely truncated in projection.
+SQLite integration tests cover below/exact/above/zero cap boundaries, deterministic ordering,
+independent parent caps, root paging, and executed child-command SQL containing a provider-translated
+limit before materialization.
 
 ## P0 #9: policy-gated context/entity execution
 
@@ -342,35 +329,20 @@ mismatched-ordering cursor, rejection of combining `cursor` with nonzero `skip`,
 tests for `cursor` request binding and `nextCursor` response serialization, and confirm the sanitized
 rejection message never discloses decoded key values.
 
-## Proposed open work — P1 #13: bounded nested include paths
+## Bounded nested include paths (P1 #13 implemented)
 
-Extend `QueryRequest.Include` from one-level navigation names to dot-separated EF model paths, such
-as `Orders.OrderLines.Product`. Treat every segment as case-sensitive and resolve it exclusively
-against the current `IEntityType`'s EF navigation metadata before building an `Include` expression or
-opening a query. A segment that is unknown, scalar, or otherwise not a navigation fails the entire
-request with a `QueryExecutionException`; never fall back to CLR reflection or silently omit it.
+`QueryRequest.Include` accepts case-sensitive, dot-separated EF navigation paths such as
+`Orders.OrderLines`; existing one-segment entries remain valid. Before execution, each segment
+is resolved from the current EF model navigation metadata as a navigation property. Empty, unknown, scalar, duplicate,
+over-depth, repeated-navigation, and cyclic paths fail the request with `QueryExecutionException`
+before query construction or database execution.
 
-Add `QueryExecutionOptions.MaxIncludeDepth` and `MaxIncludeCount`. `MaxIncludeDepth` bounds the
-number of navigation segments in each path, and `MaxIncludeCount` bounds the number of requested
-paths after validation/deduplication. Reject an empty segment, an over-depth path, too many paths,
-a repeated path, and a path that repeats a navigation already traversed in that path. Reject cycles
-rather than relying on a depth limit to make a cyclic graph safe (for example,
-`Orders.Customer.Orders` is invalid); repeated navigation traversal and cycles must be detected from
-the resolved EF navigation chain, not merely by comparing textual input.
+`QueryExecution:MaxIncludeDepth` (default `3`) bounds segments per path, and
+`QueryExecution:MaxIncludeCount` (default `5`) bounds paths per request. Successful entity-shaped
+queries recursively return mapped scalar values plus only the requested navigation branches. Every
+collection branch applies the database-side `MaxIncludedCollectionItems` per-parent cap; reference
+branches recurse only when requested. Root paging and the read-only, no-tracking execution contract
+remain unchanged.
 
-Replace the current one-level response shaping with recursive projection driven by those validated
-model paths. Each projected object contains its mapped scalar values plus only the requested child
-navigation branches; references recurse only along the requested path. At **every** included
-collection navigation level, materialize no more than `MaxIncludedCollectionItems` children,
-independently for each parent and level. This cap applies equally to a root collection, nested
-collections, and multiple branches; it is not a global response budget and must not be deferred until
-after an unbounded collection has materialized. Preserve existing read-only, no-tracking, root
-paging, timeout, and root row-cap behavior.
-
-Focused executor/integration tests should cover valid single and multi-segment paths; EF-model-only
-validation; unknown properties, scalar segments, malformed paths, repeated paths, repeated
-navigation traversal, and cycles; both include limits; recursive response shape; and collection caps
-at the root and each nested level with multiple parents. Include below-cap, exact-cap, and
-above-cap cases to prove each parent collection is capped independently before projection. Tool tests
-should verify `include` binding and propagate the same validation failures without changing the
-existing one-level include contract when only one segment is supplied.
+Focused executor and integration tests cover model-path validation, both limits, recursive result
+shape, caps at each collection level, root paging, and the pre-execution rejection path.

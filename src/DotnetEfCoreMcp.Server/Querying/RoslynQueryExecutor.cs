@@ -18,7 +18,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         CancellationToken cancellationToken)
     {
         using var invocation = await CompileAndInvokeAsync(target, contextType, entry, provider, request, cancellationToken).ConfigureAwait(false);
-        return await ShapeResultAsync(invocation.Value, entry.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+        return await ShapeResultAsync(invocation.Value, invocation.Context, contextType, request.Include, entry.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Compiles and evaluates the user's query up to (but not including) materializing any
@@ -54,7 +54,8 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
 
         try
         {
-            var sql = sequence.ToQueryString();
+            var (includedSequence, _) = IncludeQueryProcessor.Apply(sequence, invocation.Context, request.Include, executionOptions);
+            var sql = includedSequence.ToQueryString();
             return new QuerySqlPreviewResult("C#", sql);
         }
         catch (Exception ex) when (ex is InvalidOperationException or TargetInvocationException)
@@ -186,18 +187,23 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
     /// and timeout-aware materialization could not be applied consistently, and an already-enumerated
     /// sequence could be unbounded. Users who want row-shaped output from a non-translatable
     /// operator can end the query with <c>.ToList()</c> and inspect the resulting scalar.</para></summary>
-    private async Task<QueryResult> ShapeResultAsync(object? value, int commandTimeoutSeconds, CancellationToken cancellationToken)
+    private async Task<QueryResult> ShapeResultAsync(object? value, DbContext context, Type contextType,
+        IReadOnlyList<string>? include, int commandTimeoutSeconds, CancellationToken cancellationToken)
     {
         if (value is not IQueryable sequence)
             return new QueryResult("C#", 1, null, false, true, value, []);
 
+        var (includedSequence, includePlan) = IncludeQueryProcessor.Apply(sequence, context, include, executionOptions);
+        sequence = includedSequence;
         var effectiveTake = QueryExecutor.GetEffectiveTake(sequence.Expression, executionOptions);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(commandTimeoutSeconds) + executionOptions.CancellationMargin);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
             var (values, hasMoreRows) = await QueryExecutor.MaterializeWithContinuationAsync(sequence, effectiveTake, linked.Token).ConfigureAwait(false);
-            return new QueryResult("C#", values.Count, effectiveTake, hasMoreRows, false, null, values.Select(QueryExecutor.ProjectValue).ToList());
+            return new QueryResult("C#", values.Count, effectiveTake, hasMoreRows, false, null, includePlan is null
+                ? values.Select(QueryExecutor.ProjectValue).ToList()
+                : values.Select(rowValue => IncludeQueryProcessor.Project(rowValue!, includePlan)).ToList());
         }
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
         {

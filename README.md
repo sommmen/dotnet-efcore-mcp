@@ -256,9 +256,13 @@ section is optional):
 
 - `MaxTake` (default `200`) — the hard cap on rows returned by a single query, regardless of
   the client-requested `take`.
-- `MaxIncludedCollectionItems` (default `200`) — caps how many items are materialized per
-  included collection navigation (e.g. `Include: ["Orders"]`), so a customer with 100,000
-  orders can't blow up the response.
+- `MaxIncludedCollectionItems` (default `5`) — caps how many items are materialized per
+  parent and included collection navigation (for example `include: ["Orders.OrderLines"]`).
+  Requested collection branches use deterministic, database-side filtered includes, so a
+  customer with 100,000 orders cannot blow up the response.
+- `MaxIncludeDepth` (default `3`) and `MaxIncludeCount` (default `5`) — bound, respectively,
+  the maximum number of dot-separated segments in one `include` path and the maximum number
+  of `include` paths accepted per request.
 
 ```powershell
 dotnet user-secrets set "QueryExecution:MaxTake" "100"
@@ -300,8 +304,8 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
 | `get_entity_schema` | `entityName: string`, `contextName?: string` | Complete cached definition for one exact entity (same shape as `get_schema`'s `entities`). Cache-only: throws directing the caller to call `get_schema` first if nothing is cached yet for the resolved context. |
 | `search_schema` | `contextName?: string`, `query: string`, `maxResults?: int` | Compact, case-insensitive substring matches (`entityName`, `entityNameMatched`, `matchingProperties`, `matchingRelationships`) across entity/property/relationship names, plus `totalMatchCount` and `truncated`. `maxResults` defaults to 10 and is capped at 25. Cache-only, same cache-miss behavior as `get_entity_schema`. |
-| `run_query` | `contextName: string`, `query: string`, `connectionName?: string` | Root DbSet name, scalar-or-sequence result, effective sequence page size, safely projected rows, and a `hasMoreRows` continuation flag |
-| `preview_query_sql` | `contextName: string`, `query: string`, `connectionName?: string`, `targetName?: string` | The provider-generated SQL for a `run_query`-style expression, obtained from the compiled, unexecuted `IQueryable` via `ToQueryString()`. Requires `QueryExecution:Mode` to be `InProcess`. When successful, the `ToQueryString()` call itself never opens a database connection, runs a command, or reads/writes rows — however, a caller-supplied expression may force enumeration or execute side effects before that point. Rejects scalar/element results, already-materialized results, and non-translatable operators (e.g. `Zip`) with a message directing the caller to `run_query` instead |
+| `run_query` | `contextName: string`, `query: string`, `connectionName?: string`, `include?: string[]` | Root DbSet name, scalar-or-sequence result, effective sequence page size, safely projected rows, and a `hasMoreRows` continuation flag. `include` accepts dot-separated navigation paths (e.g. `["Orders.OrderLines"]`), validated against the EF Core model before execution (unknown/scalar segments, cycles, repeated navigations, and duplicate paths are rejected, subject to `MaxIncludeDepth`/`MaxIncludeCount`); when supplied, each collection level is deterministically ordered and capped server-side at `MaxIncludedCollectionItems` before materialization, and only the requested branches are projected. |
+| `preview_query_sql` | `contextName: string`, `query: string`, `connectionName?: string`, `targetName?: string`, `include?: string[]` | The provider-generated SQL for a `run_query`-style expression, obtained from the compiled, unexecuted `IQueryable` via `ToQueryString()`. Requires `QueryExecution:Mode` to be `InProcess`. When successful, the `ToQueryString()` call itself never opens a database connection, runs a command, or reads/writes rows — however, a caller-supplied expression may force enumeration or execute side effects before that point. Rejects scalar/element results, already-materialized results, and non-translatable operators (e.g. `Zip`) with a message directing the caller to `run_query` instead. `include` is validated identically to `run_query` and reflected in the previewed SQL (including any split-query plan applied for nested collection includes). |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
 | `test_connection` | `contextName: string`, `connectionName?: string` | Redacted connection-health diagnostic: context name, resolved connection name, provider, environment, and a `healthy`/`failed`/`timedOut` status. Never returns query rows, schema, or a connection string, and never changes the active connection |
 | `insert_entity` | `contextName: string`, `entity: string`, `values: object`, `connectionName?: string` | Inserted scalar values and actual affected rows; disabled by default and restricted to development `ReadWrite` connections |

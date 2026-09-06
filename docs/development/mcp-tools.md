@@ -188,27 +188,18 @@ Focused executor tests (`RoslynQueryExecutorTests`) cover each cap at its exact 
 over, a combined-violation case exceeding several caps at once, and prove — using an uncreated
 SQLite database — that rejected input never reaches provider translation or the database.
 
-## Proposed open work — P0 #8: database-side `run_query` collection-include cap
+## Database-side `run_query` collection-include caps (P0 #8 implemented)
 
-This item adds no `run_query` parameter. `MaxIncludedCollectionItems` remains server-side
-`QueryExecution` configuration, but its contract is strengthened: every requested included
-**collection** returns at most that many children *per root parent*, and the server must apply that
-limit in database execution before materialization. The current projection-time cap is not sufficient,
-because ordinary `Include` has already loaded the full collection by then.
+`MaxIncludedCollectionItems` remains server-side `QueryExecution` configuration; it adds no public
+`run_query` parameter. Each requested included collection is bounded per parent in the translated
+database query, using deterministic primary-key ordering and a filtered include `Take`. Collection
+queries use split-query execution, so the response is not capped by truncating an already-loaded graph.
+Reference includes and root paging continue to work unchanged, and a zero cap yields an empty
+included collection.
 
-Implement the executor with ordered, provider-translated filtered collection includes (`Take` per
-parent), or an equivalently bounded split-query strategy whose child SQL uses per-parent limiting.
-The stable child order (normally primary key) is part of the observable result contract. Never replace
-this with client-side collection truncation. Reference includes, one-level include validation, root
-paging, existing errors, and safe scalar-only nested projection stay unchanged. With a configured cap
-of zero, a requested collection is represented as empty without fetching its child rows.
-
-Focused MCP/integration tests should bind and forward `include` unchanged, then verify a root with
-more children than the configured cap returns only the capped, deterministically ordered set. Verify
-multiple roots each receive their own cap, plus below/exact/zero-cap boundaries, reference includes,
-and root `skip`/`take`. Capture SQLite commands or translated SQL to prove the child query has
-server-side limiting/window logic before materialization; a response-only assertion is insufficient
-because it could pass after loading every child row.
+Focused MCP and SQLite integration tests verify unchanged `include` binding, all cap boundaries,
+independent per-parent caps, deterministic results, root paging, and a limiting clause in the executed
+child SQL command.
 
 ## P0 #9: per-connection policy enforcement
 
@@ -277,28 +268,21 @@ validation and rejection of computed/store-generated/read-only/navigation/shadow
 mutation tests cover insert/update/delete success shape and accurate `affectedRows`; and
 concurrency tests cover missing/stale token handling and conflict responses.
 
-## Proposed open work — P1 #13: bounded nested `run_query` includes
+## Bounded nested `run_query` includes (P1 #13 implemented)
 
-Keep `include?: string[]` for legacy entity-shaped requests, with each entry a case-sensitive,
-dot-separated EF navigation path (for example, `Orders.OrderLines`). Arbitrary-LINQ mode rejects
-`include` whenever the chain projects, groups, aggregates, or otherwise changes the root entity shape;
-this avoids silently ignoring includes or attempting to attach navigation data to non-entity rows. The
-tool passes valid legacy entries without interpreting CLR members to `QueryRequest`; `QueryExecutor`
-owns EF model validation, bounded query construction, and recursive response shaping. Existing
-one-segment include entries remain valid.
+`include?: string[]` retains its legacy one-segment form and also accepts case-sensitive,
+dot-separated EF navigation paths such as `Orders.OrderLines`. Arbitrary-LINQ mode rejects `include`
+when the query changes the root entity shape. The tool forwards entries unchanged to `QueryRequest`;
+`QueryExecutor` owns EF-model validation, bounded query construction, and recursive response shaping.
 
-Expose `QueryExecution:MaxIncludeDepth` and `QueryExecution:MaxIncludeCount` alongside the existing
-per-collection `MaxIncludedCollectionItems` setting. The request fails, rather than truncating or
-partially executing, when a path is malformed, exceeds the depth, makes the total path count exceed
-the count limit, contains an unknown/scalar segment, repeats a path/navigation, or introduces a
-cycle. Successful responses recursively contain only scalar values and requested navigation branches;
-every collection branch at every depth is independently limited by
-`MaxIncludedCollectionItems` per parent.
+`QueryExecution:MaxIncludeDepth` and `QueryExecution:MaxIncludeCount` enforce server-side bounds in
+addition to `MaxIncludedCollectionItems`. Before execution, malformed, over-depth, over-count,
+unknown/scalar, duplicate, repeated-navigation, and cyclic paths fail rather than partially executing.
+Successful responses contain scalar values and only requested navigation branches, with every
+collection level independently database-capped per parent.
 
-Add focused MCP-tool tests for nested `include` parameter binding and for error propagation from
-model-path validation and both new limits. Pair them with the executor and SQLite integration cases
-in [Query execution](./query-execution.md#proposed-open-work--p1-13-bounded-nested-include-paths),
-including recursive projection and collection caps at every level.
+Focused MCP-tool, executor, and SQLite integration tests cover binding, validation and limit error
+propagation, recursive projection, nested collection caps, and unchanged one-segment behavior.
 
 ## Proposed open work — P1 #14: `run_query` keyset/cursor pagination
 

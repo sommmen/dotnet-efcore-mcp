@@ -6,4 +6,7 @@ public sealed class QueryRequest
 {
     /// <summary>For example, <c>Customers.Where(c =&gt; c.Age &gt; 18).Select(c =&gt; c.Name)</c>.</summary>
     public required string Query { get; init; }
+
+    /// <summary>Optional dot-separated EF navigation paths to load, such as <c>Orders.OrderLines</c>.</summary>
+    public IReadOnlyList<string>? Include { get; init; }
 }

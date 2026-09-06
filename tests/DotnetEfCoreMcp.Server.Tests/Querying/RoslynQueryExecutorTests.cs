@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
@@ -35,8 +36,20 @@ public sealed class RoslynQueryExecutorTests : IDisposable
         // SelectMany/Zip) below to exercise operators that combine the Customers and Orders roots.
         var orderType = EntitySeeding.GetEntityClrType(context, "Order");
         var aliceId = (int)EntitySeeding.GetPropertyValue(alice, "Id")!;
-        context.Add(EntitySeeding.CreateEntity(orderType, new Dictionary<string, object?> { ["CustomerId"] = aliceId, ["Amount"] = 10m, ["CreatedAtUtc"] = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc) }));
-        context.Add(EntitySeeding.CreateEntity(orderType, new Dictionary<string, object?> { ["CustomerId"] = aliceId, ["Amount"] = 20m, ["CreatedAtUtc"] = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc) }));
+        var firstOrder = EntitySeeding.CreateEntity(orderType, new Dictionary<string, object?> { ["CustomerId"] = aliceId, ["Amount"] = 10m, ["CreatedAtUtc"] = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc) });
+        var secondOrder = EntitySeeding.CreateEntity(orderType, new Dictionary<string, object?> { ["CustomerId"] = aliceId, ["Amount"] = 20m, ["CreatedAtUtc"] = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc) });
+        context.AddRange(firstOrder, secondOrder);
+        context.SaveChanges();
+
+        var orderLineType = EntitySeeding.GetEntityClrType(context, "OrderLine");
+        var firstOrderId = (int)EntitySeeding.GetPropertyValue(firstOrder, "Id")!;
+        var secondOrderId = (int)EntitySeeding.GetPropertyValue(secondOrder, "Id")!;
+        context.AddRange(
+            EntitySeeding.CreateEntity(orderLineType, new Dictionary<string, object?> { ["OrderId"] = firstOrderId, ["Product"] = "A" }),
+            EntitySeeding.CreateEntity(orderLineType, new Dictionary<string, object?> { ["OrderId"] = firstOrderId, ["Product"] = "B" }),
+            EntitySeeding.CreateEntity(orderLineType, new Dictionary<string, object?> { ["OrderId"] = firstOrderId, ["Product"] = "C" }),
+            EntitySeeding.CreateEntity(orderLineType, new Dictionary<string, object?> { ["OrderId"] = secondOrderId, ["Product"] = "D" }),
+            EntitySeeding.CreateEntity(orderLineType, new Dictionary<string, object?> { ["OrderId"] = secondOrderId, ["Product"] = "E" }));
         context.SaveChanges();
     }
 
@@ -272,6 +285,22 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_StructuredInclude_CollectionRowsAreBoundedInExecutedSqlBeforeMaterialization()
+    {
+        var commands = new List<string>();
+        using var listener = new SqlCommandDiagnosticListener(commands);
+        var result = await CreateExecutor(maxIncludedCollectionItems: 2).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id)", Include = ["Orders"] },
+            CancellationToken.None);
+
+        Assert.Equal("C#", result.Entity);
+        Assert.Contains(commands, command =>
+            command.Contains("FROM \"Orders\"", StringComparison.OrdinalIgnoreCase)
+            && command.Contains("LIMIT", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ParameterlessOnConfiguringContext_OverridesHardcodedConnectionString()
     {
         var contextType = DbContextScanner.FindDbContextTypes(_handle.Assembly).Descriptors.Single(d => d.Name == "LegacyOnConfiguringDbContext").ClrType;
@@ -459,14 +488,14 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     {
         using var emptyDb = new SqliteTestDatabase();
         var executor = new RoslynQueryExecutor(
-            new QueryExecutionOptions { MaxIncludedCollectionItems = 1 },
+            new QueryExecutionOptions { MaxIncludeCount = 1 },
             new QueryCompiler(new QueryCompilationOptions()));
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest { Query = "Customers.Include(c => c.Orders).ThenInclude(o => o.Customer)" }, CancellationToken.None));
 
-        Assert.Contains("exceeding the configured maximum of 1 (MaxIncludedCollectionItems)", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("exceeding the configured maximum of 1 (MaxIncludeCount)", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -656,9 +685,124 @@ public sealed class RoslynQueryExecutorTests : IDisposable
         return (nodeCount, maxDepth);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_StructuredInclude_ProjectsRequestedNestedBranchesWithCollectionCaps()
+    {
+        var result = await CreateExecutor(maxIncludedCollectionItems: 2).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id)", Include = ["Orders.OrderLines"] }, CancellationToken.None);
+
+        Assert.Equal(2, result.RowCount);
+        var alice = Assert.Single(result.Rows, row => (string)row["Name"]! == "Alice");
+        var orders = Assert.IsType<List<Dictionary<string, object?>>>(alice["Orders"]);
+        Assert.Equal(2, orders.Count);
+        Assert.Equal([10m, 20m], orders.Select(order => (decimal)order["Amount"]!));
+        Assert.All(orders, order => Assert.True(order.ContainsKey("OrderLines")));
+        Assert.Equal(["A", "B"], Assert.IsType<List<Dictionary<string, object?>>>(orders[0]["OrderLines"]!).Select(line => (string)line["Product"]!));
+        Assert.Equal(["D", "E"], Assert.IsType<List<Dictionary<string, object?>>>(orders[1]["OrderLines"]!).Select(line => (string)line["Product"]!));
+        var bob = Assert.Single(result.Rows, row => (string)row["Name"]! == "Bob");
+        Assert.Empty(Assert.IsType<List<Dictionary<string, object?>>>(bob["Orders"]));
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 2)]
+    public async Task ExecuteAsync_StructuredInclude_AppliesCollectionCapBeforeProjection(int cap, int expectedCount)
+    {
+        var result = await CreateExecutor(maxIncludedCollectionItems: cap).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Name == \"Alice\")", Include = ["Orders"] }, CancellationToken.None);
+
+        var orders = Assert.IsType<List<Dictionary<string, object?>>>(Assert.Single(result.Rows)["Orders"]);
+        Assert.Equal(expectedCount, orders.Count);
+        Assert.Equal(Enumerable.Range(1, expectedCount), orders.Select(order => (int)order["Id"]!));
+    }
+
+    [Theory]
+    [InlineData("Orders.Unknown")]
+    [InlineData("Orders.Amount")]
+    [InlineData("Orders.Customer.Orders")]
+    [InlineData("Orders..Customer")]
+    public async Task ExecuteAsync_StructuredInclude_RejectsInvalidModelPathsBeforeExecution(string include)
+    {
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers", Include = [include] }, CancellationToken.None));
+
+        Assert.Contains("Include", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StructuredInclude_EnforcesConfiguredDepthAndCount()
+    {
+        var depthException = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor(maxIncludeDepth: 1).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers", Include = ["Orders.OrderLines"] }, CancellationToken.None));
+        Assert.Contains("MaxIncludeDepth", depthException.Message);
+
+        var countException = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor(maxIncludeCount: 1).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers", Include = ["Orders", "Orders.OrderLines"] }, CancellationToken.None));
+        Assert.Contains("MaxIncludeCount", countException.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StructuredInclude_PreservesRootPaging()
+    {
+        var result = await CreateExecutor().ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id).Take(1)", Include = ["Orders"] }, CancellationToken.None);
+
+        Assert.Single(result.Rows);
+        Assert.Equal("Alice", result.Rows[0]["Name"]);
+        Assert.Equal(2, Assert.IsType<List<Dictionary<string, object?>>>(result.Rows[0]["Orders"]).Count);
+    }
+
     private DbContext NewContext() => DbContextActivator.CreateInstance(_contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
 
-    private static RoslynQueryExecutor CreateExecutor(int maxTake = 200, bool allowMutationsInRunQuery = false) => new(
-        new QueryExecutionOptions { MaxTake = maxTake, AllowMutationsInRunQuery = allowMutationsInRunQuery },
+    private sealed class SqlCommandDiagnosticListener : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly List<string> _commands;
+        private readonly IDisposable _allListenersSubscription;
+        private IDisposable? _efCoreSubscription;
+
+        public SqlCommandDiagnosticListener(List<string> commands)
+        {
+            _commands = commands;
+            _allListenersSubscription = DiagnosticListener.AllListeners.Subscribe(this);
+        }
+
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "Microsoft.EntityFrameworkCore")
+            {
+                _efCoreSubscription = listener.Subscribe(this);
+            }
+        }
+
+        public void OnNext(KeyValuePair<string, object?> value)
+        {
+            if (value.Key.EndsWith("CommandExecuting", StringComparison.Ordinal)
+                && value.Value is Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData command)
+            {
+                _commands.Add(command.Command.CommandText);
+            }
+        }
+
+        public void OnCompleted() { }
+
+        public void OnError(Exception error) { }
+
+        public void Dispose()
+        {
+            _efCoreSubscription?.Dispose();
+            _allListenersSubscription.Dispose();
+        }
+    }
+
+    private static RoslynQueryExecutor CreateExecutor(int maxTake = 200, bool allowMutationsInRunQuery = false, int maxIncludeDepth = 3, int maxIncludeCount = 5, int maxIncludedCollectionItems = 5) => new(
+        new QueryExecutionOptions { MaxTake = maxTake, AllowMutationsInRunQuery = allowMutationsInRunQuery, MaxIncludeDepth = maxIncludeDepth, MaxIncludeCount = maxIncludeCount, MaxIncludedCollectionItems = maxIncludedCollectionItems },
         new QueryCompiler(new QueryCompilationOptions()));
 }
