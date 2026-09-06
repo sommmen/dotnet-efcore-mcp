@@ -10,8 +10,9 @@ Tests: `tests/DotnetEfCoreMcp.Server.Tests/Querying` + new `tests/DotnetEfCoreMc
 > `UserQuery : TDbContext` model, default no-tracking, and out-of-process execution options
 > described below. The statement-mode authoring design discussed in this document was **not**
 > carried into the shipped tool contract: `run_query` is expression-mode-only by design, because
-> entity-level access-policy enforcement (P0 #9) needs a single-expression pre-check it can
-> reliably extract a root/entity list from. See [mcp-tools.md](./mcp-tools.md) and
+> entity-level access-policy enforcement (P0 #9) needs a single-expression pre-check that can
+> extract a root/entity list syntactically (with documented text/regex-scan limitations — see
+> `QueryExecutor.NormalizeAndGetRoot`). See [mcp-tools.md](./mcp-tools.md) and
 > [query-execution.md](./query-execution.md) for the authoritative, current `run_query` contract;
 > treat the statement-mode sections below as an unimplemented alternative, not current behavior.
 
