@@ -814,6 +814,12 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         public void Dispose()
         {
+            // Dispose the AllListeners subscription first so OnNext(DiagnosticListener) can no
+            // longer fire and add a new entry to _efCoreSubscriptions once we start disposing
+            // them below; otherwise a listener observed during that window would never be
+            // disposed.
+            _allListenersSubscription.Dispose();
+
             lock (_efCoreSubscriptionsLock)
             {
                 foreach (var subscription in _efCoreSubscriptions)
@@ -821,8 +827,6 @@ public sealed class RoslynQueryExecutorTests : IDisposable
                     subscription.Dispose();
                 }
             }
-
-            _allListenersSubscription.Dispose();
         }
     }
 
