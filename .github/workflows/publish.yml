@@ -24,6 +24,12 @@ jobs:
   publish:
     name: Pack and Publish (.NET)
     runs-on: windows-latest
+    # step-level `if:` conditions cannot reference the `secrets` context directly, so the
+    # presence of these optional secrets is surfaced via job-level env vars instead (see
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/contexts).
+    env:
+      NPM_TOKEN_SET: ${{ secrets.NPM_TOKEN != '' }}
+      NUGET_USER_SET: ${{ secrets.NUGET_USER != '' }}
 
     steps:
       - name: Checkout repository
@@ -90,14 +96,14 @@ jobs:
       # configured, at which point every push to main also publishes a matching preview build
       # to npm alongside the GitHub Packages push above.
       - name: Setup Node.js
-        if: secrets.NPM_TOKEN != ''
+        if: env.NPM_TOKEN_SET == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20.x"
           registry-url: "https://registry.npmjs.org"
 
       - name: Publish to npm
-        if: secrets.NPM_TOKEN != ''
+        if: env.NPM_TOKEN_SET == 'true'
         working-directory: ./npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -134,7 +140,7 @@ jobs:
         if: >-
           (((github.event_name == 'release' && !github.event.release.prerelease) ||
           (github.event_name == 'workflow_dispatch' && inputs.publish_nuget)) &&
-          secrets.NUGET_USER != '')
+          env.NUGET_USER_SET == 'true')
         env:
           NUGET_USER: ${{ secrets.NUGET_USER }}
         uses: NuGet/login@v1
