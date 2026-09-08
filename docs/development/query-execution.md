@@ -219,7 +219,7 @@ windows, and `take: 0`.
     and consult server logs.
   - The Roslyn query surface is bounded by a curated metadata-reference list, disabled `unsafe`
     code, and the `MaxQueryLength` cap (enforced before provider work begins). Complexity limits
-    (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) and the raw-`Include`/
+    (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) and the raw `Include`/
     `ThenInclude` rejection are enforced the same way - see "Roslyn query complexity limits" below.
   - `IQueryable` results are capped before materialization through `MaxTake`/`DefaultTake`;
     non-`IQueryable` results (including client-side `IEnumerable` pipelines) are returned via the

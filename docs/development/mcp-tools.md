@@ -57,7 +57,7 @@ to the configured maximum. Scalar results remain scalars. The generated `UserQue
 `SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
 selected connection is non-production `ReadWrite`. Focused executor tests cover expression-mode queries,
 joins, projections, aggregates, mutation gating, and paging
-behavior (statement/block syntax remains intentionally unsupported to preserve access-policy enforcement). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) and the raw-`Include`/`ThenInclude` rejection enforced alongside `MaxQueryLength`.
+behavior (statement/block syntax remains intentionally unsupported to preserve access-policy enforcement). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) and the raw `Include`/`ThenInclude` rejection enforced alongside `MaxQueryLength`.
 
 Execution location is configured with `QueryExecution:Mode` (`InProcess`, `OutOfProcess`,
 `Pooled`, or `Auto`), and Roslyn compilation settings live under `QueryCompilation`; see

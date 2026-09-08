@@ -76,8 +76,7 @@ internal static class QueryComplexityValidator
                     throw new QueryExecutionException(
                         $"Raw `{methodName}()` calls are not allowed in query text. Use the structured `include` request parameter instead.");
                 }
-
-                if (QueryOperatorNames.Contains(methodName)) operatorCount++;
+                else if (QueryOperatorNames.Contains(methodName)) operatorCount++;
             }
 
             // Fail fast: if either nodes or depth have already exceeded their limits,
