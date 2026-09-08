@@ -501,6 +501,22 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             $"Error message should reject raw Include/ThenInclude. Got: {ex.Message}");
     }
 
+
+    [Fact]
+    public async Task ExecuteAsync_RawIncludeViaConditionalAccessInQuery_ThrowsWithoutDatabaseAccess()
+    {
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions(),
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers?.Include(c => c.Orders)" }, CancellationToken.None));
+
+        Assert.Contains("Raw `Include()` calls are not allowed", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ExecuteAsync_QueryExceedingMultipleLimitsAtOnce_ThrowsNamingOnlyOneLimit()
     {
@@ -771,6 +787,7 @@ public sealed class RoslynQueryExecutorTests : IDisposable
         private readonly IDisposable _allListenersSubscription;
         private readonly List<IDisposable> _efCoreSubscriptions = [];
         private readonly Lock _efCoreSubscriptionsLock = new();
+        private bool _disposed;
 
         public SqlCommandDiagnosticListener(List<string> commands)
         {
@@ -788,9 +805,20 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             // events emitted on an earlier listener before a later one is observed.
             if (listener.Name == "Microsoft.EntityFrameworkCore")
             {
+                // Disposing AllListeners does not guarantee this callback stops firing
+                // synchronously, so a new listener can still be observed concurrently with (or
+                // just after) Dispose(). Subscribe first, then check _disposed under the same
+                // lock Dispose uses; if disposal has already started, immediately dispose the
+                // just-created subscription instead of leaking it in _efCoreSubscriptions.
                 var subscription = listener.Subscribe(this);
                 lock (_efCoreSubscriptionsLock)
                 {
+                    if (_disposed)
+                    {
+                        subscription.Dispose();
+                        return;
+                    }
+
                     _efCoreSubscriptions.Add(subscription);
                 }
             }
@@ -817,11 +845,14 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             // Dispose the AllListeners subscription first so OnNext(DiagnosticListener) can no
             // longer fire and add a new entry to _efCoreSubscriptions once we start disposing
             // them below; otherwise a listener observed during that window would never be
-            // disposed.
+            // disposed. The _disposed flag (checked under the same lock in OnNext) closes the
+            // remaining window where AllListeners.Dispose() does not synchronously guarantee
+            // OnNext has stopped firing.
             _allListenersSubscription.Dispose();
 
             lock (_efCoreSubscriptionsLock)
             {
+                _disposed = true;
                 foreach (var subscription in _efCoreSubscriptions)
                 {
                     subscription.Dispose();

@@ -69,9 +69,18 @@ internal static class QueryComplexityValidator
             nodeCount++;
             if (depth > maxDepth) maxDepth = depth;
 
-            if (node is InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax memberAccess })
+            // A method call's target is a MemberAccessExpressionSyntax for ordinary syntax
+            // (`x.Include(...)`) and a MemberBindingExpressionSyntax for conditional-access
+            // syntax (`x?.Include(...)`); both must be checked so the latter cannot bypass the
+            // raw-Include rejection below.
+            var methodName = node switch
             {
-                var methodName = memberAccess.Name.Identifier.ValueText;
+                InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax memberAccess } => memberAccess.Name.Identifier.ValueText,
+                InvocationExpressionSyntax { Expression: MemberBindingExpressionSyntax memberBinding } => memberBinding.Name.Identifier.ValueText,
+                _ => null,
+            };
+            if (methodName is not null)
+            {
                 if (IncludeOperatorNames.Contains(methodName))
                 {
                     throw new QueryExecutionException(
