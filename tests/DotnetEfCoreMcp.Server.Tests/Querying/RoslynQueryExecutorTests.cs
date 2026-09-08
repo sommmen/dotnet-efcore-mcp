@@ -478,24 +478,43 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         var result = await executor.ExecuteAsync(
             _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
-            new QueryRequest { Query = "Customers.Include(c => c.Orders)" }, CancellationToken.None);
+            new QueryRequest { Query = "Customers", Include = ["Orders"] }, CancellationToken.None);
 
         Assert.Equal(2, result.RowCount);
     }
 
     [Fact]
-    public async Task ExecuteAsync_QueryExceedingMaxIncludedCollectionItems_ThrowsWithoutDatabaseAccess()
+    public async Task ExecuteAsync_RawIncludeInQuery_ThrowsWithoutDatabaseAccess()
     {
         using var emptyDb = new SqliteTestDatabase();
         var executor = new RoslynQueryExecutor(
-            new QueryExecutionOptions { MaxIncludeCount = 1 },
+            new QueryExecutionOptions(),
             new QueryCompiler(new QueryCompilationOptions()));
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest { Query = "Customers.Include(c => c.Orders).ThenInclude(o => o.Customer)" }, CancellationToken.None));
 
-        Assert.Contains("exceeding the configured maximum of 1 (MaxIncludeCount)", ex.Message, StringComparison.Ordinal);
+        Assert.True(
+            ex.Message.Contains("Raw `Include()` calls are not allowed", StringComparison.Ordinal) ||
+            ex.Message.Contains("Raw `ThenInclude()` calls are not allowed", StringComparison.Ordinal),
+            $"Error message should reject raw Include/ThenInclude. Got: {ex.Message}");
+    }
+
+
+    [Fact]
+    public async Task ExecuteAsync_RawIncludeViaConditionalAccessInQuery_ThrowsWithoutDatabaseAccess()
+    {
+        using var emptyDb = new SqliteTestDatabase();
+        var executor = new RoslynQueryExecutor(
+            new QueryExecutionOptions(),
+            new QueryCompiler(new QueryCompilationOptions()));
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers?.Include(c => c.Orders)" }, CancellationToken.None));
+
+        Assert.Contains("Raw `Include()` calls are not allowed", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -766,7 +785,9 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     {
         private readonly List<string> _commands;
         private readonly IDisposable _allListenersSubscription;
-        private IDisposable? _efCoreSubscription;
+        private readonly List<IDisposable> _efCoreSubscriptions = [];
+        private readonly Lock _efCoreSubscriptionsLock = new();
+        private bool _disposed;
 
         public SqlCommandDiagnosticListener(List<string> commands)
         {
@@ -776,9 +797,30 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         public void OnNext(DiagnosticListener listener)
         {
+            // EF Core can create more than one internal "Microsoft.EntityFrameworkCore"
+            // DiagnosticListener instance (e.g. a distinct internal service provider per
+            // unique set of context options, or - under parallel test execution - one per
+            // concurrently running test's DbContext). Subscribing to every instance we see
+            // (rather than switching to only the latest) avoids losing command-executing
+            // events emitted on an earlier listener before a later one is observed.
             if (listener.Name == "Microsoft.EntityFrameworkCore")
             {
-                _efCoreSubscription = listener.Subscribe(this);
+                // Disposing AllListeners does not guarantee this callback stops firing
+                // synchronously, so a new listener can still be observed concurrently with (or
+                // just after) Dispose(). Subscribe first, then check _disposed under the same
+                // lock Dispose uses; if disposal has already started, immediately dispose the
+                // just-created subscription instead of leaking it in _efCoreSubscriptions.
+                var subscription = listener.Subscribe(this);
+                lock (_efCoreSubscriptionsLock)
+                {
+                    if (_disposed)
+                    {
+                        subscription.Dispose();
+                        return;
+                    }
+
+                    _efCoreSubscriptions.Add(subscription);
+                }
             }
         }
 
@@ -787,7 +829,10 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             if (value.Key.EndsWith("CommandExecuting", StringComparison.Ordinal)
                 && value.Value is Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData command)
             {
-                _commands.Add(command.Command.CommandText);
+                lock (_commands)
+                {
+                    _commands.Add(command.Command.CommandText);
+                }
             }
         }
 
@@ -797,8 +842,22 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         public void Dispose()
         {
-            _efCoreSubscription?.Dispose();
+            // Dispose the AllListeners subscription first so OnNext(DiagnosticListener) can no
+            // longer fire and add a new entry to _efCoreSubscriptions once we start disposing
+            // them below; otherwise a listener observed during that window would never be
+            // disposed. The _disposed flag (checked under the same lock in OnNext) closes the
+            // remaining window where AllListeners.Dispose() does not synchronously guarantee
+            // OnNext has stopped firing.
             _allListenersSubscription.Dispose();
+
+            lock (_efCoreSubscriptionsLock)
+            {
+                _disposed = true;
+                foreach (var subscription in _efCoreSubscriptions)
+                {
+                    subscription.Dispose();
+                }
+            }
         }
     }
 
