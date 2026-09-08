@@ -65,6 +65,64 @@ Research turned up no ready-made server doing exactly this, but several related 
   `dotnet build` producing `bin/Debug/net8.0/MyApp.dll` or similar — any TFM the target
   project builds for is fine; only the server itself targets `net10.0`).
 
+### Install as a .NET tool
+
+The server is published as a .NET tool (a NuGet package with `PackageType=McpServer`) to
+**GitHub Packages** (not yet on NuGet.org). It bundles its out-of-process query-execution
+companion (`DotnetEfCoreMcp.QueryHost`) internally, so no extra build step is required after
+installing — `QueryExecution:Mode=Auto` (the default) finds it automatically.
+
+```powershell
+# One-time: add the GitHub Packages source (requires a GitHub PAT with `read:packages` scope
+# as the password; GitHub Packages does not support anonymous/unauthenticated restore).
+dotnet nuget add source https://nuget.pkg.github.com/sommmen/index.json `
+  --name github-sommmen `
+  --username <your-github-username> `
+  --password <your-github-pat> `
+  --store-password-in-clear-text
+
+dotnet tool install --global DotnetEfCoreMcp.Server
+```
+
+This installs the `dotnet-efcore-mcp` command. Point an MCP client at it directly (see the
+[Visual Studio Code setup](#visual-studio-code-setup) example below for the `.vscode/mcp.json`
+shape — swap the `dotnet run --project ...` command/args for `dotnet-efcore-mcp` with no
+arguments once installed as a tool).
+
+Alternatively, run it without a persistent install via [`dnx`](https://learn.microsoft.com/en-us/nuget/consume-packages/dnx-overview):
+
+```powershell
+dnx DotnetEfCoreMcp.Server --yes
+```
+
+### Install via npm
+
+A thin npm wrapper (in [`npm/`](./npm)) is published as
+[`dotnet-efcore-mcp`](https://www.npmjs.com/package/dotnet-efcore-mcp) so MCP clients/skill
+managers that expect an `npx`-launchable server (e.g.
+[vercel-labs/skills](https://github.com/vercel-labs/skills)) can install it without a user
+running `dotnet tool install` by hand:
+
+```powershell
+npx -y dotnet-efcore-mcp
+```
+
+The wrapper still requires the .NET SDK to be installed locally: on first run it installs (and
+on later runs updates) the matching `DotnetEfCoreMcp.Server` .NET tool version behind the
+scenes, then execs straight into it. Because this package is currently GitHub-Packages-only
+(see above), the wrapper also needs the same GitHub Packages credentials configured — set
+`DOTNET_EFCORE_MCP_NUGET_SOURCE` to an authenticated feed URL, or add a
+`github-sommmen` NuGet source globally as shown above, before running `npx`. See
+[`npm/README.md`](./npm/README.md) for full details and troubleshooting.
+
+> **Note:** npm publishing is currently dormant in CI pending an `NPM_TOKEN` secret (or npm
+> Trusted Publishing configuration) — see
+> [`.github/workflows/publish.yml`](./.github/workflows/publish.yml). Until then, the package
+> can still be published manually from `npm/` for testing.
+
+Preview builds are published from every push to `main`; stable releases are published from
+tagged GitHub Releases (see [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)).
+
 ### Build & test
 
 ```powershell

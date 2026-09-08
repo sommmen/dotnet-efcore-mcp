@@ -10,6 +10,19 @@
     <UserSecretsId>dotnet-efcore-mcp-server</UserSecretsId>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Publish as a .NET tool MCP server package (dnx/`dotnet tool install`-installable). See
+         https://learn.microsoft.com/en-us/nuget/concepts/nuget-mcp. -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-efcore-mcp</ToolCommandName>
+    <PackageType>McpServer</PackageType>
+
+    <Title>DotnetEfCoreMcp.Server</Title>
+    <Description>MCP server that reflects over an existing Entity Framework Core application's compiled assembly to expose schema discovery and read-only LINQ-style querying to AI agents, without writing app code.</Description>
+    <PackageTags>mcp;model-context-protocol;entity-framework-core;ef-core;dotnet;ai</PackageTags>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="DotnetEfCoreMcp.Server.Tests" />
   </ItemGroup>
@@ -45,6 +58,46 @@
 
   <ItemGroup>
     <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\README.md" Condition="Exists('..\..\README.md')" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Condition="Exists('..\..\LICENSE')" Pack="true" PackagePath="\" />
+    <!-- Nerdbank.GitVersioning automatically replaces 0.0.0-placeholder in this file with the
+         actual computed package version at pack time. -->
+    <None Include=".mcp\server.json" Pack="true" PackagePath="/.mcp/" />
   </ItemGroup>
+
+  <!--
+    Bundle DotnetEfCoreMcp.QueryHost (the out-of-process query execution companion executable)
+    inside this package so the tool works out-of-the-box after `dotnet tool install`/`dnx`,
+    without anyone having to configure QueryExecution:OutOfProcessHostPath manually. See
+    Querying/QueryHostLocator.cs for the runtime resolution logic that looks for this folder.
+
+    This only runs as part of `dotnet pack` (not every `dotnet build`/`dotnet test`), since local
+    development/tests use the sibling-project fallback in QueryHostLocator instead and don't need
+    the bundle rebuilt on every inner-loop build.
+  -->
+  <PropertyGroup>
+    <QueryHostProjectPath>$(MSBuildThisFileDirectory)..\DotnetEfCoreMcp.QueryHost\DotnetEfCoreMcp.QueryHost.csproj</QueryHostProjectPath>
+    <!-- Must be an absolute path: it is passed as a global property to the QueryHost project
+         (which would otherwise resolve a relative PublishDir against its own directory) and is
+         also read back here in the Server project to glob the published files for packing. -->
+    <QueryHostBundleDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(BaseIntermediateOutputPath)queryhost-bundle/$(Configuration)/'))</QueryHostBundleDir>
+  </PropertyGroup>
+
+  <Target Name="PublishQueryHostForBundling">
+    <MSBuild Projects="$(QueryHostProjectPath)" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=;SelfContained=false;PublishDir=$(QueryHostBundleDir)" />
+  </Target>
+
+  <PropertyGroup>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludeQueryHostInPackage</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+
+  <Target Name="IncludeQueryHostInPackage" DependsOnTargets="PublishQueryHostForBundling">
+    <ItemGroup>
+      <_QueryHostBundleFile Include="$(QueryHostBundleDir)**/*.*" />
+      <TfmSpecificPackageFile Include="@(_QueryHostBundleFile)">
+        <PackagePath>tools/$(TargetFramework)/any/queryhost/%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
+      </TfmSpecificPackageFile>
+    </ItemGroup>
+  </Target>
 
 </Project>

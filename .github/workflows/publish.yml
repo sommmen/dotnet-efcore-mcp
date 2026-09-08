@@ -1,0 +1,152 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: publish
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish_nuget:
+        description: Publish a stable release to NuGet.org
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  packages: write
+  contents: read
+
+jobs:
+  publish:
+    name: Pack and Publish (.NET)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore dotnet-efcore-mcp.slnx
+
+      - name: Build
+        run: dotnet build dotnet-efcore-mcp.slnx --no-restore --configuration Release
+
+      - name: Run tests
+        run: dotnet test dotnet-efcore-mcp.slnx --no-build --no-restore --configuration Release --verbosity normal
+
+      - name: Pack
+        run: dotnet pack dotnet-efcore-mcp.slnx --no-build --no-restore --configuration Release --output ./artifacts
+
+      - name: Publish to GitHub Packages
+        run: |
+          foreach ($file in (Get-ChildItem ./artifacts -Recurse -Filter *.nupkg)) {
+            dotnet nuget push $file.FullName `
+              --source https://nuget.pkg.github.com/sommmen/index.json `
+              --api-key "${{ github.token }}" `
+              --skip-duplicate `
+              --no-symbols
+          }
+
+      # The npm package (./npm) is a launcher that installs the matching NuGet tool version at
+      # runtime, so its own package.json version must always track the .NET package's version -
+      # nbgv only versions .NET projects, so this reads it back from the nupkg this job just
+      # packed rather than invoking nbgv again.
+      - name: Stamp npm package version
+        id: npm-version
+        shell: pwsh
+        run: |
+          $nupkg = Get-ChildItem ./artifacts -Recurse -Filter 'DotnetEfCoreMcp.Server.*.nupkg' |
+            Where-Object { $_.Name -notlike '*.symbols.nupkg' } |
+            Select-Object -First 1
+          if (-not $nupkg) {
+            throw "Could not find the DotnetEfCoreMcp.Server nupkg to determine the package version."
+          }
+          if ($nupkg.Name -notmatch '^DotnetEfCoreMcp\.Server\.(?<version>\d+\.\d+\.\d+(?:[-+].+)?)\.nupkg$') {
+            throw "Could not parse a version out of nupkg filename '$($nupkg.Name)'."
+          }
+          $version = $Matches['version']
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          $packageJsonPath = './npm/package.json'
+          $json = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+          $json.version = $version
+          ($json | ConvertTo-Json -Depth 10) | Set-Content -Path $packageJsonPath
+          Write-Host "Stamped $packageJsonPath with version $version"
+
+      # npm publishing is not yet enabled for this repo (GitHub Packages/dnx is the only channel
+      # for now - see repository README). This step is a no-op until the NPM_TOKEN secret (an
+      # npm automation token with publish access for the `dotnet-efcore-mcp` package) is
+      # configured, at which point every push to main also publishes a matching preview build
+      # to npm alongside the GitHub Packages push above.
+      - name: Setup Node.js
+        if: secrets.NPM_TOKEN != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm
+        if: secrets.NPM_TOKEN != ''
+        working-directory: ./npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+      - name: Summarize published packages
+        if: always()
+        shell: pwsh
+        run: |
+          $packages = Get-ChildItem ./artifacts -Recurse -Filter *.nupkg |
+            Where-Object { $_.Name -notlike '*.symbols.nupkg' } |
+            ForEach-Object {
+              if ($_.Name -match '^(?<id>.+)\.(?<version>\d+\.\d+\.\d+(?:[-+].+)?)\.nupkg$') {
+                "| $($Matches['id']) | $($Matches['version']) |"
+              }
+            }
+
+          "## Published preview packages" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| Package | Version |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "| --- | --- |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if ($packages) {
+            $packages | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+          else {
+            "| _No package artifacts found_ | — |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+
+      # NuGet.org publishing is not yet enabled for this repo (GitHub Packages is the only
+      # channel for now - see repository README). This step is a no-op until the NUGET_USER
+      # secret (for NuGet.org's Trusted Publishing/OIDC login) is configured, at which point
+      # stable releases and manually-triggered runs can also push to nuget.org.
+      - name: NuGet login (OIDC to temporary API key)
+        if: >-
+          (((github.event_name == 'release' && !github.event.release.prerelease) ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish_nuget)) &&
+          secrets.NUGET_USER != '')
+        env:
+          NUGET_USER: ${{ secrets.NUGET_USER }}
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish NuGet package
+        if: steps.nuget-login.outputs.NUGET_API_KEY != ''
+        env:
+          NuGetDirectory: ./artifacts
+        run: |
+          foreach($file in (Get-ChildItem "${{ env.NuGetDirectory }}" -Recurse -Include *.nupkg)) {
+              dotnet nuget push $file.FullName --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate --no-symbols
+          }

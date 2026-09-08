@@ -292,6 +292,7 @@ dist/
 build/
 .cache/
 bin/
+!npm/bin/
 obj/
 #.zenflow/
 

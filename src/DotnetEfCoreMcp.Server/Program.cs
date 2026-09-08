@@ -46,7 +46,15 @@ builder.Services.AddSingleton<SchemaCache>();
 // Query safety limits (row/width caps, timeout margin) are configurable from the "QueryExecution"
 // section (env vars, user secrets, etc., same layering as "Connections" above) so they can be
 // tightened per-deployment without a code change, while still defaulting to safe values if unset.
-builder.Services.AddSingleton(builder.Configuration.GetSection("QueryExecution").Get<QueryExecutionOptions>() ?? new QueryExecutionOptions());
+// OutOfProcessHostPath defaults to the query host bundled alongside this server (see
+// QueryHostLocator) so out-of-process/pooled/Auto modes work out-of-the-box for anyone who just
+// installs the packaged tool, without requiring manual configuration.
+var queryExecutionOptions = builder.Configuration.GetSection("QueryExecution").Get<QueryExecutionOptions>() ?? new QueryExecutionOptions();
+if (string.IsNullOrWhiteSpace(queryExecutionOptions.OutOfProcessHostPath))
+{
+    queryExecutionOptions = queryExecutionOptions with { OutOfProcessHostPath = QueryHostLocator.TryGetBundledHostPath() };
+}
+builder.Services.AddSingleton(queryExecutionOptions);
 builder.Services.AddSingleton(builder.Configuration.GetSection("QueryCompilation").Get<QueryCompilationOptions>() ?? new QueryCompilationOptions());
 builder.Services.AddSingleton<QueryCompiler>();
 builder.Services.AddSingleton<RoslynQueryExecutor>();
@@ -159,9 +167,9 @@ if (string.IsNullOrWhiteSpace(configuredAssemblyPath) && !string.IsNullOrWhiteSp
 {
     try
     {
-        configuredAssemblyPath = host.Services.GetRequiredService<AssemblyDiscoveryService>()
-            .Discover(workspacePath)
-            .FirstOrDefault()?.AssemblyPath;
+        var discovered = host.Services.GetRequiredService<AssemblyDiscoveryService>()
+            .Discover(workspacePath);
+        configuredAssemblyPath = discovered.Count > 0 ? discovered[0].AssemblyPath : null;
 
         if (configuredAssemblyPath is null)
         {

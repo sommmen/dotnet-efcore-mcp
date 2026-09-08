@@ -36,3 +36,10 @@ jobs:
 
       - name: Run tests
         run: dotnet test dotnet-efcore-mcp.slnx --no-build --no-restore --configuration Release --verbosity normal
+
+      - name: Validate packaging
+        # Packs (without publishing) on every PR/push so packaging regressions - e.g. a
+        # packable project accidentally leaking into the output, or the NuGet MCP metadata
+        # failing to build - are caught here, not only when .github/workflows/publish.yml
+        # runs against main.
+        run: dotnet pack dotnet-efcore-mcp.slnx --no-build --no-restore --configuration Release --output ./artifacts
