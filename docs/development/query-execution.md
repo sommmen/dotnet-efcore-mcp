@@ -38,6 +38,17 @@ currently chooses `OutOfProcess` as a fail-closed default; compatibility fingerp
 choosing an in-process execution path has not yet been implemented, and `Auto` does not yet opt
 into pooling.
 
+`QueryExecution:OutOfProcessHostPath` does not need to be set manually in the common case: if left
+unset, the server auto-detects the query host via
+[`QueryHostLocator`](../../src/DotnetEfCoreMcp.Server/Querying/QueryHostLocator.cs). The packaged
+NuGet/`dotnet tool install` distribution bundles the query host's full publish output in a
+`queryhost/` subfolder next to the server's own binaries (see the `PublishQueryHostForBundling` /
+`IncludeQueryHostInPackage` MSBuild targets in `DotnetEfCoreMcp.Server.csproj`), so this is found
+automatically once installed. When running from a local solution build instead (e.g. `dotnet
+run`/tests, no packaging step has run), the locator falls back to the sibling
+`DotnetEfCoreMcp.QueryHost` project's own build output. Set `OutOfProcessHostPath` explicitly to
+override auto-detection, e.g. when pointing at a custom or externally deployed query host.
+
 For isolated execution, configure the query-host DLL and retain both deployment artifacts:
 
 - the target application's adjacent `<target>.runtimeconfig.json`, which selects the target

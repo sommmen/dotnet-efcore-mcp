@@ -1,0 +1,47 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Not packable by default; DotnetEfCoreMcp.Server opts back in explicitly. QueryHost is an
+         internal runtime dependency bundled inside the Server package, not published on its own. -->
+    <IsPackable>false</IsPackable>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+
+    <!-- Shared NuGet package metadata for every packable project in this repo. -->
+    <Authors>Dion Leurink</Authors>
+    <Company>Dion Leurink</Company>
+    <PackageProjectUrl>https://github.com/sommmen/dotnet-efcore-mcp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sommmen/dotnet-efcore-mcp.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <!-- DebugType is "embedded" by default for SDK-style projects (PDB embedded directly in the
+         DLL), so there is no separate .pdb to ship in a .snupkg symbol package - leave
+         IncludeSymbols/SymbolPackageFormat unset. SourceLink still works via embedded PDBs. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Suppress warning CS1591 (missing XML doc comments) - this codebase does not doc-comment
+         every public member, and this repo is not meant to be consumed as a class library. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- Drop non-English satellite resource assemblies (EF Core, Roslyn, etc. all ship a dozen+
+         locale folders). Keeps build output - and the bundled QueryHost payload described below -
+         much smaller without affecting behavior (error messages just stay in English). -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Nerdbank.GitVersioning" Version="3.10.94" Condition="!Exists('packages.config')">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="DotNet.ReproducibleBuilds" Version="2.0.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

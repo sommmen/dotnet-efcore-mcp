@@ -1,0 +1,36 @@
+{
+  "name": "dotnet-efcore-mcp",
+  "version": "0.0.0-placeholder",
+  "description": "MCP server that reflects over an existing Entity Framework Core application's compiled assembly to expose schema discovery and read-only LINQ-style querying to AI agents, without writing app code.",
+  "bin": {
+    "dotnet-efcore-mcp": "./bin/dotnet-efcore-mcp.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "modelcontextprotocol",
+    "entity-framework-core",
+    "ef-core",
+    "dotnet",
+    "ai",
+    "database"
+  ],
+  "license": "MIT",
+  "author": "Dion Leurink",
+  "homepage": "https://github.com/sommmen/dotnet-efcore-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sommmen/dotnet-efcore-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sommmen/dotnet-efcore-mcp/issues"
+  },
+  "mcpName": "io.github.sommmen/dotnet-efcore-mcp",
+  "engines": {
+    "node": ">=18"
+  }
+}

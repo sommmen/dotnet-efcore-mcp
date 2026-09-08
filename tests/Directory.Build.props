@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- None of the test/fixture projects under tests/ are published NuGet packages, so
+       `dotnet pack` on the whole solution (as run by .github/workflows/publish.yml) must not
+       produce artifacts for them. Projects under src/ opt back into packability individually via
+       src/Directory.Build.props. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

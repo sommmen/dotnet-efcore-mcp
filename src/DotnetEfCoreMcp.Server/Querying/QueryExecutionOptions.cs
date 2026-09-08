@@ -1,7 +1,7 @@
 namespace DotnetEfCoreMcp.Server.Querying;
 
 /// <summary>Server-wide limits enforced on every query, regardless of what the caller requests.</summary>
-public sealed class QueryExecutionOptions
+public sealed record QueryExecutionOptions
 {
     /// <summary>Where Roslyn queries execute. Auto safely selects an isolated process.</summary>
     public QueryExecutionMode Mode { get; init; } = QueryExecutionMode.Auto;
