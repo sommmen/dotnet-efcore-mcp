@@ -80,7 +80,7 @@
     <!-- Must be an absolute path: it is passed as a global property to the QueryHost project
          (which would otherwise resolve a relative PublishDir against its own directory) and is
          also read back here in the Server project to glob the published files for packing. -->
-    <QueryHostBundleDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(BaseIntermediateOutputPath)queryhost-bundle\$(Configuration)\'))</QueryHostBundleDir>
+    <QueryHostBundleDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(BaseIntermediateOutputPath)queryhost-bundle/$(Configuration)/'))</QueryHostBundleDir>
   </PropertyGroup>
 
   <Target Name="PublishQueryHostForBundling">
@@ -93,9 +93,9 @@
 
   <Target Name="IncludeQueryHostInPackage" DependsOnTargets="PublishQueryHostForBundling">
     <ItemGroup>
-      <_QueryHostBundleFile Include="$(QueryHostBundleDir)**\*.*" />
+      <_QueryHostBundleFile Include="$(QueryHostBundleDir)**/*.*" />
       <TfmSpecificPackageFile Include="@(_QueryHostBundleFile)">
-        <PackagePath>tools\$(TargetFramework)\any\queryhost\%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
+        <PackagePath>tools/$(TargetFramework)/any/queryhost/%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
       </TfmSpecificPackageFile>
     </ItemGroup>
   </Target>
