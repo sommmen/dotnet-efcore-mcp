@@ -34,11 +34,12 @@ internal static class QueryComplexityValidator
     };
 
     /// <summary>Validates that a query string conforms to complexity caps: node count,
-    /// expression depth, and query-operator count. Also rejects raw
+    /// expression depth, and query-operator count. Also unconditionally rejects raw
     /// <c>Include</c>/<c>ThenInclude</c> calls in query text, directing callers to use the
     /// structured <see cref="QueryRequest.Include"/> parameter instead.
-    /// Throws a sanitized <see cref="QueryExecutionException"/> naming only the violated limit
-    /// and its configured maximum; never includes query text. If the text cannot be parsed as an
+    /// Throws a sanitized <see cref="QueryExecutionException"/> that either names the violated
+    /// limit and its configured maximum, or (for raw Include/ThenInclude) a fixed message with no
+    /// configured maximum; never includes query text. If the text cannot be parsed as an
     /// expression or statement block, validation is skipped silently; the subsequent Roslyn
     /// compilation step reports the syntax error with its own message.</summary>
     /// <remarks>This is a purely syntactic, AST-level validation that runs before Roslyn

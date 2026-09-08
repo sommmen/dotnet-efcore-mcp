@@ -170,11 +170,12 @@ server-side `QueryExecution` configuration. In addition to `MaxQueryLength` (des
 [Query execution](./query-execution.md)), the server enforces `MaxExpressionNodes`,
 `MaxExpressionDepth`, and `MaxQueryOperators` by parsing the query text into a Roslyn syntax tree
 and checking node count, nesting depth, and LINQ query-operator call count, respectively - before
-Roslyn compilation, provider translation, or any database access. Raw `Include`/`ThenInclude` calls
-in the query text are rejected outright regardless of count, directing callers to the structured
-`include` request parameter (see "Bounded nested `run_query` includes" below) instead, so requested
-navigations always go through path validation and the per-parent, database-side collection cap
-described there.
+Roslyn compilation, provider translation, or any database access. Separately from those configured
+caps, raw `Include`/`ThenInclude` calls in the query text are rejected outright and unconditionally,
+regardless of count and with no corresponding configuration knob, directing callers to the
+structured `include` request parameter (see "Bounded nested `run_query` includes" below) instead,
+so requested navigations always go through path validation and the per-parent, database-side
+collection cap described there.
 
 All requests share the same validated pipeline (`RoslynQueryExecutor.CompileAndInvokeAsync`), so an
 oversized or overly-complex query is rejected identically for `run_query` and `preview_query_sql`,
