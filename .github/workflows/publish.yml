@@ -132,8 +132,9 @@ jobs:
       # stable releases and manually-triggered runs can also push to nuget.org.
       - name: NuGet login (OIDC to temporary API key)
         if: >-
-          ((github.event_name == 'release' && !github.event.release.prerelease) ||
-          (github.event_name == 'workflow_dispatch' && inputs.publish_nuget))
+          (((github.event_name == 'release' && !github.event.release.prerelease) ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish_nuget)) &&
+          secrets.NUGET_USER != '')
         env:
           NUGET_USER: ${{ secrets.NUGET_USER }}
         uses: NuGet/login@v1
@@ -147,5 +148,5 @@ jobs:
           NuGetDirectory: ./artifacts
         run: |
           foreach($file in (Get-ChildItem "${{ env.NuGetDirectory }}" -Recurse -Include *.nupkg)) {
-              dotnet nuget push $file --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate --no-symbols
+              dotnet nuget push $file.FullName --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate --no-symbols
           }

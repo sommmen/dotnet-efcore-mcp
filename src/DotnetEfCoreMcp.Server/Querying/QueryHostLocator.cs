@@ -24,7 +24,7 @@ public static class QueryHostLocator
         // Packaged layout: the query host's publish output is copied into a "queryhost"
         // subfolder next to the server's own assembly.
         var bundled = Path.Combine(baseDirectory, "queryhost", HostFileName);
-        if (File.Exists(bundled))
+        if (File.Exists(bundled) && File.Exists(Path.ChangeExtension(bundled, ".deps.json")))
         {
             return bundled;
         }
@@ -36,7 +36,7 @@ public static class QueryHostLocator
             var candidate = Path.GetFullPath(Path.Combine(
                 baseDirectory, "..", "..", "..", "..",
                 "DotnetEfCoreMcp.QueryHost", "bin", config, "net10.0", HostFileName));
-            if (File.Exists(candidate))
+            if (File.Exists(candidate) && File.Exists(Path.ChangeExtension(candidate, ".deps.json")))
             {
                 return candidate;
             }

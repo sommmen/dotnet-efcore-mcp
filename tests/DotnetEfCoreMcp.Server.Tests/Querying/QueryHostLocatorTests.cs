@@ -15,6 +15,8 @@ public sealed class QueryHostLocatorTests : IDisposable
         Directory.CreateDirectory(queryHostDir);
         var expected = Path.Combine(queryHostDir, "DotnetEfCoreMcp.QueryHost.dll");
         File.WriteAllText(expected, "");
+        var depsFile = Path.ChangeExtension(expected, ".deps.json");
+        File.WriteAllText(depsFile, "");
 
         var result = QueryHostLocator.TryGetBundledHostPath(_tempRoot);
 
@@ -36,6 +38,8 @@ public sealed class QueryHostLocatorTests : IDisposable
         Directory.CreateDirectory(siblingBinDir);
         var expected = Path.Combine(siblingBinDir, "DotnetEfCoreMcp.QueryHost.dll");
         File.WriteAllText(expected, "");
+        var depsFile = Path.ChangeExtension(expected, ".deps.json");
+        File.WriteAllText(depsFile, "");
 
         var result = QueryHostLocator.TryGetBundledHostPath(baseDirectory);
 
