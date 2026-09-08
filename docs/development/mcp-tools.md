@@ -57,7 +57,7 @@ to the configured maximum. Scalar results remain scalars. The generated `UserQue
 `SaveChanges()` remains blocked unless `QueryExecution:AllowMutationsInRunQuery=true` and the
 selected connection is non-production `ReadWrite`. Focused executor tests cover expression-mode queries,
 joins, projections, aggregates, mutation gating, and paging
-behavior (statement/block syntax remains intentionally unsupported to preserve access-policy enforcement). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`) enforced alongside `MaxQueryLength`.
+behavior (statement/block syntax remains intentionally unsupported to preserve access-policy enforcement). See [Query execution](./query-execution.md) for the full operator/behavior reference, including the complexity limits (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) and the raw-`Include`/`ThenInclude` rejection enforced alongside `MaxQueryLength`.
 
 Execution location is configured with `QueryExecution:Mode` (`InProcess`, `OutOfProcess`,
 `Pooled`, or `Auto`), and Roslyn compilation settings live under `QueryCompilation`; see
@@ -165,15 +165,16 @@ cap/`truncated`, invalid-input, and policy-seam test coverage.
 
 ## Roslyn query complexity limits (implemented)
 
-`run_query` and `preview_query_sql` add no caller-controlled limits for this item; all four are
+`run_query` and `preview_query_sql` add no caller-controlled limits for this item; all are
 server-side `QueryExecution` configuration. In addition to `MaxQueryLength` (described in
 [Query execution](./query-execution.md)), the server enforces `MaxExpressionNodes`,
-`MaxExpressionDepth`, `MaxQueryOperators`, and `MaxIncludedCollectionItems` by parsing the query
-text into a Roslyn syntax tree and checking node count, nesting depth, LINQ query-operator call
-count, and `Include`/`ThenInclude` call count, respectively - before Roslyn compilation, provider
-translation, or any database access. `MaxIncludedCollectionItems` here is a static cap on how many
-`Include`/`ThenInclude` calls a query may contain, not a per-parent row cap on materialized included
-collections (that database-side limit is tracked separately as P0 #8 below).
+`MaxExpressionDepth`, and `MaxQueryOperators` by parsing the query text into a Roslyn syntax tree
+and checking node count, nesting depth, and LINQ query-operator call count, respectively - before
+Roslyn compilation, provider translation, or any database access. Raw `Include`/`ThenInclude` calls
+in the query text are rejected outright regardless of count, directing callers to the structured
+`include` request parameter (see "Bounded nested `run_query` includes" below) instead, so requested
+navigations always go through path validation and the per-parent, database-side collection cap
+described there.
 
 All requests share the same validated pipeline (`RoslynQueryExecutor.CompileAndInvokeAsync`), so an
 oversized or overly-complex query is rejected identically for `run_query` and `preview_query_sql`,

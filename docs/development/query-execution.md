@@ -109,11 +109,13 @@ The server enforces safety boundaries: only configured metadata references are a
 compile time; `unsafe` code is disabled; query length is capped (via `MaxQueryLength`); and compile/runtime failures are sanitized without logging raw query
 text or sensitive provider data. Query *complexity* (as opposed to length) is additionally bounded
 before compilation: `MaxExpressionNodes` caps the total number of parsed syntax nodes,
-`MaxExpressionDepth` caps nesting depth, `MaxQueryOperators` caps the number of LINQ query-operator
-calls (`Where`, `Select`, `OrderBy`, etc.), and `MaxIncludedCollectionItems` caps the number of
-`Include`/`ThenInclude` calls. All four are enforced purely from the parsed syntax tree, before
-`UserQuerySourceGenerator` builds the generated query context and before Roslyn compilation, provider
-translation, or database access can occur; see "Roslyn query complexity limits" below for details.
+`MaxExpressionDepth` caps nesting depth, and `MaxQueryOperators` caps the number of LINQ
+query-operator calls (`Where`, `Select`, `OrderBy`, etc.). Raw `Include`/`ThenInclude` calls in query
+text are rejected outright, directing callers to the structured `QueryRequest.Include` parameter
+instead (see "Bounded nested include paths" below). All of this is enforced purely from the parsed
+syntax tree, before `UserQuerySourceGenerator` builds the generated query context and before Roslyn
+compilation, provider translation, or database access can occur; see "Roslyn query complexity
+limits" below for details.
 
 No terminal call is required for `IQueryable` results — `run_query` materializes them server-side
 and applies an automatic take cap, so fragments like
@@ -217,8 +219,8 @@ windows, and `take: 0`.
     and consult server logs.
   - The Roslyn query surface is bounded by a curated metadata-reference list, disabled `unsafe`
     code, and the `MaxQueryLength` cap (enforced before provider work begins). Complexity limits
-    (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`, `MaxIncludedCollectionItems`)
-    are enforced the same way - see "Roslyn query complexity limits" below.
+    (`MaxExpressionNodes`, `MaxExpressionDepth`, `MaxQueryOperators`) and the raw-`Include`/
+    `ThenInclude` rejection are enforced the same way - see "Roslyn query complexity limits" below.
   - `IQueryable` results are capped before materialization through `MaxTake`/`DefaultTake`;
     non-`IQueryable` results (including client-side `IEnumerable` pipelines) are returned via the
     scalar slot instead of row-shaped paging semantics.
@@ -236,25 +238,28 @@ windows, and `take: 0`.
 `MaxTake` and `DefaultTake` bound result *size*; `MaxQueryLength` bounds the raw query *text*
 length. `QueryComplexityValidator` additionally bounds query *shape* by parsing the query text into
 a Roslyn syntax tree (the same expression-or-statement parse `UserQuerySourceGenerator` performs)
-and checking it against four caps, all configured under `QueryExecution` and all enforced in
-`RoslynQueryExecutor.CompileAndInvokeAsync` immediately after the `MaxQueryLength` check - before
-`UserQuerySourceGenerator.Generate`, Roslyn compilation, or any provider/database access:
+and checking it against three caps, plus a fixed rejection rule, all configured under
+`QueryExecution` and all enforced in `RoslynQueryExecutor.CompileAndInvokeAsync` immediately after
+the `MaxQueryLength` check - before `UserQuerySourceGenerator.Generate`, Roslyn compilation, or any
+provider/database access:
 
 - `MaxExpressionNodes` (default 500) - the total number of syntax nodes in the parsed tree.
 - `MaxExpressionDepth` (default 32) - the deepest nesting level in the parsed tree.
 - `MaxQueryOperators` (default 20) - the number of LINQ query-operator method-call nodes (`Where`,
   `Select`, `SelectMany`, `OrderBy`, `GroupBy`, `Join`, aggregates, element operators, `ToList`, etc.).
-- `MaxIncludedCollectionItems` (default 5) - the number of `Include`/`ThenInclude` method-call nodes.
-  This is a static, AST-level cap on how many included navigations a single query may request; it
-  does not itself bound how many rows each included collection materializes from the database once
-  compiled and executed (a database-side per-parent cap is tracked separately as P0 #8).
+- Raw `Include`/`ThenInclude` method calls in the query text are always rejected, regardless of
+  count, directing callers to the structured `QueryRequest.Include` parameter (see "Bounded nested
+  include paths" below) instead. This closes a bypass where a raw `Include`/`ThenInclude` call
+  embedded in `Query` text could execute without navigation-path validation, capability checks, or
+  the per-parent database-side collection cap that the structured `include` pipeline enforces.
 
-Because all four limits are checked from the parsed syntax tree alone - no symbol resolution, no
-compilation, no DbContext construction - none of these checks can themselves reach the database.
+Because all of these checks are performed from the parsed syntax tree alone - no symbol resolution,
+no compilation, no DbContext construction - none of them can themselves reach the database.
 Violations throw the existing `QueryExecutionException`, naming only the exceeded limit, its
 configured maximum, and the observed count (for example, "The query expression contains 812 syntax
-nodes, exceeding the configured maximum of 500 (MaxExpressionNodes)") - never the caller's query
-text, `where`/`orderBy`/`include` values, or parameter data. Because `run_query` and
+nodes, exceeding the configured maximum of 500 (MaxExpressionNodes)"), or - for a raw `Include`/
+`ThenInclude` call - directing the caller to the structured `include` parameter; never the caller's
+query text, `where`/`orderBy`/`include` values, or parameter data. Because `run_query` and
 `preview_query_sql` both route through `RoslynQueryExecutor.CompileAndInvokeAsync`, their
 enforcement and error shape are identical, including for the out-of-process and pooled execution
 modes, which construct the same executor.

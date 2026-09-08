@@ -14,8 +14,8 @@ internal static class QueryComplexityValidator
 {
     /// <summary>LINQ/EF Core query-operator method names counted toward
     /// <see cref="QueryExecutionOptions.MaxQueryOperators"/>. Deliberately excludes
-    /// <c>Include</c>/<c>ThenInclude</c>, which are counted separately toward
-    /// <see cref="QueryExecutionOptions.MaxIncludeCount"/>.</summary>
+    /// <c>Include</c>/<c>ThenInclude</c>, which must use the structured
+    /// <see cref="QueryRequest.Include"/> request parameter.</summary>
     private static readonly HashSet<string> QueryOperatorNames = new(StringComparer.Ordinal)
     {
         "Where", "Select", "SelectMany", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending",
@@ -33,13 +33,16 @@ internal static class QueryComplexityValidator
         "Include", "ThenInclude",
     };
 
-    /// <summary>Parses <paramref name="query"/> the same way <c>UserQuerySourceGenerator</c> would
-    /// (as a single expression, or - if that fails - as a statement block) and validates it against
-    /// every configured complexity cap. Throws a sanitized <see cref="QueryExecutionException"/>
-    /// naming only the exceeded limit and its configured maximum on the first violation found; never
-    /// includes the query text itself. If the text cannot be parsed as either an expression or a
-    /// statement block, validation is skipped silently - the subsequent Roslyn compilation step
-    /// reports the syntax error with its own sanitized message.</summary>
+    /// <summary>Validates that a query string conforms to complexity caps: node count,
+    /// expression depth, and query-operator count. Also rejects raw
+    /// <c>Include</c>/<c>ThenInclude</c> calls in query text, directing callers to use the
+    /// structured <see cref="QueryRequest.Include"/> parameter instead.
+    /// Throws a sanitized <see cref="QueryExecutionException"/> naming only the violated limit
+    /// and its configured maximum; never includes query text. If the text cannot be parsed as an
+    /// expression or statement block, validation is skipped silently; the subsequent Roslyn
+    /// compilation step reports the syntax error with its own message.</summary>
+    /// <remarks>This is a purely syntactic, AST-level validation that runs before Roslyn
+    /// compilation and database access, so errors are caught early.</remarks>
     internal static void Validate(string query, QueryExecutionOptions options)
     {
         if (options.MaxExpressionNodes <= 0) throw new QueryExecutionException("The server-configured MaxExpressionNodes value must be positive.");
@@ -51,7 +54,6 @@ internal static class QueryComplexityValidator
 
         var nodeCount = 0;
         var operatorCount = 0;
-        var includeCount = 0;
         var maxDepth = 0;
 
         // Use an explicit stack to walk the AST iteratively instead of recursively,
@@ -69,8 +71,13 @@ internal static class QueryComplexityValidator
             if (node is InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax memberAccess })
             {
                 var methodName = memberAccess.Name.Identifier.ValueText;
-                if (IncludeOperatorNames.Contains(methodName)) includeCount++;
-                else if (QueryOperatorNames.Contains(methodName)) operatorCount++;
+                if (IncludeOperatorNames.Contains(methodName))
+                {
+                    throw new QueryExecutionException(
+                        $"Raw `{methodName}()` calls are not allowed in query text. Use the structured `include` request parameter instead.");
+                }
+
+                if (QueryOperatorNames.Contains(methodName)) operatorCount++;
             }
 
             // Fail fast: if either nodes or depth have already exceeded their limits,
@@ -92,8 +99,6 @@ internal static class QueryComplexityValidator
             throw new QueryExecutionException($"Query syntax tree has maximum nesting depth of {maxDepth}, exceeding the configured maximum of {options.MaxExpressionDepth} (MaxExpressionDepth).");
         if (operatorCount > options.MaxQueryOperators)
             throw new QueryExecutionException($"Query contains {operatorCount} query operators, exceeding the configured maximum of {options.MaxQueryOperators} (MaxQueryOperators).");
-        if (includeCount > options.MaxIncludeCount)
-            throw new QueryExecutionException($"Query contains {includeCount} included collections, exceeding the configured maximum of {options.MaxIncludeCount} (MaxIncludeCount).");
     }
 
     private static SyntaxNode? TryParse(string query)

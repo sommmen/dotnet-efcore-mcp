@@ -478,24 +478,27 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         var result = await executor.ExecuteAsync(
             _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
-            new QueryRequest { Query = "Customers.Include(c => c.Orders)" }, CancellationToken.None);
+            new QueryRequest { Query = "Customers", Include = ["Orders"] }, CancellationToken.None);
 
         Assert.Equal(2, result.RowCount);
     }
 
     [Fact]
-    public async Task ExecuteAsync_QueryExceedingMaxIncludedCollectionItems_ThrowsWithoutDatabaseAccess()
+    public async Task ExecuteAsync_RawIncludeInQuery_ThrowsWithoutDatabaseAccess()
     {
         using var emptyDb = new SqliteTestDatabase();
         var executor = new RoslynQueryExecutor(
-            new QueryExecutionOptions { MaxIncludeCount = 1 },
+            new QueryExecutionOptions(),
             new QueryCompiler(new QueryCompilationOptions()));
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
             _handle, _contextType, emptyDb.ToRegistryEntry(), DatabaseProvider.Sqlite,
             new QueryRequest { Query = "Customers.Include(c => c.Orders).ThenInclude(o => o.Customer)" }, CancellationToken.None));
 
-        Assert.Contains("exceeding the configured maximum of 1 (MaxIncludeCount)", ex.Message, StringComparison.Ordinal);
+        Assert.True(
+            ex.Message.Contains("Raw `Include()` calls are not allowed", StringComparison.Ordinal) ||
+            ex.Message.Contains("Raw `ThenInclude()` calls are not allowed", StringComparison.Ordinal),
+            $"Error message should reject raw Include/ThenInclude. Got: {ex.Message}");
     }
 
     [Fact]
@@ -766,7 +769,8 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     {
         private readonly List<string> _commands;
         private readonly IDisposable _allListenersSubscription;
-        private IDisposable? _efCoreSubscription;
+        private readonly List<IDisposable> _efCoreSubscriptions = [];
+        private readonly Lock _efCoreSubscriptionsLock = new();
 
         public SqlCommandDiagnosticListener(List<string> commands)
         {
@@ -776,9 +780,19 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         public void OnNext(DiagnosticListener listener)
         {
+            // EF Core can create more than one internal "Microsoft.EntityFrameworkCore"
+            // DiagnosticListener instance (e.g. a distinct internal service provider per
+            // unique set of context options, or - under parallel test execution - one per
+            // concurrently running test's DbContext). Subscribing to every instance we see
+            // (rather than switching to only the latest) avoids losing command-executing
+            // events emitted on an earlier listener before a later one is observed.
             if (listener.Name == "Microsoft.EntityFrameworkCore")
             {
-                _efCoreSubscription = listener.Subscribe(this);
+                var subscription = listener.Subscribe(this);
+                lock (_efCoreSubscriptionsLock)
+                {
+                    _efCoreSubscriptions.Add(subscription);
+                }
             }
         }
 
@@ -787,7 +801,10 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             if (value.Key.EndsWith("CommandExecuting", StringComparison.Ordinal)
                 && value.Value is Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData command)
             {
-                _commands.Add(command.Command.CommandText);
+                lock (_commands)
+                {
+                    _commands.Add(command.Command.CommandText);
+                }
             }
         }
 
@@ -797,7 +814,14 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
         public void Dispose()
         {
-            _efCoreSubscription?.Dispose();
+            lock (_efCoreSubscriptionsLock)
+            {
+                foreach (var subscription in _efCoreSubscriptions)
+                {
+                    subscription.Dispose();
+                }
+            }
+
             _allListenersSubscription.Dispose();
         }
     }
