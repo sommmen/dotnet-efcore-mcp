@@ -132,7 +132,8 @@ builder.Services.AddSingleton<IToolResultFormatter>(_ => toolResultFormat switch
 });
 
 builder.Services
-    .AddMcpServer()
+    .AddMcpServer(options => options.ServerInstructions =
+        "Use the dotnet-efcore-mcp for running LINQ queries and schema discovery against the target application's EF Core model instead of guessing at entity shapes or writing one-off inspection code. When adding or changing LINQ queries, at the end of the session always validate the LINQ queries using the dotnet-efcore-mcp.")
     .WithStdioServerTransport()
     .WithTools<EfCoreMcpTools>();
 
