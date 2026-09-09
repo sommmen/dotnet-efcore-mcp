@@ -154,7 +154,7 @@ internal static class CursorPaginationExecutor
             var comparison = BuildComparison(selector, constant, ordering.Descending);
             var term = equalPrefix is null ? comparison : Expression.AndAlso(equalPrefix, comparison);
             predicate = predicate is null ? term : Expression.OrElse(predicate, term);
-            var equal = Expression.Equal(selector, constant);
+            var equal = Expression.Equal(selector, constant, liftToNull: false);
             equalPrefix = equalPrefix is null ? equal : Expression.AndAlso(equalPrefix, equal);
         }
 
@@ -199,11 +199,11 @@ internal static class CursorPaginationExecutor
         if (left.Type == typeof(string))
         {
             var compare = Expression.Call(typeof(string), nameof(string.Compare), Type.EmptyTypes, left, right);
-            return descending ? Expression.LessThan(compare, Expression.Constant(0)) : Expression.GreaterThan(compare, Expression.Constant(0));
+            return descending ? Expression.LessThan(compare, Expression.Constant(0), liftToNull: false) : Expression.GreaterThan(compare, Expression.Constant(0), liftToNull: false);
         }
 
         if (HasComparisonOperators(left.Type))
-            return descending ? Expression.LessThan(left, right) : Expression.GreaterThan(left, right);
+            return descending ? Expression.LessThan(left, right, liftToNull: false) : Expression.GreaterThan(left, right, liftToNull: false);
 
         var compareTo = Expression.Call(
             Expression.Convert(left, typeof(IComparable)),
@@ -343,11 +343,8 @@ internal static class CursorPaginationExecutor
                 ? convert.Operand
                 : selector.Body;
 
-            if (body is MemberExpression { Member: PropertyInfo property })
-                return property.Name;
-
-            // Fallback for complex expressions: use a stable string representation of the expression structure
-            // rather than ToString() which may vary across runs. We normalize the parameter names.
+            // Use normalized path representation for all expressions to preserve nested member paths
+            // and ensure consistent canonicalization across different expression trees.
             return NormalizeExpressionPath(body, selector.Parameters[0].Name ?? "p");
         }
 
