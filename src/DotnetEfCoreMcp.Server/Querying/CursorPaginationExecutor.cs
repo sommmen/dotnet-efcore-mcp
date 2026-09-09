@@ -37,8 +37,8 @@ internal static class CursorPaginationExecutor
             if (orderings.Count == 0)
                 throw new QueryExecutionException("Cursor pagination requires an explicit deterministic OrderBy().");
 
-            ValidateOrderingTypesAreSupported(orderings);
             AppendMissingPrimaryKeyOrderings(orderings, entityType);
+            ValidateOrderingTypesAreSupported(orderings);
             var orderingShape = orderings.Select(OrderingShape.From).ToArray();
             var baseExpression = RemoveTrailingTakes(sequence.Expression);
             var ordered = ApplyOrdering(sequence.Provider, baseExpression, sequence.ElementType, orderings);
@@ -221,7 +221,18 @@ internal static class CursorPaginationExecutor
     {
         try
         {
-            return orderings.Select(ordering => ordering.Selector.Compile().DynamicInvoke(value)).ToArray();
+            var values = orderings.Select(ordering => ordering.Selector.Compile().DynamicInvoke(value)).ToArray();
+
+            // A null ordering-key value cannot serve as a reliable seek boundary: SQL comparisons such as
+            // `column > NULL` evaluate to UNKNOWN rather than true/false, so rows with a NULL key would be
+            // skipped indefinitely instead of being consistently included or excluded. Reject explicitly
+            // instead of silently producing a cursor that can corrupt pagination results.
+            if (Array.IndexOf(values, null) is var nullIndex and >= 0)
+                throw new QueryExecutionException(
+                    $"Cursor pagination cannot create a page boundary on a null value for ordering key '{orderings[nullIndex].Selector}'. " +
+                    "Ordering keys used for cursor pagination must not contain null values.");
+
+            return values;
         }
         catch (TargetInvocationException ex) when (ex.InnerException is not null)
         {
@@ -336,10 +347,10 @@ internal static class CursorPaginationExecutor
     private sealed record OrderingShape(string Expression, bool Descending, string Type)
     {
         public static OrderingShape From(Ordering ordering) =>
-            new(ExtractPropertyPath(ordering.Selector), ordering.Descending, ordering.Selector.ReturnType.AssemblyQualifiedName!);
+            new(ExtractPropertyPath(ordering.Selector), ordering.Descending, ordering.Selector.ReturnType.ToString());
 
         /// <summary>Extracts a stable, canonical property path from a selector lambda.
-        /// Uses the property name instead of Expression.ToString() to ensure cursor compatibility
+        /// Uses member/method names instead of Expression.ToString() to ensure cursor compatibility
         /// across process boundaries and different expression tree compilation contexts.</summary>
         private static string ExtractPropertyPath(LambdaExpression selector)
         {
@@ -347,23 +358,35 @@ internal static class CursorPaginationExecutor
                 ? convert.Operand
                 : selector.Body;
 
-            // Use normalized path representation for all expressions to preserve nested member paths
-            // and ensure consistent canonicalization across different expression trees.
-            return NormalizeExpressionPath(body, selector.Parameters[0].Name ?? "p");
+            // Normalize to a fixed canonical parameter token (rather than the lambda's actual parameter
+            // name) so that semantically identical orderings expressed with different parameter names
+            // (e.g. "c" vs "x") produce the same ordering shape and are not spuriously rejected.
+            return NormalizeExpressionPath(body);
         }
 
         /// <summary>Produces a stable normalized string representation of an expression tree,
         /// suitable for comparison across process boundaries.</summary>
-        private static string NormalizeExpressionPath(Expression expr, string parameterName)
+        private static string NormalizeExpressionPath(Expression expr)
         {
             return expr switch
             {
-                MemberExpression me => $"{NormalizeExpressionPath(me.Expression!, parameterName)}.{me.Member.Name}",
-                ParameterExpression pe => parameterName,
-                MethodCallExpression mc => $"{NormalizeExpressionPath(mc.Object!, parameterName)}.{mc.Method.Name}()",
+                MemberExpression { Expression: not null } me => $"{NormalizeExpressionPath(me.Expression)}.{me.Member.Name}",
+                MemberExpression me => $"{me.Member.DeclaringType?.FullName}.{me.Member.Name}",
+                ParameterExpression => "p",
+                // Static methods and extension methods (e.g. EF.Property(...)) have a null Object; fall back
+                // to the declaring type instead of dereferencing a null instance expression.
+                MethodCallExpression { Object: not null } mc =>
+                    $"{NormalizeExpressionPath(mc.Object)}.{mc.Method.Name}({NormalizeArguments(mc.Arguments)})",
+                MethodCallExpression mc =>
+                    $"{mc.Method.DeclaringType?.FullName}.{mc.Method.Name}({NormalizeArguments(mc.Arguments)})",
+                ConstantExpression ce => $"const:{ce.Value}",
+                UnaryExpression ue => $"{ue.NodeType}({NormalizeExpressionPath(ue.Operand)})",
                 _ => expr.NodeType.ToString(),
             };
         }
+
+        private static string NormalizeArguments(IReadOnlyCollection<Expression> arguments) =>
+            string.Join(",", arguments.Select(NormalizeExpressionPath));
     }
 
     private sealed class CursorPayload

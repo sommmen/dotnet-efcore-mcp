@@ -784,7 +784,7 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_CursorPagination_BoolOrderingUsesIComparableePath()
+    public async Task ExecuteAsync_CursorPagination_BoolOrderingUsesIComparablePath()
     {
         // Regression test for: bool is a primitive type that does NOT have relational operators (</>).
         // Bool ordering is not SQL-translatable in cursor pagination seek predicates (IComparable.CompareTo
@@ -875,6 +875,27 @@ public sealed class RoslynQueryExecutorTests : IDisposable
         // Verify the cursor is still valid and produces the expected result.
         // If the cursor encoding used unstable Expression.ToString(), this would fail.
         Assert.Equal("Bob", resumed.Rows.Single()["Name"]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsNullOrderingKeyValue()
+    {
+        // Regression test for: a null ordering-key value cannot serve as a reliable seek boundary,
+        // since SQL comparisons like `column > NULL` evaluate to UNKNOWN and would silently skip
+        // rows instead of consistently including/excluding them. Both seeded customers have a null
+        // `Version`, so requesting a next cursor ordered by `Version` must fail explicitly rather
+        // than encode a cursor that could corrupt subsequent pagination.
+        var executor = CreateExecutor(maxTake: 1);
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Version).ThenBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None));
+
+        Assert.Contains("null value", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

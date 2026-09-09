@@ -63,9 +63,9 @@ public sealed record QueryExecutionOptions
     /// <summary>Maximum number of requested navigation include paths per query.</summary>
     public int MaxIncludeCount { get; init; } = 5;
 
-    /// <summary>Maximum number of <c>Include</c>/<c>ThenInclude</c> calls allowed in the parsed query
-    /// expression. This is a static, AST-level cap on how many included navigations may be requested -
-    /// it does not itself bound how many rows each included collection may materialize in the
-    /// database (see P0 #8 in the work tracker for that follow-up).</summary>
+    /// <summary>Maximum number of items materialized per included collection navigation. Applied by
+    /// <c>IncludeQueryProcessor.ApplyPath</c> as a per-collection row cap (e.g. via <c>.Take(cap)</c> on
+    /// each collection navigation), not as a static, AST-level count of <c>Include</c>/<c>ThenInclude</c>
+    /// calls - that count is bounded separately by <see cref="MaxIncludeCount"/>.</summary>
     public int MaxIncludedCollectionItems { get; init; } = 5;
 }
