@@ -154,7 +154,7 @@ internal static class CursorPaginationExecutor
             var comparison = BuildComparison(selector, constant, ordering.Descending);
             var term = equalPrefix is null ? comparison : Expression.AndAlso(equalPrefix, comparison);
             predicate = predicate is null ? term : Expression.OrElse(predicate, term);
-            var equal = Expression.Equal(selector, constant, liftToNull: false);
+            var equal = Expression.Equal(selector, constant, liftToNull: false, method: null);
             equalPrefix = equalPrefix is null ? equal : Expression.AndAlso(equalPrefix, equal);
         }
 
@@ -199,11 +199,15 @@ internal static class CursorPaginationExecutor
         if (left.Type == typeof(string))
         {
             var compare = Expression.Call(typeof(string), nameof(string.Compare), Type.EmptyTypes, left, right);
-            return descending ? Expression.LessThan(compare, Expression.Constant(0), liftToNull: false) : Expression.GreaterThan(compare, Expression.Constant(0), liftToNull: false);
+            return descending
+                ? Expression.LessThan(compare, Expression.Constant(0), liftToNull: false, method: null)
+                : Expression.GreaterThan(compare, Expression.Constant(0), liftToNull: false, method: null);
         }
 
         if (HasComparisonOperators(left.Type))
-            return descending ? Expression.LessThan(left, right, liftToNull: false) : Expression.GreaterThan(left, right, liftToNull: false);
+            return descending
+                ? Expression.LessThan(left, right, liftToNull: false, method: null)
+                : Expression.GreaterThan(left, right, liftToNull: false, method: null);
 
         var compareTo = Expression.Call(
             Expression.Convert(left, typeof(IComparable)),
