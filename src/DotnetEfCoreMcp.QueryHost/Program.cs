@@ -202,4 +202,5 @@ static QueryResultWire ToWire(QueryResult result) => new()
     IsScalar = result.IsScalar,
     Scalar = JsonSerializer.SerializeToElement(result.Scalar),
     Rows = result.Rows.Select(row => row.ToDictionary(pair => pair.Key, pair => JsonSerializer.SerializeToElement(pair.Value))).ToArray(),
+    NextCursor = result.NextCursor,
 };

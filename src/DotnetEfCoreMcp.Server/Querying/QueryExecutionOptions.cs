@@ -3,6 +3,10 @@ namespace DotnetEfCoreMcp.Server.Querying;
 /// <summary>Server-wide limits enforced on every query, regardless of what the caller requests.</summary>
 public sealed record QueryExecutionOptions
 {
+    /// <summary>Server-private HMAC key used to sign cursor continuation tokens. A random key is
+    /// generated when one is not configured; set this explicitly to preserve cursors across restarts.</summary>
+    public string CursorSigningKey { get; init; } = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+
     /// <summary>Where Roslyn queries execute. Auto safely selects an isolated process.</summary>
     public QueryExecutionMode Mode { get; init; } = QueryExecutionMode.Auto;
 
@@ -53,13 +57,15 @@ public sealed record QueryExecutionOptions
     /// <c>OrderBy</c>) allowed in the parsed query expression.</summary>
     public int MaxQueryOperators { get; init; } = 20;
 
-    /// <summary>Maximum depth of a structured include path.</summary>
+    /// <summary>Maximum depth allowed for a requested navigation include path.</summary>
     public int MaxIncludeDepth { get; init; } = 3;
 
-    /// <summary>Maximum number of structured include paths accepted for one query.</summary>
+    /// <summary>Maximum number of requested navigation include paths per query.</summary>
     public int MaxIncludeCount { get; init; } = 5;
 
-    /// <summary>Maximum number of rows materialized for each included collection navigation per parent.
-    /// A value of zero is valid and returns empty included collections.</summary>
+    /// <summary>Maximum number of items materialized per included collection navigation. Applied by
+    /// <c>IncludeQueryProcessor.ApplyPath</c> as a per-collection row cap (e.g. via <c>.Take(cap)</c> on
+    /// each collection navigation), not as a static, AST-level count of <c>Include</c>/<c>ThenInclude</c>
+    /// calls - that count is bounded separately by <see cref="MaxIncludeCount"/>.</summary>
     public int MaxIncludedCollectionItems { get; init; } = 5;
 }

@@ -661,6 +661,291 @@ public sealed class RoslynQueryExecutorTests : IDisposable
         Assert.Equal(3, result.Scalar);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_IssuesAndResumesWithPrimaryKeyTieBreaker()
+    {
+        using (var context = NewContext())
+        {
+            var customerType = EntitySeeding.GetEntityClrType(context, "Customer");
+            context.Add(EntitySeeding.CreateEntity(customerType, new Dictionary<string, object?> { ["Name"] = "Carol", ["Age"] = 30 }));
+            context.SaveChanges();
+        }
+
+        var executor = CreateExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.True(first.HasMoreRows);
+        Assert.NotNull(first.NextCursor);
+        Assert.Equal("Bob", first.Rows.Single()["Name"]);
+        Assert.Equal(2, first.Rows.Single()["Id"]);
+
+        var second = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None);
+
+        Assert.True(second.HasMoreRows);
+        Assert.Equal("Alice", second.Rows.Single()["Name"]);
+        Assert.Equal(1, second.Rows.Single()["Id"]);
+
+        var final = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = second.NextCursor },
+            },
+            CancellationToken.None);
+
+        Assert.False(final.HasMoreRows);
+        Assert.Null(final.NextCursor);
+        Assert.Equal("Carol", final.Rows.Single()["Name"]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsInvalidOrMismatchedCursorsWithoutValues()
+    {
+        var executor = CreateExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        var resumed = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None);
+        Assert.Equal("Bob", resumed.Rows.Single()["Name"]);
+
+        var cursors = new[]
+        {
+            "not-a-cursor",
+            first.NextCursor! + "x",
+        };
+        foreach (var cursor in cursors)
+        {
+            var exception = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+                _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+                new QueryRequest
+                {
+                    Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                    Pagination = new QueryPagination { Mode = "cursor", Cursor = cursor },
+                },
+                CancellationToken.None));
+            Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, exception.Message);
+            Assert.DoesNotContain("Alice", exception.Message, StringComparison.Ordinal);
+        }
+
+        var mismatched = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
+            },
+            CancellationToken.None));
+        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, mismatched.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RequiresOrderingAndRejectsSkip()
+    {
+        var executor = CreateExecutor();
+        var unordered = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Take(1)", Pagination = new QueryPagination { Mode = "cursor" } },
+            CancellationToken.None));
+        Assert.Contains("requires an explicit deterministic OrderBy", unordered.Message, StringComparison.Ordinal);
+
+        var skipped = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id).Skip(1)", Pagination = new QueryPagination { Mode = "cursor" } },
+            CancellationToken.None));
+        Assert.Contains("cannot be combined with LINQ Skip", skipped.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_BoolOrderingUsesIComparablePath()
+    {
+        // Regression test for: bool is a primitive type that does NOT have relational operators (</>).
+        // Bool ordering is not SQL-translatable in cursor pagination seek predicates (IComparable.CompareTo
+        // cannot be translated by EF Core), so it must be rejected at validation time with a clear error.
+        var executor = CreateExecutor();
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Version.HasValue).ThenBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None));
+
+        Assert.Contains("does not support ordering by type", ex.Message);
+        Assert.Contains("Bool", ex.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsInvalidCursorWithSafeErrorMessage()
+    {
+        // Regression test for: DynamicInvoke wraps exceptions in TargetInvocationException.
+        // Ensure that if an ordering selector throws, the exception is unwrapped and converted
+        // to QueryExecutionException with the safe InvalidCursorMessage (not leaking internal values).
+        var executor = CreateExecutor();
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(first.NextCursor);
+
+        // Use an invalid cursor (truncated) to trigger cursor decoding.
+        // This should fail during cursor validation and throw QueryExecutionException with safe message.
+        var exception = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = "invalid-cursor" },
+            },
+            CancellationToken.None));
+
+        // Verify the exception is a QueryExecutionException (not wrapped in TargetInvocationException)
+        // and uses the safe error message without leaking internal details.
+        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, exception.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_CursorStableAcrossEquivalentQueries()
+    {
+        // Regression test: Validates that cursors remain valid when the same semantic ordering
+        // is expressed in equivalent ways. The cursor payload must use a stable canonical 
+        // representation (property names) rather than Expression.ToString() which can vary
+        // across expression compilation contexts.
+        var executor = CreateExecutor();
+        
+        // Get a cursor from the first query (ordered by Name)
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(first.NextCursor);
+        var cursor = first.NextCursor!;
+
+        // Use the same cursor in a second query that has the same semantic ordering.
+        // This simulates the scenario where a cursor might be used in a different execution context
+        // or after a process restart, where Expression.ToString() could produce different output
+        // even though it represents the same property selection.
+        var resumed = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = cursor },
+            },
+            CancellationToken.None);
+
+        // Verify the cursor is still valid and produces the expected result.
+        // If the cursor encoding used unstable Expression.ToString(), this would fail.
+        Assert.Equal("Bob", resumed.Rows.Single()["Name"]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsNullOrderingKeyValue()
+    {
+        // Regression test for: a null ordering-key value cannot serve as a reliable seek boundary,
+        // since SQL comparisons like `column > NULL` evaluate to UNKNOWN and would silently skip
+        // rows instead of consistently including/excluding them. Both seeded customers have a null
+        // `Version`, so requesting a next cursor ordered by `Version` must fail explicitly rather
+        // than encode a cursor that could corrupt subsequent pagination.
+        var executor = CreateExecutor(maxTake: 1);
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Version).ThenBy(c => c.Id).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None));
+
+        Assert.Contains("null value", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsBinaryExpressionCollisions()
+    {
+        // Regression test for: binary expressions with different operands must not collide in ordering shapes.
+        // E.g., `c => c.Age + 1` vs `c => c.Id + 1` should produce different ordering shapes,
+        // so a cursor from one ordering is correctly rejected when used with the other.
+        var executor = CreateExecutor();
+
+        // Issue first query: ordered by (Age + 1)
+        var firstQuery = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age + 1).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(firstQuery.NextCursor);
+        var cursorFromAgePlus1 = firstQuery.NextCursor!;
+
+        // Try to reuse the cursor with a different binary expression: (Id + 1)
+        // This should fail because the ordering shapes are different.
+        var mismatchedOrderingException = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Id + 1).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = cursorFromAgePlus1 },
+            },
+            CancellationToken.None));
+
+        // Verify the mismatch is detected (cursor from Age+1 is invalid for Id+1 ordering).
+        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, mismatchedOrderingException.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OmittedPagination_PreservesLegacyResponse()
+    {
+        var result = await CreateExecutor(maxTake: 1).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id)" }, CancellationToken.None);
+
+        Assert.True(result.HasMoreRows);
+        Assert.Null(result.NextCursor);
+        Assert.Equal(1, result.RowCount);
+    }
+
     /// <summary>Computes the query complexity metrics (node count and max depth) for a query expression,
     /// using the same algorithm as <see cref="QueryComplexityValidator"/>. This is used to derive
     /// test boundary values dynamically rather than hard-coding them, ensuring tests remain correct

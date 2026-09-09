@@ -411,7 +411,7 @@ public sealed class EfCoreMcpTools(
         "Executes a safe, read-only LINQPad-style C# expression rooted at a public DbSet property on the selected DbContext. " +
         "For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: " +
         "IQueryable results are materialized and capped server-side at 50 rows by default, up to a configured maximum of 200 (scalar aggregates/element operators such as " +
-        "Count/FirstOrDefault/Single/Any return single values; already-materialized results like .ToList() return as-is without capping). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. " +
+        "Count/FirstOrDefault/Single/Any return single values; already-materialized results like .ToList() return as-is without capping). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. Cursor pagination requires an explicit OrderBy and cannot be combined with Skip. " +
         "The full LINQPad surface is supported: Where, Select, GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, " +
         "Distinct, Count, LongCount, Sum, Average, Min, Max, First, FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, " +
         "Zip, and the set operators Concat/Union/Except/Intersect (which may reference another public DbSet by name, e.g. " +
@@ -429,10 +429,11 @@ public sealed class EfCoreMcpTools(
         [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         [Description("Optional dot-separated EF navigation paths to include, e.g. [\"Orders\", \"Orders.OrderLines\"]. Each included collection is capped server-side at a configured per-parent maximum and ordered deterministically by primary key.")] IReadOnlyList<string>? include = null,
+        [Description("Optional forward-only keyset pagination. Use { mode: \"cursor\" } for the first page and pass the returned nextCursor as cursor for later pages. Requires an explicitly ordered entity query and cannot be combined with Skip().")] QueryPagination? pagination = null,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, include, cancellationToken));
+        => ExecuteAsync("run_query", () => RunQueryCore(contextName, query, connectionName, targetName, include, pagination, cancellationToken));
 
-    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, IReadOnlyList<string>? include, CancellationToken cancellationToken)
+    private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, IReadOnlyList<string>? include, QueryPagination? pagination, CancellationToken cancellationToken)
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry, targetName);
@@ -459,13 +460,14 @@ public sealed class EfCoreMcpTools(
             QueryResult result;
             try
             {
-                result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, include, cancellationToken);
+                result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, include, pagination, cancellationToken);
             }
             catch (QueryExecutionException)
             {
                 metrics.RecordQueryExecution("run_query", ResolveEffectiveProvider(contextType, entry).ToString(), contextType.Name, rowCount: null, succeeded: false);
                 throw;
             }
+
 
             metrics.RecordQueryExecution("run_query", ResolveEffectiveProvider(contextType, entry).ToString(), contextType.Name, result.RowCount, succeeded: true);
             return resultFormatter.Format(result);
@@ -475,11 +477,11 @@ public sealed class EfCoreMcpTools(
             throw new McpException(FormatQueryError(ex));
         }
     }
-    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, IReadOnlyList<string>? include, CancellationToken cancellationToken)
+    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, IReadOnlyList<string>? include, QueryPagination? pagination, CancellationToken cancellationToken)
     {
         var target = RequireLoadedAssembly(targetName);
         var provider = ResolveEffectiveProvider(contextType, entry);
-        var request = new QueryRequest { Query = query, Include = include };
+        var request = new QueryRequest { Query = query, Include = include, Pagination = pagination };
         return queryExecutionOptions.Mode switch
         {
             QueryExecutionMode.InProcess => roslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
