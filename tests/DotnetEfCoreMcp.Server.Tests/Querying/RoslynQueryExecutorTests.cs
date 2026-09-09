@@ -899,6 +899,42 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_CursorPagination_RejectsBinaryExpressionCollisions()
+    {
+        // Regression test for: binary expressions with different operands must not collide in ordering shapes.
+        // E.g., `c => c.Age + 1` vs `c => c.Id + 1` should produce different ordering shapes,
+        // so a cursor from one ordering is correctly rejected when used with the other.
+        var executor = CreateExecutor();
+
+        // Issue first query: ordered by (Age + 1)
+        var firstQuery = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Age + 1).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(firstQuery.NextCursor);
+        var cursorFromAgePlus1 = firstQuery.NextCursor!;
+
+        // Try to reuse the cursor with a different binary expression: (Id + 1)
+        // This should fail because the ordering shapes are different.
+        var mismatchedOrderingException = await Assert.ThrowsAsync<QueryExecutionException>(() => executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Id + 1).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = cursorFromAgePlus1 },
+            },
+            CancellationToken.None));
+
+        // Verify the mismatch is detected (cursor from Age+1 is invalid for Id+1 ordering).
+        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, mismatchedOrderingException.Message);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_OmittedPagination_PreservesLegacyResponse()
     {
         var result = await CreateExecutor(maxTake: 1).ExecuteAsync(

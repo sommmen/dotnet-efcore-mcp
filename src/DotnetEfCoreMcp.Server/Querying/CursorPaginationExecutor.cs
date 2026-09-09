@@ -381,6 +381,10 @@ internal static class CursorPaginationExecutor
                     $"{mc.Method.DeclaringType?.FullName}.{mc.Method.Name}({NormalizeArguments(mc.Arguments)})",
                 ConstantExpression ce => $"const:{ce.Value}",
                 UnaryExpression ue => $"{ue.NodeType}({NormalizeExpressionPath(ue.Operand)})",
+                BinaryExpression be => $"{be.NodeType}({NormalizeExpressionPath(be.Left)},{NormalizeExpressionPath(be.Right)})",
+                ConditionalExpression cee => $"Conditional({NormalizeExpressionPath(cee.Test)},{NormalizeExpressionPath(cee.IfTrue)},{NormalizeExpressionPath(cee.IfFalse)})",
+                NewExpression ne => $"New({ne.Constructor?.DeclaringType?.FullName})",
+                TypeBinaryExpression tbe => $"TypeBinary({tbe.NodeType},{NormalizeExpressionPath(tbe.Expression)},{tbe.TypeOperand?.FullName})",
                 _ => expr.NodeType.ToString(),
             };
         }
