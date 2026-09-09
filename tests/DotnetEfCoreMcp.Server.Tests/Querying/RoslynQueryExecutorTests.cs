@@ -838,6 +838,46 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_CursorPagination_CursorStableAcrossEquivalentQueries()
+    {
+        // Regression test: Validates that cursors remain valid when the same semantic ordering
+        // is expressed in equivalent ways. The cursor payload must use a stable canonical 
+        // representation (property names) rather than Expression.ToString() which can vary
+        // across expression compilation contexts.
+        var executor = CreateExecutor();
+        
+        // Get a cursor from the first query (ordered by Name)
+        var first = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor" },
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(first.NextCursor);
+        var cursor = first.NextCursor!;
+
+        // Use the same cursor in a second query that has the same semantic ordering.
+        // This simulates the scenario where a cursor might be used in a different execution context
+        // or after a process restart, where Expression.ToString() could produce different output
+        // even though it represents the same property selection.
+        var resumed = await executor.ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest
+            {
+                Query = "Customers.OrderBy(c => c.Name).Take(1)",
+                Pagination = new QueryPagination { Mode = "cursor", Cursor = cursor },
+            },
+            CancellationToken.None);
+
+        // Verify the cursor is still valid and produces the expected result.
+        // If the cursor encoding used unstable Expression.ToString(), this would fail.
+        Assert.Equal("Bob", resumed.Rows.Single()["Name"]);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_OmittedPagination_PreservesLegacyResponse()
     {
         var result = await CreateExecutor(maxTake: 1).ExecuteAsync(

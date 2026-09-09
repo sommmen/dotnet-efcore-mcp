@@ -332,7 +332,37 @@ internal static class CursorPaginationExecutor
     private sealed record OrderingShape(string Expression, bool Descending, string Type)
     {
         public static OrderingShape From(Ordering ordering) =>
-            new(ordering.Selector.Body.ToString(), ordering.Descending, ordering.Selector.ReturnType.AssemblyQualifiedName!);
+            new(ExtractPropertyPath(ordering.Selector), ordering.Descending, ordering.Selector.ReturnType.AssemblyQualifiedName!);
+
+        /// <summary>Extracts a stable, canonical property path from a selector lambda.
+        /// Uses the property name instead of Expression.ToString() to ensure cursor compatibility
+        /// across process boundaries and different expression tree compilation contexts.</summary>
+        private static string ExtractPropertyPath(LambdaExpression selector)
+        {
+            var body = selector.Body is UnaryExpression { NodeType: ExpressionType.Convert } convert
+                ? convert.Operand
+                : selector.Body;
+
+            if (body is MemberExpression { Member: PropertyInfo property })
+                return property.Name;
+
+            // Fallback for complex expressions: use a stable string representation of the expression structure
+            // rather than ToString() which may vary across runs. We normalize the parameter names.
+            return NormalizeExpressionPath(body, selector.Parameters[0].Name ?? "p");
+        }
+
+        /// <summary>Produces a stable normalized string representation of an expression tree,
+        /// suitable for comparison across process boundaries.</summary>
+        private static string NormalizeExpressionPath(Expression expr, string parameterName)
+        {
+            return expr switch
+            {
+                MemberExpression me => $"{NormalizeExpressionPath(me.Expression!, parameterName)}.{me.Member.Name}",
+                ParameterExpression pe => parameterName,
+                MethodCallExpression mc => $"{NormalizeExpressionPath(mc.Object!, parameterName)}.{mc.Method.Name}()",
+                _ => expr.NodeType.ToString(),
+            };
+        }
     }
 
     private sealed class CursorPayload
