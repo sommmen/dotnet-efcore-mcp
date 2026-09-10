@@ -31,6 +31,25 @@ public sealed class QueryCompilerTests
     }
 
     [Fact]
+    public async Task CompileAsync_QueryReferencingSiblingEntityTypeUnqualified_CompilesSuccessfully()
+    {
+        // Regression test for the enum/entity qualification ergonomics issue found while
+        // live-testing run_query: "Customer" lives in the same namespace as SampleAppDbContext
+        // ("SampleApp"), just like a real-world entity/enum (e.g. PartnerType) would live next to
+        // its DbContext. Before UserQuerySourceGenerator emitted a "using" for that namespace,
+        // referencing the bare type name here would fail with a Roslyn binding error even though
+        // the inherited "Customers"/"Orders" DbSet properties already resolved unqualified.
+        var (contextType, handle) = LoadSampleAppDbContext();
+        var source = UserQuerySourceGenerator.Generate(
+            contextType, "Orders.Select(o => o.Customer).OfType<Customer>().Count()", "compileunqualified1");
+        var compiler = new QueryCompiler(new QueryCompilationOptions());
+
+        var compiled = await compiler.CompileAsync(source, handle, CancellationToken.None);
+
+        Assert.NotEmpty(compiled.Pe);
+    }
+
+    [Fact]
     public async Task CompileAsync_SyntaxError_ThrowsQueryExecutionExceptionWithSourceRelativeLineNumber()
     {
         var (contextType, handle) = LoadSampleAppDbContext();
