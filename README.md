@@ -222,7 +222,8 @@ the connection string without committing it:
         "DOTNETEFCOREMCP_CONNECTIONS__Workspace__PROVIDER": "SqlServer",
         "DOTNETEFCOREMCP_CONNECTIONS__Workspace__CONNECTIONSTRING": "${input:efcore-connection-string}",
         "DOTNETEFCOREMCP_CONNECTIONS__Workspace__ACCESSMODE": "ReadOnly",
-        "DOTNETEFCOREMCP_CONNECTIONS__Workspace__ENVIRONMENT": "Development"
+        "DOTNETEFCOREMCP_CONNECTIONS__Workspace__ENVIRONMENT": "Development",
+        "DOTNETEFCOREMCP_CONNECTIONS__Workspace__ACCESSPOLICY__ALLOWCONTEXTS__0": "MyApp.Data.AppDbContext"
       }
     }
   },
@@ -236,6 +237,12 @@ the connection string without committing it:
   ]
 }
 ```
+
+`ACCESSPOLICY__ALLOWCONTEXTS__0` (replace `MyApp.Data.AppDbContext` with the full CLR name of your
+`DbContext`) is required — every connection must declare an explicit `AccessPolicy`, and the
+server throws `ConnectionRegistryConfigurationException` on startup for any connection without
+one (see [Per-connection access policy](docs/development/connections.md) for the full
+`AllowContexts`/`DenyContexts`/`AllowEntities`/`DenyEntities` shape).
 
 Change `PROVIDER` to `Sqlite` or `PostgreSql` when appropriate. On first start VS Code prompts
 for the input and stores it securely; it is passed directly to the server process as configuration,
