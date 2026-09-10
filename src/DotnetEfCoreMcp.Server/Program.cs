@@ -160,6 +160,22 @@ var host = builder.Build();
 // purely a convenience - load_assembly remains available to (re)point the server at a different
 // build without restarting the process.
 var logger = host.Services.GetRequiredService<ILogger<Program>>();
+
+// ConnectionRegistry never throws from its constructor (see its ConfigurationError doc comment) so
+// that a malformed "Connections" section surfaces through each tool call's own error handling
+// instead of a generic MCP-framework invocation failure. Resolving it here, eagerly, at startup -
+// and logging its failure loudly if present - still gives an operator a fail-fast signal in the
+// server's own logs before any MCP client ever makes a call, without preventing the tool-call-time
+// diagnostics from working.
+var connectionRegistry = host.Services.GetRequiredService<ConnectionRegistry>();
+if (connectionRegistry.ConfigurationError is { } configurationError)
+{
+    logger.LogError(
+        configurationError,
+        "Connections configuration is invalid; every MCP tool call will fail until this is fixed: {Message}",
+        configurationError.Message);
+}
+
 var configuredAssemblyPath = builder.Configuration["TargetAssemblyPath"];
 var workspacePath = builder.Configuration["WorkspacePath"];
 

@@ -300,6 +300,51 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         Assert.Contains("does not resolve", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ToolConstruction_ConnectionsSectionMissingAccessPolicy_DoesNotThrowDuringActivation()
+    {
+        // Regression test for the "generic MCP-framework error on every tool call" bug: this
+        // constructs EfCoreMcpTools the same way the MCP SDK's own DI activation does - by handing
+        // it a ConnectionRegistry built directly from misconfigured configuration - which is exactly
+        // the code path where a constructor-time throw from ConnectionRegistry would previously
+        // escape every Execute/ExecuteAsync try/catch entirely (it happens before either can run),
+        // reaching the client as an opaque "An error occurred invoking 'x'." instead of this
+        // exception's actionable "missing a required 'AccessPolicy' section" message. Construction
+        // itself must succeed unconditionally; the misconfiguration is only allowed to surface once
+        // an actual tool method runs (see the next test).
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Connections:NoPolicy:ConnectionString"] = "Data Source=:memory:",
+            ["Connections:NoPolicy:Provider"] = "Sqlite",
+            // Deliberately no "Connections:NoPolicy:AccessPolicy:*" keys at all.
+        }).Build();
+
+        var exception = Record.Exception(() => CreateToolsWithConfiguration(configuration));
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void ListContexts_ConnectionsSectionMissingAccessPolicy_SurfacesConfigurationExceptionMessageThroughMcpException()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Connections:NoPolicy:ConnectionString"] = "Data Source=:memory:",
+            ["Connections:NoPolicy:Provider"] = "Sqlite",
+        }).Build();
+        var tools = CreateToolsWithConfiguration(configuration);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        // ListContexts doesn't itself resolve a connection, so use a tool that does (get_schema
+        // requires an explicit/implicit connection resolution, which is where the deferred
+        // ConnectionRegistryConfigurationException is raised).
+        var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext"));
+
+        Assert.Contains("AccessPolicy", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("NoPolicy", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("error occurred invoking", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Dictionary<string, JsonElement> Values(params object[] pairs)
     {
         var values = new Dictionary<string, JsonElement>();

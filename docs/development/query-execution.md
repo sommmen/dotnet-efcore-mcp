@@ -116,6 +116,17 @@ same context can be referenced by name inside the query. Client-side operators c
 deliberately after `AsEnumerable()` or materialization, but once the result is no longer an
 `IQueryable` it is returned through `QueryResult.Scalar` instead of row-shaped output.
 
+`UserQuerySourceGenerator` emits `using System.Linq;` and `using Microsoft.EntityFrameworkCore;`
+plus a `using` for the target `DbContext`'s own namespace, every `DbSet<T>` entity type's
+namespace, and the namespace of any enum-typed property declared directly on those entities
+(`CollectQueryNamespaces`). This is what lets `Orders` (an inherited `DbSet` member) and a sibling
+type like an entity's own enum (e.g. `PartnerType.Transport`, if `PartnerType` lives in the same
+namespace as the context or one of its entities) both resolve unqualified inside the query text —
+without this, only inherited members resolved unqualified while sibling types required full
+qualification, which was a source of confusion for callers writing ad hoc query snippets. Types
+that live in unrelated namespaces (or whose short name collides with another type reachable this
+way) still require explicit qualification.
+
 The server enforces safety boundaries: only configured metadata references are available at
 compile time; `unsafe` code is disabled; query length is capped (via `MaxQueryLength`); and compile/runtime failures are sanitized without logging raw query
 text or sensitive provider data. Query *complexity* (as opposed to length) is additionally bounded

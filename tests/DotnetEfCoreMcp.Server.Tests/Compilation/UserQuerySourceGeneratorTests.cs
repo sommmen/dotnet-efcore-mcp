@@ -71,6 +71,18 @@ public sealed class UserQuerySourceGeneratorTests
     }
 
     [Fact]
+    public void Generate_EmitsUsingForDbContextAndEntityNamespaces_SoSiblingTypesResolveUnqualified()
+    {
+        // Regression test: previously only "System.Linq" and "Microsoft.EntityFrameworkCore" were
+        // emitted as using directives, so a query referencing a sibling type in the same namespace
+        // as the DbContext/entities (e.g. an enum like "PartnerType.Transport") required full
+        // qualification while inherited DbSet properties (e.g. "Orders") resolved unqualified.
+        var result = UserQuerySourceGenerator.Generate(SampleAppDbContextType, "Orders.Count()", "abc123");
+
+        Assert.Contains("using SampleApp;", result.Source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Generate_NullContextType_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => UserQuerySourceGenerator.Generate(null!, "Orders.Count()", "abc123"));

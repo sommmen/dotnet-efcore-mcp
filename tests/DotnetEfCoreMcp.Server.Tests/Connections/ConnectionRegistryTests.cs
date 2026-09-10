@@ -74,18 +74,26 @@ public sealed class ConnectionRegistryTests
     }
 
     [Fact]
-    public void Constructor_MissingConnectionString_ThrowsConfigurationException()
+    public void Constructor_MissingConnectionString_DoesNotThrow_ButDefersConfigurationException()
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
             ["Connections:Bad:Provider"] = "Sqlite",
         });
 
-        Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+        // The constructor must never throw: it is resolved lazily as a DI singleton, the first time
+        // an MCP tool is invoked, entirely outside of that tool's own exception handling. Throwing
+        // here would surface as a generic MCP-framework error instead of this exception's actionable
+        // message (see ConnectionRegistry.ConfigurationError's doc comment).
+        var registry = new ConnectionRegistry(configuration);
+
+        Assert.NotNull(registry.ConfigurationError);
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.Get("Bad"));
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.ListConnections());
     }
 
     [Fact]
-    public void Constructor_UnsupportedProvider_ThrowsConfigurationException()
+    public void Constructor_UnsupportedProvider_DoesNotThrow_ButDefersConfigurationException()
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
@@ -93,14 +101,17 @@ public sealed class ConnectionRegistryTests
             ["Connections:Bad:ConnectionString"] = "whatever",
         });
 
-        Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+        var registry = new ConnectionRegistry(configuration);
+
+        Assert.NotNull(registry.ConfigurationError);
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.Get("Bad"));
     }
 
     [Theory]
     [InlineData("0")]
     [InlineData("-1")]
     [InlineData("not-a-number")]
-    public void Constructor_InvalidCommandTimeoutSeconds_ThrowsConfigurationException(string commandTimeoutSeconds)
+    public void Constructor_InvalidCommandTimeoutSeconds_DoesNotThrow_ButDefersConfigurationException(string commandTimeoutSeconds)
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
@@ -109,11 +120,14 @@ public sealed class ConnectionRegistryTests
             ["Connections:Bad:CommandTimeoutSeconds"] = commandTimeoutSeconds,
         });
 
-        Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+        var registry = new ConnectionRegistry(configuration);
+
+        Assert.NotNull(registry.ConfigurationError);
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.Get("Bad"));
     }
 
     [Fact]
-    public void Constructor_InvalidAccessMode_ThrowsConfigurationException()
+    public void Constructor_InvalidAccessMode_DoesNotThrow_ButDefersConfigurationException()
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
@@ -122,7 +136,10 @@ public sealed class ConnectionRegistryTests
             ["Connections:Bad:AccessMode"] = "SuperAdmin",
         });
 
-        Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+        var registry = new ConnectionRegistry(configuration);
+
+        Assert.NotNull(registry.ConfigurationError);
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.Get("Bad"));
     }
 
     [Fact]
@@ -143,7 +160,7 @@ public sealed class ConnectionRegistryTests
     }
 
     [Fact]
-    public void Constructor_InvalidEnvironment_ThrowsConfigurationException()
+    public void Constructor_InvalidEnvironment_DoesNotThrow_ButDefersConfigurationExceptionWithDetail()
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>
         {
@@ -152,10 +169,14 @@ public sealed class ConnectionRegistryTests
             ["Connections:Bad:Environment"] = "DisasterRecovery",
         });
 
-        var exception = Assert.Throws<ConnectionRegistryConfigurationException>(() => new ConnectionRegistry(configuration));
+        var registry = new ConnectionRegistry(configuration);
 
-        Assert.Contains("Environment", exception.Message);
-        Assert.Contains("DisasterRecovery", exception.Message);
+        Assert.NotNull(registry.ConfigurationError);
+        Assert.Contains("Environment", registry.ConfigurationError!.Message);
+        Assert.Contains("DisasterRecovery", registry.ConfigurationError.Message);
+
+        var exception = Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.Get("Bad"));
+        Assert.Same(registry.ConfigurationError, exception);
     }
 
     [Fact]
