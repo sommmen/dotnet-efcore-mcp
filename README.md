@@ -58,6 +58,15 @@ Research turned up no ready-made server doing exactly this, but several related 
 
 ## Getting started
 
+> **`AccessPolicy` is mandatory for every connection.** Before your first tool call succeeds,
+> each connection configured under `Connections:<name>` must also declare an `AccessPolicy`
+> (at minimum `AllowContexts` naming your `DbContext`'s full CLR type name) — there is no
+> default/implicit policy. Omitting it makes every MCP tool call fail immediately with a
+> `ConnectionRegistryConfigurationException`-derived error identifying the missing section; see
+> [Configure connections](#configure-connections-server-side-only) below for the exact shape,
+> and [Per-connection access policy](docs/development/connections.md) for the full
+> `AllowContexts`/`DenyContexts`/`AllowEntities`/`DenyEntities` reference.
+
 ### Prerequisites
 
 - .NET SDK 10 (`net10.0`).
@@ -147,7 +156,13 @@ Each connection needs `ConnectionString`, plus optional `Provider` (one of `Sqli
 `SqlServer`, `PostgreSql`), `Environment` (`Development`, `Staging`, `Production`, or
 `Unspecified`), `AccessMode` (`ReadOnly` — the default — or `ReadWrite`; see the note in
 [`docs/development/connections.md`](./docs/development/connections.md) about its current
-scope), and `CommandTimeoutSeconds` (defaults to 30).
+scope), and `CommandTimeoutSeconds` (defaults to 30). It also **requires** an `AccessPolicy`
+section — there is no default policy, and a connection without one fails every tool call with
+an actionable "missing a required `AccessPolicy` section" error. At minimum, set
+`AccessPolicy:AllowContexts:0` to your `DbContext`'s full CLR type name (e.g.
+`MyApp.Data.AppDbContext`); see
+[Per-connection access policy](docs/development/connections.md) for the full
+`AllowContexts`/`DenyContexts`/`AllowEntities`/`DenyEntities` shape.
 
 `Provider` is optional because it's normally **inferred** from the EF Core provider package
 referenced by the currently loaded target project assembly (e.g. referencing
@@ -167,12 +182,15 @@ dotnet user-secrets init
 
 dotnet user-secrets set "Connections:MyApp.Development:ConnectionString" "Server=...;Database=...;..."
 dotnet user-secrets set "Connections:MyApp.Development:Environment" "Development"
+dotnet user-secrets set "Connections:MyApp.Development:AccessPolicy:AllowContexts:0" "MyApp.Data.AppDbContext"
 
 dotnet user-secrets set "Connections:MyApp.Staging:ConnectionString" "Server=...;Database=...;..."
 dotnet user-secrets set "Connections:MyApp.Staging:Environment" "Staging"
+dotnet user-secrets set "Connections:MyApp.Staging:AccessPolicy:AllowContexts:0" "MyApp.Data.AppDbContext"
 
 dotnet user-secrets set "Connections:MyApp.Production:ConnectionString" "Server=...;Database=...;..."
 dotnet user-secrets set "Connections:MyApp.Production:Environment" "Production"
+dotnet user-secrets set "Connections:MyApp.Production:AccessPolicy:AllowContexts:0" "MyApp.Data.AppDbContext"
 ```
 
 Or use environment variables (useful in containers/CI, and always takes precedence over
@@ -181,6 +199,7 @@ user-secrets for the same key):
 ```powershell
 $env:DOTNETEFCOREMCP_Connections__MyApp.Development__ConnectionString = "Server=...;Database=...;..."
 $env:DOTNETEFCOREMCP_Connections__MyApp.Development__Environment = "Development"
+$env:DOTNETEFCOREMCP_Connections__MyApp.Development__AccessPolicy__AllowContexts__0 = "MyApp.Data.AppDbContext"
 ```
 
 If a target project references more than one supported EF Core provider (or none), set
@@ -374,6 +393,14 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 context, such as `Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`.
 If the trimmed text parses as one complete expression, the server wraps it as `return <query>;` (this is the currently supported execution path). An optional single trailing `;` is accepted and stripped.
 If the query uses a top-level `{ ... }` block or contains multiple statements, the server rejects it: statement mode is **not supported** by design due to access-policy enforcement constraints. Expression-mode queries (the currently supported path) allow the server to validate entity access before compilation. For full P0 #9 status, see the [development guide](docs/development/query-execution.md).
+
+The compiled query source automatically brings in a `using` for the DbContext's own namespace
+and every `DbSet<T>` entity type's namespace (plus one level of enum properties declared on
+those entities), so sibling types that live alongside the context or its entities — including
+enums such as `PartnerType.Transport` — can usually be referenced unqualified, the same way an
+inherited `DbSet` property like `Orders` already resolves without qualification. If a type lives
+in a different namespace than the context/entities (or its short name collides with another
+type reachable this way), qualify it explicitly (e.g. `MyNamespace.PartnerType.Transport`).
 
 `IQueryable` results are materialized server-side and capped at 50 rows by default (up to a configured maximum of 200 rows, unless
 reconfigured); no terminal `.ToList()`/`.FirstOrDefault()` call is required. Results are not
