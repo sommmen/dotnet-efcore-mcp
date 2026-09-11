@@ -374,7 +374,7 @@ exactly one currently-loaded target assembly at a time (see `load_assembly`).
 Errors are surfaced as `ModelContextProtocol.McpException` with an actionable message
 (no connection strings, no raw stack traces).
 
-Successful tool payloads use [TOON](https://github.com/Cysharp/ToonEncoder) by default,
+Successful tool payloads use [TOON](https://github.com/CharlesHunt/ToonDotNet) by default,
 which reduces structural overhead for agent consumption. This affects only the text content
 returned by each tool: the stdio transport remains MCP JSON-RPC. To retain the legacy,
 indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
