@@ -1,0 +1,77 @@
+using DotnetEfCoreMcp.Server.Schema;
+
+namespace DotnetEfCoreMcp.Server.Tests.Schema;
+
+/// <summary>Covers <see cref="SchemaCache"/>'s cache-key behavior: it must key on both the DbContext
+/// CLR type and the connection name, so two registered connections sharing a DbContext type (e.g.
+/// different providers/databases) never reuse each other's built schema.</summary>
+public sealed class SchemaCacheTests
+{
+    [Fact]
+    public void GetOrBuild_WithSameTypeButDifferentConnectionNames_BuildsAndCachesSeparately()
+    {
+        var cache = new SchemaCache();
+        var buildCount = 0;
+
+        var forAlpha = cache.GetOrBuild(typeof(SchemaCacheTests), "Alpha", () =>
+        {
+            buildCount++;
+            return new SchemaDto("Alpha", []);
+        });
+        var forBeta = cache.GetOrBuild(typeof(SchemaCacheTests), "Beta", () =>
+        {
+            buildCount++;
+            return new SchemaDto("Beta", []);
+        });
+
+        Assert.Equal(2, buildCount);
+        Assert.Equal("Alpha", forAlpha.ContextName);
+        Assert.Equal("Beta", forBeta.ContextName);
+    }
+
+    [Fact]
+    public void GetOrBuild_WithSameTypeAndSameConnectionName_BuildsOnlyOnce()
+    {
+        var cache = new SchemaCache();
+        var buildCount = 0;
+
+        var first = cache.GetOrBuild(typeof(SchemaCacheTests), "Alpha", () =>
+        {
+            buildCount++;
+            return new SchemaDto("Alpha", []);
+        });
+        var second = cache.GetOrBuild(typeof(SchemaCacheTests), "Alpha", () =>
+        {
+            buildCount++;
+            return new SchemaDto("Alpha", []);
+        });
+
+        Assert.Equal(1, buildCount);
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void TryGet_WithDifferentConnectionNameThanWasCached_ReturnsFalse()
+    {
+        var cache = new SchemaCache();
+        cache.GetOrBuild(typeof(SchemaCacheTests), "Alpha", () => new SchemaDto("Alpha", []));
+
+        var found = cache.TryGet(typeof(SchemaCacheTests), "Beta", out var schema);
+
+        Assert.False(found);
+        Assert.Null(schema);
+    }
+
+    [Fact]
+    public void TryGet_WithSameConnectionNameAsWasCached_ReturnsTrue()
+    {
+        var cache = new SchemaCache();
+        cache.GetOrBuild(typeof(SchemaCacheTests), "Alpha", () => new SchemaDto("Alpha", []));
+
+        var found = cache.TryGet(typeof(SchemaCacheTests), "Alpha", out var schema);
+
+        Assert.True(found);
+        Assert.NotNull(schema);
+        Assert.Equal("Alpha", schema!.ContextName);
+    }
+}

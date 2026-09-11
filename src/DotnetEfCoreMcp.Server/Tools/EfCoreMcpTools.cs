@@ -959,17 +959,20 @@ public sealed class EfCoreMcpTools(
     }
 
     /// <summary>Schema retrieval shared by <c>get_schema</c>, <c>get_entity_schema</c>, and
-    /// <c>search_schema</c>: returns the already-built schema for <paramref name="contextType"/> if
-    /// one is cached, otherwise builds it lazily (constructing a <c>DbContext</c> via
-    /// <paramref name="entry"/>) and populates the cache so later calls - for any of these tools,
-    /// in any order - reuse it. This means <c>get_entity_schema</c>/<c>search_schema</c> never
-    /// require a prior explicit <c>get_schema</c> call to "prime" the cache.</summary>
+    /// <c>search_schema</c>: returns the already-built schema for <paramref name="contextType"/> +
+    /// <paramref name="entry"/> if one is cached, otherwise builds it lazily (constructing a
+    /// <c>DbContext</c> via <paramref name="entry"/>) and populates the cache so later calls - for
+    /// any of these tools, in any order, against the same connection - reuse it. This means
+    /// <c>get_entity_schema</c>/<c>search_schema</c> never require a prior explicit
+    /// <c>get_schema</c> call to "prime" the cache. The cache is keyed by both the context type and
+    /// <see cref="ConnectionRegistryEntry.Name"/>, so two connections sharing a DbContext type
+    /// never reuse each other's schema.</summary>
     private Schema.SchemaDto GetOrBuildSchema(Type contextType, ConnectionRegistryEntry entry)
     {
-        // The cache stores the full, unfiltered schema (it is keyed only by contextType and shared
-        // across connections/callers), so the per-connection AccessPolicy filter is applied to a
-        // fresh, non-mutating view every call rather than being baked into the cached value.
-        return schemaCache.GetOrBuild(contextType, () =>
+        // The cache stores the full, unfiltered schema for this (contextType, connection) pair, so
+        // the per-connection AccessPolicy filter is applied to a fresh, non-mutating view every
+        // call rather than being baked into the cached value.
+        return schemaCache.GetOrBuild(contextType, entry.Name, () =>
         {
             using var context = CreateContext(contextType, entry);
             return Schema.SchemaBuilder.Build(context);

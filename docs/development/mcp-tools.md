@@ -162,8 +162,8 @@ more matches exist than the effective limit.
 The cached schema is passed through a policy-ready selector before slicing or searching; P0 #6
 itself does not implement authorization; the connection-scoped access-policy evaluator filters the visible entities, properties, and relationships without changing either
 public contract. See [Schema discovery](./schema-discovery.md#p0-6--schema-slicingsearch) for the
-full contract and MCP binding/forwarding, cache-only, slice fidelity, unknown-name, matching/order,
-cap/`truncated`, invalid-input, and policy-seam test coverage.
+full contract and MCP binding/forwarding, lazy cache build, slice fidelity, unknown-name,
+matching/order, cap/`truncated`, invalid-input, and policy-seam test coverage.
 
 ## Roslyn query complexity limits (implemented)
 

@@ -15,13 +15,17 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Schema`](../../tests/DotnetEfCoreMcp
     (`entityType.IsOwned()`, `.BaseType`, `.FindDiscriminatorProperty()`) with no
     provider-specific behavior — flagged here as a coverage gap rather than a design gap.
 - [x] Serialize the discovered schema into a compact, agent-friendly format (e.g. JSON) suitable for an MCP tool response
-- [x] Cache the discovered schema per loaded assembly/context and invalidate it when the assembly is reloaded
-  - `SchemaCache` keys by `DbContext` CLR type; `load_assembly` reloading into a new
+- [x] Cache the discovered schema per loaded assembly/context/connection and invalidate it when the assembly is reloaded
+  - `SchemaCache` keys by `DbContext` CLR type *and* connection name, since two registered
+    connections can share a `DbContext` type while pointing at different providers/databases,
+    and the built schema captures provider-specific relational metadata (e.g. column types) that
+    must never be reused across connections. `load_assembly` reloading into a new
     `AssemblyLoadContext` produces new `Type` instances (old ones are collectible/unloaded),
     so old cache entries can never be returned for a stale assembly — invalidation is a
     natural consequence of the identity change rather than an explicit cache-clear call.
-- [x] Slice and search the cached schema without constructing a `DbContext` or rediscovering
-  the model (`get_entity_schema`, `search_schema`) — see P0 #6 below.
+- [x] Slice and search the schema already cached for the resolved context/connection, building
+  and caching it on demand (constructing a `DbContext`) on a cache miss so a prior `get_schema`
+  call is never required (`get_entity_schema`, `search_schema`) — see P0 #6 below.
 - [x] Enrich entity/property/relationship DTOs with relational mapping, constraint/index,
   store-generation, and facet metadata — see P1 #10 below.
 
@@ -49,7 +53,8 @@ same `SchemaBuilder`/`DbContext` construction `get_schema` uses) rather than req
 case-sensitive entity name, or the established sanitized validation error (listing known entity
 names) when the context or entity is unknown.
 
-`search_schema(contextName?, query, maxResults?)` searches only cached schema metadata and returns
+`search_schema(contextName?, query, maxResults?)` searches the schema already cached for the
+resolved context/connection (building and caching it on demand on a cache miss) and returns
 compact matches (`entityName`, `entityNameMatched`, `matchingProperties`,
 `matchingRelationships`) for entity names plus matching properties and relationships — never full
 entity definitions. `query` must be non-empty; matching is a deterministic, case-insensitive
@@ -66,7 +71,9 @@ properties, and relationships without altering either tool's public request or r
 execution reusing a schema built by a prior `get_schema` call, lazily building and caching the
 schema on a cache miss, exact slice fidelity and unknown-name validation, search matching/order,
 default and maximum caps with `truncated`, invalid arguments, and forwarding through the policy
-seam.
+seam. `Schema/SchemaCacheTests.cs` covers the cache-key contract directly: two different
+connection names never share a cached schema even for the same `DbContext` type, while the same
+(type, connection name) pair reuses one cached build.
 
 ## P0 #9: policy-filtered schema discovery
 
