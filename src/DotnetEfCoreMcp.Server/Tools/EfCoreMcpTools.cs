@@ -292,14 +292,7 @@ public sealed class EfCoreMcpTools(
 
         logger.LogInformation("get_schema requested. Context={ContextName} Connection={ConnectionName} Page={Page} PageSize={PageSize}", contextType.Name, connectionName, page, pageSize);
 
-        // The cache stores the full, unfiltered schema (it is keyed only by contextType and shared
-        // across connections/callers), so the per-connection AccessPolicy filter is applied to a
-        // fresh, non-mutating view every call rather than being baked into the cached value.
-        var cachedSchema = schemaCache.GetOrBuild(contextType, () =>
-        {
-            using var context = CreateContext(contextType, entry);
-            return Schema.SchemaBuilder.Build(context);
-        });
+        var cachedSchema = GetOrBuildSchema(contextType, entry);
         var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
         var schema = policy.Apply(cachedSchema);
 
@@ -324,10 +317,10 @@ public sealed class EfCoreMcpTools(
     }
 
     [McpServerTool(Name = "get_entity_schema"), Description(
-        "Returns the complete cached schema definition (properties, primary keys, foreign keys, navigations, " +
-        "ownership, and inheritance metadata) for one exact entity name on a DbContext already discovered by " +
-        "get_schema. Cache-only: never constructs a DbContext, opens a database connection, or rediscovers the " +
-        "model. Call get_schema first if the schema has not been built yet for this context.")]
+        "Returns the complete schema definition (properties, primary keys, foreign keys, navigations, " +
+        "ownership, and inheritance metadata) for one exact entity name on a DbContext. Reuses the schema " +
+        "already discovered by get_schema for this context if one is cached, otherwise builds and caches it " +
+        "on demand - a prior get_schema call is never required.")]
     public string GetEntitySchema(
         [Description("Exact entity name (CLR type name), as returned by get_schema/list_contexts entity names.")] string entityName,
         [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null)
@@ -341,7 +334,7 @@ public sealed class EfCoreMcpTools(
         var entry = ResolveConnection(null);
         var contextType = ResolveContextType(contextName, entry);
         EnsureContextReachable(contextType, entry);
-        var schema = RequireCachedSchema(contextType);
+        var schema = GetOrBuildSchema(contextType, entry);
         var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
 
         logger.LogInformation("get_entity_schema requested. Context={ContextName} Entity={EntityName}", contextType.Name, entityName);
@@ -367,10 +360,11 @@ public sealed class EfCoreMcpTools(
     }
 
     [McpServerTool(Name = "search_schema"), Description(
-        "Searches the cached schema for a DbContext already discovered by get_schema, matching entity names, " +
-        "property names, and relationship (navigation) names against a case-insensitive substring query. Returns " +
-        "compact matches only (not full entity definitions); use get_entity_schema for a complete slice. " +
-        "Cache-only: never constructs a DbContext, opens a database connection, or rediscovers the model.")]
+        "Searches the schema for a DbContext, matching entity names, property names, and relationship " +
+        "(navigation) names against a case-insensitive substring query. Reuses the schema already discovered by " +
+        "get_schema for this context if one is cached, otherwise builds and caches it on demand - a prior " +
+        "get_schema call is never required. Returns compact matches only (not full entity definitions); use " +
+        "get_entity_schema for a complete slice.")]
     public string SearchSchema(
         [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
         [Description("Non-empty, case-insensitive substring to match against entity, property, and relationship names.")] string query = "",
@@ -389,7 +383,7 @@ public sealed class EfCoreMcpTools(
         var entry = ResolveConnection(null);
         var contextType = ResolveContextType(contextName, entry);
         EnsureContextReachable(contextType, entry);
-        var schema = RequireCachedSchema(contextType);
+        var schema = GetOrBuildSchema(contextType, entry);
         var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
 
         logger.LogInformation("search_schema requested. Context={ContextName} Query={Query} MaxResults={MaxResults}", contextType.Name, query, effectiveMaxResults);
@@ -964,17 +958,22 @@ public sealed class EfCoreMcpTools(
         }
     }
 
-    /// <summary>Cache-only schema retrieval for <c>get_entity_schema</c>/<c>search_schema</c>: never
-    /// builds a schema (which would require constructing a <c>DbContext</c>), it only reads whatever
-    /// <c>get_schema</c> has already cached for <paramref name="contextType"/>.</summary>
-    private Schema.SchemaDto RequireCachedSchema(Type contextType)
+    /// <summary>Schema retrieval shared by <c>get_schema</c>, <c>get_entity_schema</c>, and
+    /// <c>search_schema</c>: returns the already-built schema for <paramref name="contextType"/> if
+    /// one is cached, otherwise builds it lazily (constructing a <c>DbContext</c> via
+    /// <paramref name="entry"/>) and populates the cache so later calls - for any of these tools,
+    /// in any order - reuse it. This means <c>get_entity_schema</c>/<c>search_schema</c> never
+    /// require a prior explicit <c>get_schema</c> call to "prime" the cache.</summary>
+    private Schema.SchemaDto GetOrBuildSchema(Type contextType, ConnectionRegistryEntry entry)
     {
-        if (schemaCache.TryGet(contextType, out var schema) && schema is not null)
-            return schema;
-
-        throw new McpException(
-            $"No cached schema exists yet for '{contextType.Name}'. Next step: call get_schema for this context first, " +
-            "then retry.");
+        // The cache stores the full, unfiltered schema (it is keyed only by contextType and shared
+        // across connections/callers), so the per-connection AccessPolicy filter is applied to a
+        // fresh, non-mutating view every call rather than being baked into the cached value.
+        return schemaCache.GetOrBuild(contextType, () =>
+        {
+            using var context = CreateContext(contextType, entry);
+            return Schema.SchemaBuilder.Build(context);
+        });
     }
 
     /// <summary>Resolves a DbContext by name within the currently loaded assembly. Requires the

@@ -147,9 +147,11 @@ slow provider, via an internal probe-delegate overload. See
 ## P0 #6 — schema slicing/search
 
 `get_entity_schema(contextName: string, entityName: string)` and
-`search_schema(contextName: string, query: string, maxResults?: number)` are read-only and
-cache-only: after resolving `contextName`, they operate solely on the schema already held by
-`SchemaCache` and never create a context, connect to a provider, or rediscover EF metadata.
+`search_schema(contextName: string, query: string, maxResults?: number)` are read-only: after
+resolving `contextName`, they operate on the schema already held by `SchemaCache` for that context,
+or build and cache it themselves (the same `SchemaBuilder`/`DbContext` construction `get_schema`
+uses) the first time they are called for a context with no cached schema yet, so callers never have
+to call `get_schema` first just to prime the cache.
 
 `get_entity_schema` returns the complete cached entity definition for an exact entity name.
 `search_schema` returns compact entity/property/relationship match summaries rather than full

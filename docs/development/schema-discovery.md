@@ -40,9 +40,10 @@ more entities remain, the response includes a continuation hint showing the next
 
 ## P0 #6 — schema slicing/search
 
-Added two read-only tools over the existing `SchemaCache`; neither constructs a `DbContext`,
-queries a database, or rediscovers a model — if nothing is cached yet for the resolved context,
-both throw a validation error directing the caller to call `get_schema` first.
+Added two read-only tools over the existing `SchemaCache`. Both reuse whatever schema is already
+cached for the resolved context; if nothing is cached yet, they build and cache it themselves (the
+same `SchemaBuilder`/`DbContext` construction `get_schema` uses) rather than requiring a prior
+`get_schema` call — a caller can go straight to either tool without ever "priming" the cache.
 `get_entity_schema(entityName, contextName?)` returns the complete cached entity definition
 (properties, keys, foreign keys, navigations, ownership, and inheritance metadata) for the exact,
 case-sensitive entity name, or the established sanitized validation error (listing known entity
@@ -61,10 +62,11 @@ cached schema through `ISchemaAccessPolicy` (`Schema/SchemaAccessPolicy.cs`) bef
 or matching. `NoOpSchemaAccessPolicy` remains the default when no connection is active. Once a
 connection is resolved, `ConnectionSchemaAccessPolicy` (P0 #9, see below) filters entities,
 properties, and relationships without altering either tool's public request or response shape.
-`Schema/SchemaSlicerTests.cs` and `Tools/EfCoreMcpToolsSchemaSlicingTests.cs` cover cache-only
-execution (including no context construction/database access), exact slice fidelity and
-unknown-name validation, search matching/order, default and maximum caps with `truncated`, invalid
-arguments, and forwarding through the policy seam.
+`Schema/SchemaSlicerTests.cs` and `Tools/EfCoreMcpToolsSchemaSlicingTests.cs` cover cache-hit
+execution reusing a schema built by a prior `get_schema` call, lazily building and caching the
+schema on a cache miss, exact slice fidelity and unknown-name validation, search matching/order,
+default and maximum caps with `truncated`, invalid arguments, and forwarding through the policy
+seam.
 
 ## P0 #9: policy-filtered schema discovery
 

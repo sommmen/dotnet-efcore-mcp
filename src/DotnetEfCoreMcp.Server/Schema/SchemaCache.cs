@@ -18,10 +18,7 @@ public sealed class SchemaCache
     }
 
     /// <summary>Cache-only lookup: returns the already-built <see cref="SchemaDto"/> for
-    /// <paramref name="contextType"/> without ever building one. Used by tools (such as
-    /// <c>get_entity_schema</c> and <c>search_schema</c>) that must operate strictly on schema
-    /// metadata already discovered by a prior <c>get_schema</c> call, and must not construct a
-    /// <c>DbContext</c> or query a database themselves.</summary>
+    /// <paramref name="contextType"/> without ever building one.</summary>
     public bool TryGet(Type contextType, out SchemaDto? schema)
     {
         return _cache.TryGetValue(contextType, out schema);
