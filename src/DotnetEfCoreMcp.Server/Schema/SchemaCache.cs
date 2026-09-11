@@ -12,15 +12,22 @@ namespace DotnetEfCoreMcp.Server.Schema;
 /// when a target assembly is reloaded, its old <see cref="Type"/> instances become unreachable
 /// once the previous <see cref="System.Runtime.Loader.AssemblyLoadContext"/> is unloaded and
 /// collected, which naturally drops all of their cached schema entries (for every connection) too
-/// - no explicit invalidation step is required.</summary>
+/// - no explicit invalidation step is required. Each per-connection entry is a
+/// <see cref="Lazy{T}"/> using <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> so that,
+/// unlike a plain <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd(TKey,Func{TKey,TValue})"/>
+/// factory (which may run more than once under a race), concurrent callers for the same
+/// (type, connection) block on one another and the build runs exactly once.</summary>
 public sealed class SchemaCache
 {
-    private readonly ConditionalWeakTable<Type, ConcurrentDictionary<string, SchemaDto>> _cache = new();
+    private readonly ConditionalWeakTable<Type, ConcurrentDictionary<string, Lazy<SchemaDto>>> _cache = new();
 
     public SchemaDto GetOrBuild(Type contextType, string connectionName, Func<SchemaDto> factory)
     {
         var perConnection = _cache.GetOrCreateValue(contextType);
-        return perConnection.GetOrAdd(connectionName, _ => factory());
+        var lazy = perConnection.GetOrAdd(
+            connectionName,
+            _ => new Lazy<SchemaDto>(factory, LazyThreadSafetyMode.ExecutionAndPublication));
+        return lazy.Value;
     }
 
     /// <summary>Cache-only lookup: returns the already-built <see cref="SchemaDto"/> for
@@ -29,9 +36,10 @@ public sealed class SchemaCache
     public bool TryGet(Type contextType, string connectionName, out SchemaDto? schema)
     {
         if (_cache.TryGetValue(contextType, out var perConnection) &&
-            perConnection.TryGetValue(connectionName, out var found))
+            perConnection.TryGetValue(connectionName, out var found) &&
+            found.IsValueCreated)
         {
-            schema = found;
+            schema = found.Value;
             return true;
         }
 

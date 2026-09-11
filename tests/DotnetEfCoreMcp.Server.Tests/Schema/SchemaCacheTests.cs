@@ -74,4 +74,43 @@ public sealed class SchemaCacheTests
         Assert.NotNull(schema);
         Assert.Equal("Alpha", schema!.ContextName);
     }
+
+    [Fact]
+    public async Task GetOrBuild_WithConcurrentCallsForSameKey_BuildsExactlyOnce()
+    {
+        var cache = new SchemaCache();
+        var buildCount = 0;
+        var ready = new ManualResetEventSlim(false);
+
+        SchemaDto Factory()
+        {
+            Interlocked.Increment(ref buildCount);
+            // Give every racing caller a chance to reach the cache before the first build
+            // completes, so a naive `ConcurrentDictionary.GetOrAdd` factory (which may run more
+            // than once under a race) would be exposed by this test.
+            ready.Wait(TimeSpan.FromSeconds(5));
+            return new SchemaDto("Alpha", []);
+        }
+
+        var starter = Task.Run(() =>
+        {
+            var result = cache.GetOrBuild(typeof(SchemaCacheTests), "Alpha", Factory);
+            return result;
+        });
+
+        // Wait until the factory has started running before launching the racing callers.
+        SpinWait.SpinUntil(() => Volatile.Read(ref buildCount) > 0, TimeSpan.FromSeconds(5));
+
+        var racers = Enumerable.Range(0, 8)
+            .Select(_ => Task.Run(() => cache.GetOrBuild(typeof(SchemaCacheTests), "Alpha", Factory)))
+            .ToArray();
+
+        ready.Set();
+
+        var starterResult = await starter;
+        var racerResults = await Task.WhenAll(racers);
+
+        Assert.Equal(1, buildCount);
+        Assert.All(racerResults, r => Assert.Same(starterResult, r));
+    }
 }
