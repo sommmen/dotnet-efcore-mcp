@@ -97,7 +97,7 @@ jobs:
       # to npm alongside the GitHub Packages push above.
       - name: Setup Node.js
         if: env.NPM_TOKEN_SET == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20.x"
           registry-url: "https://registry.npmjs.org"
