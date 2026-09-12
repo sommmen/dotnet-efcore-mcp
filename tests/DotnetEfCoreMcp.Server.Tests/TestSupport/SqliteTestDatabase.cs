@@ -26,11 +26,13 @@ public sealed class SqliteTestDatabase : IDisposable
         int commandTimeoutSeconds = 30,
         ConnectionAccessMode accessMode = ConnectionAccessMode.ReadOnly,
         EnvironmentType environment = EnvironmentType.Unspecified,
-        ConnectionAccessPolicy? accessPolicy = null) => new()
+        ConnectionAccessPolicy? accessPolicy = null,
+        ConnectionSource source = ConnectionSource.Explicit) => new()
         {
             Name = name,
             Provider = DatabaseProvider.Sqlite,
-            ConnectionString = ConnectionString,
+            Source = source,
+            ConnectionString = source == ConnectionSource.Explicit ? ConnectionString : null,
             AccessMode = accessMode,
             CommandTimeoutSeconds = commandTimeoutSeconds,
             Environment = environment,

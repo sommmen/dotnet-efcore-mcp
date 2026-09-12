@@ -7,10 +7,20 @@ public sealed class ConnectionRegistryEntry
 {
     public required string Name { get; init; }
 
-    /// <summary>Explicit provider override. When omitted, the provider is inferred from the loaded target assembly.</summary>
+    /// <summary>Explicit provider override. When omitted, the provider is inferred from the loaded target assembly
+    /// (or, for <see cref="ConnectionSource.ApplicationFactory"/> connections, validated against the provider the
+    /// factory-built <see cref="Microsoft.EntityFrameworkCore.DbContext"/> reports).</summary>
     public DatabaseProvider? Provider { get; init; }
 
-    public required string ConnectionString { get; init; }
+    /// <summary>How this connection's provider/connection string are obtained (see
+    /// <see cref="ConnectionSource"/>). Defaults to <see cref="ConnectionSource.Explicit"/> for backwards
+    /// compatibility with existing configurations.</summary>
+    public ConnectionSource Source { get; init; } = ConnectionSource.Explicit;
+
+    /// <summary>Required when <see cref="Source"/> is <see cref="ConnectionSource.Explicit"/>; must be
+    /// absent when <see cref="Source"/> is <see cref="ConnectionSource.ApplicationFactory"/>, whose connection
+    /// string is instead supplied by the target's own design-time factory at resolution time.</summary>
+    public string? ConnectionString { get; init; }
 
     public ConnectionAccessMode AccessMode { get; init; } = ConnectionAccessMode.ReadOnly;
 
@@ -35,5 +45,5 @@ public sealed class ConnectionRegistryEntry
     /// <summary>Redacted representation safe to log or return to an MCP client - never includes
     /// <see cref="ConnectionString"/>.</summary>
     public override string ToString() =>
-        $"ConnectionRegistryEntry {{ Name = {Name}, Provider = {Provider?.ToString() ?? "(inferred)"}, AccessMode = {AccessMode}, Environment = {Environment}, CommandTimeoutSeconds = {CommandTimeoutSeconds}, ConnectionString = [REDACTED] }}";
+        $"ConnectionRegistryEntry {{ Name = {Name}, Source = {Source}, Provider = {Provider?.ToString() ?? "(inferred)"}, AccessMode = {AccessMode}, Environment = {Environment}, CommandTimeoutSeconds = {CommandTimeoutSeconds}, ConnectionString = {(Source == ConnectionSource.ApplicationFactory ? "(from application factory)" : "[REDACTED]")} }}";
 }

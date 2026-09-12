@@ -6,7 +6,7 @@ namespace DotnetEfCoreMcp.Server.Querying;
 /// <summary>Versioned stdin/stdout payload exchanged with the isolated Roslyn query host.</summary>
 public sealed class OutOfProcessQueryRequest
 {
-    public const int CurrentProtocolVersion = 3;
+    public const int CurrentProtocolVersion = 4;
     public int ProtocolVersion { get; init; } = CurrentProtocolVersion;
     public required string RequestId { get; init; }
     public required string TargetAssemblyPath { get; init; }

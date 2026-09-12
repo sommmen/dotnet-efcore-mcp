@@ -83,8 +83,8 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         QueryComplexityValidator.Validate(query, executionOptions);
 
         var shape = DbContextActivator.DetermineConstructorShape(contextType);
-        if (shape is DbContextConstructorShape.DesignTimeFactory or DbContextConstructorShape.Unsupported)
-            throw new QueryExecutionException("The selected DbContext cannot be used with the Roslyn query engine because it does not expose a public parameterless or DbContextOptions constructor.");
+        if (shape == DbContextConstructorShape.Unsupported)
+            throw new QueryExecutionException("The selected DbContext cannot be used with the Roslyn query engine because it does not expose a public parameterless or DbContextOptions constructor, or an IDesignTimeDbContextFactory<TContext>.");
 
         var source = UserQuerySourceGenerator.Generate(contextType, query, Guid.NewGuid().ToString("N"));
         var compiled = await compiler.CompileAsync(source, target, cancellationToken).ConfigureAwait(false);
@@ -97,19 +97,27 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
             using var pdb = new MemoryStream(compiled.Pdb);
             var assembly = loadContext.LoadCompiledAssembly(pe, pdb);
             var generatedType = assembly.GetType(source.TypeName, throwOnError: true)!;
-            context = (DbContext)CreateContext(generatedType, contextType, shape, entry, provider, allowMutations);
             object? value;
-            try
+            if (shape == DbContextConstructorShape.DesignTimeFactory)
             {
-                value = generatedType.GetMethod("RunUserAuthoredQuery", BindingFlags.Instance | BindingFlags.Public)!.Invoke(context, null);
+                context = DbContextActivator.CreateInstance(
+                    contextType,
+                    entry,
+                    provider,
+                    trustFactoryConnectionString: entry.Source == ConnectionSource.ApplicationFactory);
+                context.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+                if (!allowMutations)
+                {
+                    context.SavingChanges += (_, _) => throw new QueryExecutionException(
+                        "Saving changes from run_query is disabled for this connection.");
+                }
+
+                value = InvokeUserQuery(generatedType, BindingFlags.Static | BindingFlags.Public, null, [context]);
             }
-            catch (TargetInvocationException ex) when (ex.InnerException is QueryExecutionException queryException)
+            else
             {
-                throw queryException;
-            }
-            catch (TargetInvocationException ex)
-            {
-                throw new QueryExecutionException("The C# query failed while it was being evaluated.", ex.InnerException ?? ex);
+                context = (DbContext)CreateContext(generatedType, contextType, shape, entry, provider, allowMutations);
+                value = InvokeUserQuery(generatedType, BindingFlags.Instance | BindingFlags.Public, context, null);
             }
 
             return new CompiledQueryInvocation(context, loadContext, value);
@@ -119,6 +127,22 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
             context?.Dispose();
             loadContext.Unload();
             throw;
+        }
+    }
+
+    private static object? InvokeUserQuery(Type generatedType, BindingFlags bindingFlags, object? instance, object?[]? arguments)
+    {
+        try
+        {
+            return generatedType.GetMethod("RunUserAuthoredQuery", bindingFlags)!.Invoke(instance, arguments);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is QueryExecutionException queryException)
+        {
+            throw queryException;
+        }
+        catch (TargetInvocationException ex)
+        {
+            throw new QueryExecutionException("The C# query failed while it was being evaluated.", ex.InnerException ?? ex);
         }
     }
 

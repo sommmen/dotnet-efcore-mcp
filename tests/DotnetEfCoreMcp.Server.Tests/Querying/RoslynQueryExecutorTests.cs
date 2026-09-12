@@ -594,15 +594,27 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_DesignTimeFactoryContext_RejectsBeforeCompilation()
+    public async Task ExecuteAsync_DesignTimeFactoryContext_ExecutesQueryUsingRegistryConnectionString()
     {
+        // FactoryOnlyDbContext's own IDesignTimeDbContextFactory configures a deliberately bogus
+        // connection string; with an Explicit-source registry entry the executor must override it
+        // with the registry's real connection string rather than trusting the factory, exactly like
+        // the legacy design-time-factory support this replaces (see FactoryOnlyDbContextFactory's
+        // remarks). Startup-derived (ApplicationFactory-source) trust is covered separately by
+        // OutOfProcessRoslynQueryExecutorTests, since that source is tool-layer restricted to
+        // out-of-process execution.
         var contextType = DbContextScanner.FindDbContextTypes(_handle.Assembly).Descriptors.Single(d => d.Name == "FactoryOnlyDbContext").ClrType;
+        using var seedContext = DbContextActivator.CreateInstance(contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite);
+        seedContext.Database.EnsureCreated();
+        var customerType = EntitySeeding.GetEntityClrType(seedContext, "Customer");
+        seedContext.Add(EntitySeeding.CreateEntity(customerType, new Dictionary<string, object?> { ["Name"] = "Carol", ["Age"] = 40 }));
+        seedContext.SaveChanges();
 
-        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().ExecuteAsync(
+        var result = await CreateExecutor().ExecuteAsync(
             _handle, contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
-            new QueryRequest { Query = "Customers" }, CancellationToken.None));
+            new QueryRequest { Query = "Customers.Where(c => c.Name == \"Carol\").Select(c => c.Name)" }, CancellationToken.None);
 
-        Assert.Contains("cannot be used with the Roslyn query engine", ex.Message);
+        Assert.Equal("Carol", result.Rows.Single()["Value"]);
     }
 
     private const string MutatingQuery =

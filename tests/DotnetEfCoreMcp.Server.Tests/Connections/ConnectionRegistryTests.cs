@@ -31,6 +31,45 @@ public sealed class ConnectionRegistryTests
     }
 
     [Fact]
+    public void Get_ApplicationFactoryConnection_AllowsNoConnectionString()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:FromApplication:Source"] = "ApplicationFactory",
+            ["Connections:FromApplication:Provider"] = "Sqlite",
+            ["Connections:FromApplication:AccessPolicy:AllowContexts:0"] = "SampleApp.ApplicationFactoryDbContext",
+        });
+        var registry = new ConnectionRegistry(configuration);
+
+        var entry = registry.Get("FromApplication");
+
+        Assert.Equal(ConnectionSource.ApplicationFactory, entry.Source);
+        Assert.Null(entry.ConnectionString);
+    }
+
+    [Fact]
+    public void Constructor_ApplicationFactoryConnectionWithConnectionString_DoesNotThrow_ButDefersConfigurationException()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Connections:FromApplication:Source"] = "ApplicationFactory",
+            ["Connections:FromApplication:Provider"] = "Sqlite",
+            ["Connections:FromApplication:ConnectionString"] = "Data Source=test.db",
+            ["Connections:FromApplication:AccessPolicy:AllowContexts:0"] = "SampleApp.ApplicationFactoryDbContext",
+        });
+
+        // Same lazy-throw contract as the other configuration errors above: the constructor must
+        // never throw, so the actionable ConnectionRegistryConfigurationException message surfaces
+        // from the tool invocation rather than a generic MCP-framework error.
+        var registry = new ConnectionRegistry(configuration);
+
+        Assert.NotNull(registry.ConfigurationError);
+        var ex = Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.Get("FromApplication"));
+        Assert.Contains("ApplicationFactory", ex.Message);
+        Assert.Contains("ConnectionString", ex.Message);
+    }
+
+    [Fact]
     public void Get_UnknownConnection_ThrowsUnknownConnectionExceptionListingKnownNames()
     {
         var configuration = BuildConfiguration(new Dictionary<string, string?>

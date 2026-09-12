@@ -473,6 +473,13 @@ public sealed class EfCoreMcpTools(
     }
     private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, IReadOnlyList<string>? include, QueryPagination? pagination, CancellationToken cancellationToken)
     {
+        if (entry.Source == ConnectionSource.ApplicationFactory && queryExecutionOptions.Mode == QueryExecutionMode.InProcess)
+        {
+            throw new QueryExecutionException(
+                "ApplicationFactory connections require QueryExecution:Mode to be OutOfProcess, Pooled, or Auto; " +
+                "the target application's startup logic must not run in the MCP server process.");
+        }
+
         var target = RequireLoadedAssembly(targetName);
         var provider = ResolveEffectiveProvider(contextType, entry);
         var request = new QueryRequest { Query = query, Include = include, Pagination = pagination };
@@ -524,7 +531,14 @@ public sealed class EfCoreMcpTools(
             // preview_query_sql must compile and evaluate the query's C# expression locally to build
             // the IQueryable for ToQueryString(). It only works when QueryExecution:Mode is InProcess
             // because the out-of-process/pooled wire protocol only carries materialized QueryResultWire,
-            // never an unexecuted IQueryable. Reject if the operator has configured isolation.
+            // never an unexecuted IQueryable. ApplicationFactory connections are prohibited in-process.
+            if (entry.Source == ConnectionSource.ApplicationFactory)
+            {
+                throw new QueryExecutionException(
+                    "preview_query_sql is unavailable for ApplicationFactory connections because it requires " +
+                    "in-process query evaluation, while application startup must run in an isolated query host.");
+            }
+
             if (queryExecutionOptions.Mode != QueryExecutionMode.InProcess)
             {
                 throw new QueryExecutionException(
@@ -717,7 +731,8 @@ public sealed class EfCoreMcpTools(
 
     [McpServerTool(Name = "list_connections"), Description(
         "Lists the connections currently registered in the server's connection registry, including each " +
-        "connection's database provider, access mode, environment (Development/Staging/Production), whether it " +
+        "connection's database provider, access mode, environment (Development/Staging/Production), source " +
+        "(Explicit or ApplicationFactory - see docs/development/startup-derived-connections.md), whether it " +
         "is a production connection (always read-only, swap-protected), and which one is currently active. " +
         "Connection strings are never exposed.")]
     public string ListConnections()
@@ -735,6 +750,7 @@ public sealed class EfCoreMcpTools(
                 provider = i.Provider?.ToString() ?? "(inferred)",
                 accessMode = i.AccessMode.ToString(),
                 environment = i.Environment.ToString(),
+                source = i.Source.ToString(),
                 isProduction = i.IsProduction,
                 isActive = i.IsActive,
             }),
@@ -1196,6 +1212,13 @@ public sealed class EfCoreMcpTools(
 
     private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry, System.Reflection.Assembly? migrationsAssembly = null)
     {
+        if (entry.Source == ConnectionSource.ApplicationFactory)
+        {
+            throw new McpException(
+                "ApplicationFactory connections cannot construct a DbContext in the MCP server process. " +
+                "Use run_query with QueryExecution:Mode set to OutOfProcess, Pooled, or Auto.");
+        }
+
         EnsureContextReachable(contextType, entry);
 
         var provider = ResolveEffectiveProvider(contextType, entry);

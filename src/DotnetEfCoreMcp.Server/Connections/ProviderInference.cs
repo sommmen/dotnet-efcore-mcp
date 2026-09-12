@@ -60,4 +60,21 @@ public static class ProviderInference
                 return false;
         }
     }
+
+    /// <summary>Maps an EF Core <c>Database.ProviderName</c> value (the invariant name reported by an
+    /// already-constructed <see cref="Microsoft.EntityFrameworkCore.DbContext"/>, e.g.
+    /// <c>"Microsoft.EntityFrameworkCore.Sqlite"</c>) to the <see cref="DatabaseProvider"/> it
+    /// implements. Used to validate - never configure - the provider a
+    /// <c>IDesignTimeDbContextFactory&lt;TContext&gt;</c>-constructed context already configured for
+    /// itself, without ever inspecting its connection string.</summary>
+    public static bool TryMapProviderName(string? providerName, out DatabaseProvider provider)
+    {
+        if (providerName is not null && KnownProviderAssemblies.TryGetValue(providerName, out provider))
+        {
+            return true;
+        }
+
+        provider = default;
+        return false;
+    }
 }

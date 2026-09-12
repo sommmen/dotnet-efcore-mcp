@@ -26,6 +26,7 @@ Each module has its own implementation checklist, design decisions, and notes:
 | [Multi-target assembly registry](./docs/development/assembly-registry.md) | P2 #15: named registry for holding several loaded target assemblies at once. |
 | [`DbContext` discovery](./docs/development/dbcontext-discovery.md) | Finding and constructing `DbContext` types in a loaded assembly. |
 | [Connection management](./docs/development/connections.md) | Server-side connection registry, secret storage, provider allowlisting (security-sensitive). |
+| [Startup-derived connections](./docs/development/startup-derived-connections.md) | P2 #16: opt-in, out-of-process-only connection source that trusts a target app's own `IDesignTimeDbContextFactory<TContext>` instead of a server-configured connection string. |
 | [Schema / model discovery](./docs/development/schema-discovery.md) | Building and caching an agent-friendly serialization of the EF Core model. |
 | [Query execution](./docs/development/query-execution.md) | Roslyn/LINQPad-style `run_query` execution, read-only defaults, result shaping, and limits. |
 | [Out-of-process query host pooling](./docs/development/query-execution-host-pooling.md) | Design background and implementation notes for the opt-in bounded pooled out-of-process `run_query` host (`QueryExecution:Mode=Pooled`). |
