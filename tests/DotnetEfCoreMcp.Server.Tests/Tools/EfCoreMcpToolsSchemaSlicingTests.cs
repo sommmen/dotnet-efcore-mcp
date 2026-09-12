@@ -15,9 +15,11 @@ using ModelContextProtocol;
 namespace DotnetEfCoreMcp.Server.Tests.Tools;
 
 /// <summary>Binding/forwarding tests for the `get_entity_schema` and `search_schema` MCP tools (P0
-/// #6). Both tools are cache-only: every test here first calls `get_schema` to populate
-/// <see cref="SchemaCache"/>, matching how a real MCP client is expected to use them, then asserts
-/// the two new tools only ever read from that cache.</summary>
+/// #6). Most tests here first call `get_schema` to populate <see cref="SchemaCache"/>, matching
+/// how a real MCP client commonly uses them, but both tools also lazily build and populate the
+/// cache themselves the first time they are called for a context that has no cached schema yet
+/// (see the `WhenSchemaWasNeverBuilt` tests below), so a prior `get_schema` call is never
+/// required.</summary>
 public sealed class EfCoreMcpToolsSchemaSlicingTests
 {
     [Fact]
@@ -67,18 +69,19 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
     }
 
     [Fact]
-    public void GetEntitySchema_WhenSchemaWasNeverBuilt_ThrowsWithoutConstructingAContext()
+    public void GetEntitySchema_WhenSchemaWasNeverBuilt_BuildsItLazilyInstead()
     {
         var tools = CreateTools();
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
-        // get_schema was never called for this context, so nothing is cached yet. If this call
-        // attempted to build the schema itself, it would need a working connection/context and
-        // would either succeed unexpectedly or fail with a database error instead of this
-        // cache-miss message.
-        var exception = Assert.Throws<McpException>(() => tools.GetEntitySchema("Order", "SampleAppDbContext"));
+        // get_schema was never called for this context, so nothing is cached yet. Rather than
+        // hard-failing with a "call get_schema first" error, get_entity_schema must build and
+        // cache the schema itself so a caller never needs to prime the cache with a separate call.
+        using var document = JsonDocument.Parse(tools.GetEntitySchema("Order", "SampleAppDbContext"));
+        var root = document.RootElement;
 
-        Assert.Contains("get_schema", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("SampleAppDbContext", root.GetProperty("contextName").GetString());
+        Assert.Equal("Order", root.GetProperty("entity").GetProperty("Name").GetString());
     }
 
     [Fact]
@@ -213,14 +216,17 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
     }
 
     [Fact]
-    public void SearchSchema_WhenSchemaWasNeverBuilt_ThrowsWithoutConstructingAContext()
+    public void SearchSchema_WhenSchemaWasNeverBuilt_BuildsItLazilyInstead()
     {
         var tools = CreateTools();
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
-        var exception = Assert.Throws<McpException>(() => tools.SearchSchema("SampleAppDbContext", "Customer"));
+        // Same as get_entity_schema: no prior get_schema call is required, search_schema builds
+        // and caches the schema itself on first use.
+        using var document = JsonDocument.Parse(tools.SearchSchema("SampleAppDbContext", "Customer"));
+        var root = document.RootElement;
 
-        Assert.Contains("get_schema", exception.Message, StringComparison.Ordinal);
+        Assert.True(root.GetProperty("matches").GetArrayLength() > 0);
     }
 
     [Fact]
