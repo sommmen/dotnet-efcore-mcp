@@ -147,9 +147,11 @@ slow provider, via an internal probe-delegate overload. See
 ## P0 #6 — schema slicing/search
 
 `get_entity_schema(contextName: string, entityName: string)` and
-`search_schema(contextName: string, query: string, maxResults?: number)` are read-only and
-cache-only: after resolving `contextName`, they operate solely on the schema already held by
-`SchemaCache` and never create a context, connect to a provider, or rediscover EF metadata.
+`search_schema(contextName: string, query: string, maxResults?: number)` are read-only: after
+resolving `contextName`, they operate on the schema already held by `SchemaCache` for that context,
+or build and cache it themselves (the same `SchemaBuilder`/`DbContext` construction `get_schema`
+uses) the first time they are called for a context with no cached schema yet, so callers never have
+to call `get_schema` first just to prime the cache.
 
 `get_entity_schema` returns the complete cached entity definition for an exact entity name.
 `search_schema` returns compact entity/property/relationship match summaries rather than full
@@ -160,8 +162,8 @@ more matches exist than the effective limit.
 The cached schema is passed through a policy-ready selector before slicing or searching; P0 #6
 itself does not implement authorization; the connection-scoped access-policy evaluator filters the visible entities, properties, and relationships without changing either
 public contract. See [Schema discovery](./schema-discovery.md#p0-6--schema-slicingsearch) for the
-full contract and MCP binding/forwarding, cache-only, slice fidelity, unknown-name, matching/order,
-cap/`truncated`, invalid-input, and policy-seam test coverage.
+full contract and MCP binding/forwarding, lazy cache build, slice fidelity, unknown-name,
+matching/order, cap/`truncated`, invalid-input, and policy-seam test coverage.
 
 ## Roslyn query complexity limits (implemented)
 
