@@ -7,7 +7,7 @@ Code: [`src/DotnetEfCoreMcp.Server/Mutations`](../../src/DotnetEfCoreMcp.Server/
 ## Goal
 
 Provide narrowly scoped, metadata-validated writes for a single EF Core entity without accepting
-raw SQL or exposing raw connection strings. The planned `insert_entity`, `update_entity`, and
+raw SQL or exposing raw connection strings. The `insert_entity`, `update_entity`, and
 `delete_entity` tools complement read-only `run_query`; they are an explicitly enabled,
 non-production escape hatch rather than a replacement for application workflows or bulk writes.
 

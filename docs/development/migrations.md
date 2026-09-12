@@ -2,10 +2,9 @@
 
 [← Back to Development Guide](../../DEVELOPMENT.md)
 
-Code: TBC (planned) · Tests: `tests/DotnetEfCoreMcp.Server.Tests/Migrations`
+Code: [`src/DotnetEfCoreMcp.Server/Migrations`](../../src/DotnetEfCoreMcp.Server/Migrations), [`list_migrations`/`generate_migration_script` tools](../../src/DotnetEfCoreMcp.Server/Tools/EfCoreMcpTools.cs) · Tests: `tests/DotnetEfCoreMcp.Server.Tests/Migrations`
 
-> **P1 #11 — Migration inspection and script generation.** This page documents the
-> intended contract only; no implementation exists yet.
+> **P1 #11 — Migration inspection and script generation.** Implemented.
 
 ## Goal
 
@@ -49,7 +48,7 @@ scripts manually. P1 #11 makes that structured.
 
 ## Tool contract
 
-Two tools are planned under P1 #11:
+Two tools are provided under P1 #11:
 
 ### `list_migrations`
 
