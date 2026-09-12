@@ -12,8 +12,10 @@ public sealed class ToonToolResultFormatter : IToolResultFormatter
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    // Serialize with our own JsonSerializerOptions first (preserving cycle handling and
-    // null-omission), then hand the resulting JSON off to Toon.DotNet for TOON conversion;
-    // Toon.Encode(object, ...) would otherwise re-serialize with its own fixed options.
-    public string Format(object value) => Toon.FromJson(JsonSerializer.Serialize(value, JsonOptions));
+    // Serialize to a JsonElement with our own JsonSerializerOptions first (preserving cycle
+    // handling and null-omission), then hand that element to Toon.Encode. Toon.DotNet's
+    // Normalizer passes a JsonElement input through unchanged, so this avoids the extra
+    // string allocation and reparse that Toon.FromJson(JsonSerializer.Serialize(...)) would
+    // incur, while still avoiding Toon.Encode's fixed JSON options for non-JsonElement input.
+    public string Format(object value) => Toon.Encode(JsonSerializer.SerializeToElement(value, JsonOptions));
 }
