@@ -137,7 +137,8 @@ public sealed class ConnectionRegistry
                     e.AccessMode,
                     e.Environment,
                     e.IsProduction,
-                    IsActive: string.Equals(e.Name, _activeName, StringComparison.Ordinal)))
+                    IsActive: string.Equals(e.Name, _activeName, StringComparison.Ordinal),
+                    e.Source))
                 .ToList();
         }
     }
@@ -165,11 +166,36 @@ public sealed class ConnectionRegistry
             var accessModeRaw = child["AccessMode"];
             var commandTimeoutRaw = child["CommandTimeoutSeconds"];
             var environmentRaw = child["Environment"];
+            var sourceRaw = child["Source"];
 
-            if (string.IsNullOrWhiteSpace(connectionString))
+            var source = ConnectionSource.Explicit;
+            if (!string.IsNullOrWhiteSpace(sourceRaw))
             {
+                if (!Enum.TryParse(sourceRaw, ignoreCase: true, out source))
+                {
+                    var allowedSources = string.Join(", ", Enum.GetNames<ConnectionSource>());
+                    throw new ConnectionRegistryConfigurationException(
+                        $"Connection '{name}' has invalid Source '{sourceRaw}'. Allowed sources: {allowedSources}.");
+                }
+            }
+
+            if (source == ConnectionSource.Explicit)
+            {
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    throw new ConnectionRegistryConfigurationException(
+                        $"Connection '{name}' is missing a required 'ConnectionString' value.");
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(connectionString))
+            {
+                // ApplicationFactory connections get their connection string from the target's own
+                // IDesignTimeDbContextFactory<TContext> at resolution time - configuring one here would
+                // be ambiguous about which one is authoritative, so it's rejected outright rather than
+                // silently ignored or silently preferred.
                 throw new ConnectionRegistryConfigurationException(
-                    $"Connection '{name}' is missing a required 'ConnectionString' value.");
+                    $"Connection '{name}' has Source '{source}' and must not configure a 'ConnectionString' " +
+                    "- it is supplied by the target's own IDesignTimeDbContextFactory<TContext> at resolution time.");
             }
 
             DatabaseProvider? provider = null;
@@ -227,6 +253,7 @@ public sealed class ConnectionRegistry
             {
                 Name = name,
                 Provider = provider,
+                Source = source,
                 ConnectionString = connectionString,
                 AccessMode = accessMode,
                 CommandTimeoutSeconds = commandTimeoutSeconds,
@@ -351,4 +378,5 @@ public sealed record ConnectionInfo(
     ConnectionAccessMode AccessMode,
     EnvironmentType Environment,
     bool IsProduction,
-    bool IsActive);
+    bool IsActive,
+    ConnectionSource Source = ConnectionSource.Explicit);

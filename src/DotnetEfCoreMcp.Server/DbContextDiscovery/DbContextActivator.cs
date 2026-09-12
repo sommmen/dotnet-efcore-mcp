@@ -76,9 +76,22 @@ public static class DbContextActivator
     /// <see cref="DbContextConstructorShape.NonGenericOptions"/> construction paths, since the
     /// design-time-factory and parameterless paths configure their own options internally with no
     /// supported way to override just the migrations assembly afterwards.</param>
-    public static DbContext CreateInstance(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Assembly? migrationsAssembly = null)
+    /// <param name="trustFactoryConnectionString">When <see langword="true"/>, the design-time factory's
+    /// own already-configured connection (provider + connection string) is trusted as-is instead of
+    /// being forcibly overridden with <paramref name="entry"/>'s connection string - only the provider
+    /// is validated (via <see cref="Microsoft.Extensions.Hosting.Internal"/>-free reflection over
+    /// <c>Database.ProviderName</c>) against <paramref name="provider"/>, never read back or logged.
+    /// Only valid for the <see cref="DbContextConstructorShape.DesignTimeFactory"/> construction path
+    /// (see docs/development/startup-derived-connections.md, "P2 #16"); throws
+    /// <see cref="DbContextActivationException"/> if requested for any other shape.</param>
+    public static DbContext CreateInstance(Type contextType, ConnectionRegistryEntry entry, DatabaseProvider provider, Assembly? migrationsAssembly = null, bool trustFactoryConnectionString = false)
     {
         var kind = DetermineConstructorShape(contextType);
+        if (trustFactoryConnectionString && kind != DbContextConstructorShape.DesignTimeFactory)
+        {
+            throw new DbContextActivationException(
+                $"'{contextType.FullName}' cannot be activated with trustFactoryConnectionString because it does not use the design-time factory construction path.");
+        }
         if (kind == DbContextConstructorShape.GenericOptions)
         {
             var genericOptionsCtor = contextType.GetConstructor(AnyInstanceCtor, binder: null, [typeof(DbContextOptions<>).MakeGenericType(contextType)], modifiers: null)!;
@@ -126,7 +139,15 @@ public static class DbContextActivator
                 throw new DbContextActivationException($"Design-time factory for '{contextType.FullName}' threw while creating the context.", ex.InnerException);
             }
 
-            OverrideConnectionString(instance, entry, contextType, provider);
+            if (trustFactoryConnectionString)
+            {
+                ValidateTrustedFactoryProvider(instance, entry, contextType, provider);
+            }
+            else
+            {
+                OverrideConnectionString(instance, entry, contextType, provider);
+            }
+
             return instance;
         }
 
@@ -284,6 +305,25 @@ public static class DbContextActivator
             throw new DbContextActivationException(
                 $"'{contextType.FullName}' could not be reconfigured to use the server-registered connection '{entry.Name}'. This usually means the context's own OnConfiguring/design-time factory uses a different database provider than the one registered ({provider}); register it with the matching provider.",
                 ex);
+        }
+    }
+
+    /// <summary>Validates - without ever reading or logging the connection string - that a
+    /// design-time-factory-constructed <paramref name="instance"/> reports the expected
+    /// <paramref name="provider"/> via <c>Database.ProviderName</c>. Used exclusively for
+    /// <see cref="ConnectionSource.ApplicationFactory"/> connections, whose connection string is
+    /// trusted as-is rather than overridden (see <see cref="OverrideConnectionString"/>); a mismatch
+    /// fails fast instead of silently querying the wrong provider's SQL dialect.</summary>
+    private static void ValidateTrustedFactoryProvider(DbContext instance, ConnectionRegistryEntry entry, Type contextType, DatabaseProvider provider)
+    {
+        var providerName = instance.Database.ProviderName;
+        if (!ProviderInference.TryMapProviderName(providerName, out var actualProvider) || actualProvider != provider)
+        {
+            instance.Dispose();
+            throw new DbContextActivationException(
+                $"'{contextType.FullName}' was constructed by its design-time factory for connection '{entry.Name}' using provider " +
+                $"'{providerName ?? "(unknown)"}', which does not match the registered/inferred provider ({provider}). Configure " +
+                $"'Connections:{entry.Name}:Provider' to match what the factory actually configures, or leave it unset to infer from the target assembly.");
         }
     }
 }

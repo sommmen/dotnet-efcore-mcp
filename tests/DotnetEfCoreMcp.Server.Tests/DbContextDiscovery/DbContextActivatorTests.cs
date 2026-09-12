@@ -52,6 +52,28 @@ public sealed class DbContextActivatorTests
     }
 
     [Fact]
+    public void CreateInstance_ApplicationFactoryContext_UsesFactoryConnectionWhenTrusted()
+    {
+        using var db = new SqliteTestDatabase();
+        var previous = Environment.GetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION");
+        Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", db.ConnectionString);
+        try
+        {
+            var handle = new AssemblyLoaderService().Load(FixturePaths.SampleAppDllPath);
+            var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Single(d => d.Name == "ApplicationFactoryDbContext");
+            var entry = db.ToRegistryEntry(source: ConnectionSource.ApplicationFactory);
+
+            using var context = DbContextActivator.CreateInstance(descriptor.ClrType, entry, DatabaseProvider.Sqlite, trustFactoryConnectionString: true);
+
+            Assert.Equal(db.ConnectionString, context.Database.GetConnectionString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", previous);
+        }
+    }
+
+    [Fact]
     public void CreateInstance_UnsupportedShapeContextWithMigrationsAssembly_ReportsNoSupportedConstructionPath()
     {
         // Regression test for a review finding: the migrationsAssembly-specific guard used to fire

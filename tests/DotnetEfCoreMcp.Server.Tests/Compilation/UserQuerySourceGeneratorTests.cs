@@ -1,7 +1,6 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
-using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 
 namespace DotnetEfCoreMcp.Server.Tests.Compilation;
@@ -17,6 +16,21 @@ public sealed class UserQuerySourceGeneratorTests
             return DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors
                 .Single(d => d.Name == "SampleAppDbContext").ClrType;
         }
+    }
+
+    [Fact]
+    public void Generate_DesignTimeFactoryContext_GeneratesStaticMethodWithDbSetAliases()
+    {
+        var service = new AssemblyLoaderService();
+        var handle = service.Load(FixturePaths.SampleAppDllPath);
+        var contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors
+            .Single(d => d.Name == "ApplicationFactoryDbContext").ClrType;
+
+        var result = UserQuerySourceGenerator.Generate(contextType, "Customers.Select(c => c.Name)", "abc123");
+
+        Assert.Contains("public static class UserQuery_abc123", result.Source, StringComparison.Ordinal);
+        Assert.Contains("RunUserAuthoredQuery(global::SampleApp.ApplicationFactoryDbContext context)", result.Source, StringComparison.Ordinal);
+        Assert.Contains("var Customers = context.Customers;", result.Source, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -108,14 +122,19 @@ public sealed class UserQuerySourceGeneratorTests
     }
 
     [Fact]
-    public void Generate_DesignTimeFactoryOnlyContext_ThrowsQueryExecutionException()
+    public void Generate_DesignTimeFactoryOnlyContext_GeneratesStaticMethodWithDbSetAliases()
     {
+        // FactoryOnlyDbContext has no options-constructor shape the activator recognizes, so it
+        // is classified as DesignTimeFactory just like ApplicationFactoryDbContext. Source
+        // generation must support it the same way: as a static query method, not a rejection.
         var service = new AssemblyLoaderService();
         var handle = service.Load(FixturePaths.SampleAppDllPath);
         var descriptor = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors
             .Single(d => d.Name == "FactoryOnlyDbContext");
 
-        Assert.Throws<QueryExecutionException>(
-            () => UserQuerySourceGenerator.Generate(descriptor.ClrType, "Customers.Count()", "abc123"));
+        var result = UserQuerySourceGenerator.Generate(descriptor.ClrType, "Customers.Count()", "abc123");
+
+        Assert.Contains("public static class UserQuery_abc123", result.Source, StringComparison.Ordinal);
+        Assert.Contains("RunUserAuthoredQuery(global::SampleApp.FactoryOnlyDbContext context)", result.Source, StringComparison.Ordinal);
     }
 }

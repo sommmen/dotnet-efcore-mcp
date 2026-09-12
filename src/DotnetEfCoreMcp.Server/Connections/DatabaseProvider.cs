@@ -33,3 +33,20 @@ public enum EnvironmentType
     Staging,
     Production,
 }
+
+/// <summary>How a registered connection's provider and connection string are obtained. See
+/// docs/development/startup-derived-connections.md ("P2 #16") for the full design.</summary>
+public enum ConnectionSource
+{
+    /// <summary>Today's default behavior: <c>Provider</c>/<c>ConnectionString</c> are configured
+    /// explicitly (or inferred/omitted per existing rules) on the registry entry itself.</summary>
+    Explicit,
+
+    /// <summary>The connection string and provider are never configured on the registry entry.
+    /// Instead, at resolution time the target's own <c>IDesignTimeDbContextFactory&lt;TContext&gt;</c>
+    /// is invoked to build the <see cref="Microsoft.EntityFrameworkCore.DbContext"/>, and its
+    /// already-configured connection is trusted as-is. Only ever usable out-of-process/pooled -
+    /// never in-process - and the connection string is never read back into the server or
+    /// disclosed to the MCP client.</summary>
+    ApplicationFactory,
+}

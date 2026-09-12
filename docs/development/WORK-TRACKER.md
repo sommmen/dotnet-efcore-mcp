@@ -9,21 +9,20 @@ document only tracks items that are still outstanding, plus how to add new ones.
 
 ## Open items
 
-| Item | Area | Notes |
-|---|---|---|
-There are currently no other open items from the original MVP roadmap — [project
-scaffolding](./project-scaffolding.md), [assembly loading](./assembly-loading.md),
-[`DbContext` discovery](./dbcontext-discovery.md), [connection
-management](./connections.md), [schema discovery](./schema-discovery.md), [query
-execution](./query-execution.md), and the [MCP tool surface](./mcp-tools.md) are all
-complete and covered by tests (`dotnet test`).
+There are currently no open items — [project scaffolding](./project-scaffolding.md), [assembly
+loading](./assembly-loading.md), [`DbContext` discovery](./dbcontext-discovery.md),
+[connection management](./connections.md), [schema discovery](./schema-discovery.md),
+[query execution](./query-execution.md), the [MCP tool surface](./mcp-tools.md), the
+[named multi-target assembly registry](./assembly-registry.md), and
+[startup-derived connections](./startup-derived-connections.md) are all complete and
+covered by tests (`dotnet test`).
 
 ## Adding new work
 
 When starting new feature work or discovering a gap:
 
-1. Add a row to the table above (or a new table/section if the work doesn't fit an
-   existing area) describing the item and linking to the relevant slice doc.
+1. Add a table (with an `Item`/`Area`/`Notes` row per open item, as prior entries in this
+   file did) under "Open items" describing the item and linking to the relevant slice doc.
 2. If the work is substantial enough to need its own reference documentation, add or
    extend a slice under [`docs/development/`](.) and link it from
    [`DEVELOPMENT.md`](../../DEVELOPMENT.md).
