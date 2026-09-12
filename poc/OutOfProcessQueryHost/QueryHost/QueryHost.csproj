@@ -19,8 +19,8 @@
          below (DbContextOptionsBuilder<T>, UseSqlServer, the dynamic Where(string) extension).
          Which implementation actually loads at runtime is controlled entirely by which
          runtimeconfig/depsfile Launcher passes to "dotnet exec" - see the PoC README. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
-    <PackageReference Include="System.Linq.Dynamic.Core" Version="1.7.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="System.Linq.Dynamic.Core" />
   </ItemGroup>
 
 </Project>
