@@ -23,7 +23,7 @@ Each module has its own implementation checklist, design decisions, and notes:
 |---|---|
 | [Project scaffolding](./docs/development/project-scaffolding.md) | Solution/project setup, analyzers, test project, CI. |
 | [Assembly loading](./docs/development/assembly-loading.md) | Loading a target project's compiled output into an isolated, collectible `AssemblyLoadContext`. |
-| [Multi-target assembly registry](./docs/development/assembly-registry.md) | Planned P2 #15: named registry for holding several loaded target assemblies at once. |
+| [Multi-target assembly registry](./docs/development/assembly-registry.md) | P2 #15: named registry for holding several loaded target assemblies at once. |
 | [`DbContext` discovery](./docs/development/dbcontext-discovery.md) | Finding and constructing `DbContext` types in a loaded assembly. |
 | [Connection management](./docs/development/connections.md) | Server-side connection registry, secret storage, provider allowlisting (security-sensitive). |
 | [Schema / model discovery](./docs/development/schema-discovery.md) | Building and caching an agent-friendly serialization of the EF Core model. |
@@ -31,8 +31,8 @@ Each module has its own implementation checklist, design decisions, and notes:
 | [Out-of-process query host pooling](./docs/development/query-execution-host-pooling.md) | Design background and implementation notes for the opt-in bounded pooled out-of-process `run_query` host (`QueryExecution:Mode=Pooled`). |
 | [Roslyn-compiled `UserQuery`](./docs/development/roslyn-user-query.md) | Current LINQPad-style `UserQuery : TDbContext` model, statement-mode authoring guidance, safety boundaries, and result-shaping notes. |
 | [MCP tool surface](./docs/development/mcp-tools.md) | The `list_contexts` / `get_schema` / `run_query` / `run_sql_query` / `load_assembly` tools and their exposure decisions. |
-| [Migration inspection](./docs/development/migrations.md) | Planned P1 #11: structured `list_migrations`/`generate_migration_script` tooling. |
-| [Structured mutations](./docs/development/mutations.md) | Planned P1 #12: gated single-entity insert, update, and delete tooling. |
+| [Migration inspection](./docs/development/migrations.md) | P1 #11: structured `list_migrations`/`generate_migration_script` tooling. |
+| [Structured mutations](./docs/development/mutations.md) | P1 #12: gated single-entity insert, update, and delete tooling. |
 | [Visual Studio Code integration](./docs/development/vscode-integration.md) | Workspace assembly discovery, `.vscode/mcp.json` setup, and `list_assembly_candidates`. |
 | [Auditing & observability](./docs/development/observability.md) | Query logging and structured logging configuration. |
 
