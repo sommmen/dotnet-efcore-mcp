@@ -64,7 +64,7 @@ public sealed class MigrationInspectorTests : IDisposable
         Assert.True(result.AppliedStateAvailable);
         var applied = Assert.Single(result.AppliedMigrations);
         Assert.Contains("InitialCreate", applied.MigrationId, StringComparison.Ordinal);
-        Assert.Equal("10.0.11", applied.ProductVersion);
+        Assert.Equal("10.0.12", applied.ProductVersion);
         Assert.Empty(result.PendingMigrations);
     }
 
