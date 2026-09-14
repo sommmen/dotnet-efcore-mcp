@@ -87,10 +87,9 @@
   - CI/CD: [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml), adapted from
     [`dotnet-agent-surface`'s `publish.yml`](https://github.com/sommmen/dotnet-agent-surface/blob/main/.github/workflows/publish.yml).
     Builds, tests, and packs the solution, then pushes to **GitHub Packages** on every push to
-    `main` (preview versions) and includes an opt-in NuGet.org publish path (gated on a
-    non-prerelease GitHub Release or a manual `workflow_dispatch` input) that is currently a
-    no-op until a `NUGET_USER` secret is configured — GitHub Packages is the only active
-    publish channel for now, per this task's scope.
+    `main` (preview versions). Stable releases and opted-in manual runs publish every packed
+    package to NuGet.org through Trusted Publishing/OIDC, using `NUGET_USER` only to identify
+    the NuGet.org account and `NuGet/login` to obtain a temporary API key.
 - [x] Publish a thin npm wrapper (`dotnet-efcore-mcp` on the public npm registry) so npm/npx-based
   MCP tooling — notably [`vercel-labs/skills`](https://github.com/vercel-labs/skills), which
   installs skills/servers via npm — can pull in the server without a user running
@@ -108,15 +107,9 @@
       npm registry) to match `roslyn-codelens-mcp`'s unscoped convention and repo-name
       discoverability, over a scoped alternative like `@sommmen/dotnet-efcore-mcp`. Flagged
       here for the repository owner to confirm or change.
-    - Known limitation carried over from the NuGet package still being GitHub-Packages-only
-      (see above): GitHub Packages doesn't support anonymous restore, so `npx -y
-      dotnet-efcore-mcp` does not work out-of-the-box without also configuring GitHub Packages
-      credentials (a PAT with `read:packages` scope). The launcher exposes a
-      `DOTNET_EFCORE_MCP_NUGET_SOURCE` environment variable override and fails with an
-      actionable message pointing at it; this is documented as a prerequisite in
-      `npm/README.md` rather than solved outright. The real fix is nuget.org publishing (see
-      the existing `NUGET_USER`-gated path above), at which point the launcher's default
-      source can drop back to the public feed with no extra auth step.
+    - The launcher installs from NuGet.org by default, so `npx -y dotnet-efcore-mcp` does not
+      require GitHub Packages credentials. It retains a `DOTNET_EFCORE_MCP_NUGET_SOURCE`
+      environment variable override for private or alternate feeds.
   - [`src/DotnetEfCoreMcp.Server/.mcp/server.json`](../../src/DotnetEfCoreMcp.Server/.mcp/server.json):
     gained a second `packages[]` entry (`registryType: npm`, `registryBaseUrl:
     https://registry.npmjs.org`, `identifier: dotnet-efcore-mcp`, `runtimeHint: npx`) alongside

@@ -12,11 +12,9 @@ This package contains no server code. It is a thin shim that ensures the
 [`DotnetEfCoreMcp.Server`](https://github.com/sommmen/dotnet-efcore-mcp) .NET global tool is
 installed at the matching version, then execs it. **The .NET 10 SDK must be on `PATH`.**
 
-> The underlying package is currently published to **GitHub Packages only** (not yet on
-> nuget.org). GitHub Packages does not support anonymous restore, so the first run needs an
-> authenticated source: set `DOTNET_EFCORE_MCP_NUGET_SOURCE` to an authenticated feed URL (a
-> GitHub PAT with `read:packages` scope works as the password half of a source URL, or configure
-> credentials in your `NuGet.Config`), or pre-install the tool yourself — see below.
+The underlying .NET tool is installed from NuGet.org by default. To use a different package
+source, set `DOTNET_EFCORE_MCP_NUGET_SOURCE` to its feed URL or configure it in your
+`NuGet.Config`.
 
 ## MCP client config
 

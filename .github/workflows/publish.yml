@@ -25,11 +25,10 @@ jobs:
     name: Pack and Publish (.NET)
     runs-on: windows-latest
     # step-level `if:` conditions cannot reference the `secrets` context directly, so the
-    # presence of these optional secrets is surfaced via job-level env vars instead (see
+    # presence of this optional secret is surfaced via a job-level env var instead (see
     # https://docs.github.com/en/actions/reference/workflows-and-actions/contexts).
     env:
       NPM_TOKEN_SET: ${{ secrets.NPM_TOKEN != '' }}
-      NUGET_USER_SET: ${{ secrets.NUGET_USER != '' }}
 
     steps:
       - name: Checkout repository
@@ -132,17 +131,10 @@ jobs:
             "| _No package artifacts found_ | — |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           }
 
-      # NuGet.org publishing is not yet enabled for this repo (GitHub Packages is the only
-      # channel for now - see repository README). This step is a no-op until the NUGET_USER
-      # secret (for NuGet.org's Trusted Publishing/OIDC login) is configured, at which point
-      # stable releases and manually-triggered runs can also push to nuget.org.
       - name: NuGet login (OIDC to temporary API key)
         if: >-
-          (((github.event_name == 'release' && !github.event.release.prerelease) ||
-          (github.event_name == 'workflow_dispatch' && inputs.publish_nuget)) &&
-          env.NUGET_USER_SET == 'true')
-        env:
-          NUGET_USER: ${{ secrets.NUGET_USER }}
+          ((github.event_name == 'release' && !github.event.release.prerelease) ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish_nuget))
         uses: NuGet/login@v1
         id: nuget-login
         with:

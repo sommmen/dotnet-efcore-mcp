@@ -76,20 +76,12 @@ Research turned up no ready-made server doing exactly this, but several related 
 
 ### Install as a .NET tool
 
-The server is published as a .NET tool (a NuGet package with `PackageType=McpServer`) to
-**GitHub Packages** (not yet on NuGet.org). It bundles its out-of-process query-execution
-companion (`DotnetEfCoreMcp.QueryHost`) internally, so no extra build step is required after
-installing — `QueryExecution:Mode=Auto` (the default) finds it automatically.
+The server is published to NuGet.org as a .NET tool (a NuGet package with
+`PackageType=McpServer`). It bundles its out-of-process query-execution companion
+(`DotnetEfCoreMcp.QueryHost`) internally, so no extra build step is required after installing —
+`QueryExecution:Mode=Auto` (the default) finds it automatically.
 
 ```powershell
-# One-time: add the GitHub Packages source (requires a GitHub PAT with `read:packages` scope
-# as the password; GitHub Packages does not support anonymous/unauthenticated restore).
-dotnet nuget add source https://nuget.pkg.github.com/sommmen/index.json `
-  --name github-sommmen `
-  --username <your-github-username> `
-  --password <your-github-pat> `
-  --store-password-in-clear-text
-
 dotnet tool install --global DotnetEfCoreMcp.Server
 ```
 
@@ -117,12 +109,9 @@ npx -y dotnet-efcore-mcp
 ```
 
 The wrapper still requires the .NET SDK to be installed locally: on first run it installs (and
-on later runs updates) the matching `DotnetEfCoreMcp.Server` .NET tool version behind the
-scenes, then execs straight into it. Because this package is currently GitHub-Packages-only
-(see above), the wrapper also needs the same GitHub Packages credentials configured — set
-`DOTNET_EFCORE_MCP_NUGET_SOURCE` to an authenticated feed URL, or add a
-`github-sommmen` NuGet source globally as shown above, before running `npx`. See
-[`npm/README.md`](./npm/README.md) for full details and troubleshooting.
+on later runs updates) the matching `DotnetEfCoreMcp.Server` .NET tool version from NuGet.org,
+then execs straight into it. See [`npm/README.md`](./npm/README.md) for full details and
+troubleshooting.
 
 > **Note:** npm publishing is currently dormant in CI pending an `NPM_TOKEN` secret (or npm
 > Trusted Publishing configuration) — see
