@@ -225,13 +225,19 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                 return;
             }
 
-            path = _states.TryGetValue(targetName, out var state) ? state.WatchedPath : null;
+            if (!_states.TryGetValue(targetName, out var state))
+            {
+                return;
+            }
+
+            path = state.WatchedPath;
+            if (File.GetLastWriteTimeUtc(path) <= state.LastReloadedWriteTimeUtc)
+            {
+                return;
+            }
         }
 
-        if (path is not null)
-        {
-            _ = ReloadWithRetryAsync(targetName, path);
-        }
+        _ = ReloadWithRetryAsync(targetName, path);
     }
 
     /// <summary>Attempts to reload <paramref name="path"/> under <paramref name="targetName"/>,
@@ -260,6 +266,15 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                 try
                 {
                     _assemblyLoader.Load(path, targetName == AssemblyLoaderService.DefaultTargetName ? null : targetName);
+                    lock (_gate)
+                    {
+                        if (_states.TryGetValue(targetName, out var state) &&
+                            string.Equals(state.WatchedPath, path, StringComparison.OrdinalIgnoreCase))
+                        {
+                            state.LastReloadedWriteTimeUtc = File.GetLastWriteTimeUtc(path);
+                        }
+                    }
+
                     _logger.LogInformation("Automatically reloaded target assembly '{AssemblyPath}' (target '{TargetName}') after detecting a change on disk.", path, targetName);
                     return;
                 }
@@ -304,6 +319,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
     private sealed class TargetWatchState(string watchedPath)
     {
         public string WatchedPath { get; } = watchedPath;
+        public DateTime LastReloadedWriteTimeUtc { get; set; } = File.GetLastWriteTimeUtc(watchedPath);
         public FileSystemWatcher? Watcher { get; set; }
         public Timer? DebounceTimer { get; set; }
     }
