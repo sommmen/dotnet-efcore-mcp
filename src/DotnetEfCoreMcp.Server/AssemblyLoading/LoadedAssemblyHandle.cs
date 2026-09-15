@@ -19,12 +19,14 @@ public sealed class LoadedAssemblyHandle
         Assembly assembly,
         string assemblyPath,
         DateTimeOffset loadedAtUtc,
+        DateTime loadedWriteTimeUtc,
         IReadOnlyList<string>? additionalAllowedRoots = null)
     {
         _context = context;
         Assembly = assembly;
         AssemblyPath = assemblyPath;
         LoadedAtUtc = loadedAtUtc;
+        LoadedWriteTimeUtc = loadedWriteTimeUtc;
         AdditionalAllowedRoots = additionalAllowedRoots;
     }
 
@@ -33,6 +35,9 @@ public sealed class LoadedAssemblyHandle
     public string AssemblyPath { get; }
 
     public DateTimeOffset LoadedAtUtc { get; }
+
+    /// <summary>The assembly file timestamp captured before this handle loaded its bytes.</summary>
+    public DateTime LoadedWriteTimeUtc { get; }
 
     /// <summary>This target's own narrowed <c>AllowedRoots</c> (already normalized to full paths
     /// with a trailing separator), if it was registered with one via
