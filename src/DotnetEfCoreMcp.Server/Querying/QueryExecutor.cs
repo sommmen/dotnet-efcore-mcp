@@ -20,7 +20,7 @@ public static class QueryExecutor
     /// IMPORTANT: This method enforces expression-mode only (rejects statements with ';'). Statement-mode
     /// queries are not supported for policy enforcement reasons; see P0 #9. The parsed root name is later
     /// validated by <see cref="TryGetDbSetEntityType"/> to ensure it actually refers to a DbSet property,
-    /// preventing policy bypass via DbContext.Set<T>(), Database.ExecuteSqlRaw(), or other non-DbSet access.</summary>
+    /// preventing policy bypass via DbContext.Set&lt;T&gt;(), Database.ExecuteSqlRaw(), or other non-DbSet access.</summary>
     internal static (string Root, string Expression) NormalizeAndGetRoot(string? query, int maxQueryLength)
     {
         var value = query?.Trim();

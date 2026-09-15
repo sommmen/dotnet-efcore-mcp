@@ -59,6 +59,8 @@ public static class DbContextActivator
 {
     private const BindingFlags AnyInstanceCtor = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
 
+    /// <param name="contextType">The DbContext type to instantiate.</param>
+    /// <param name="entry">The registered database connection settings.</param>
     /// <param name="provider">The effective database provider to configure the context with -
     /// either the connection's explicitly configured provider or one inferred from the target
     /// assembly's EF Core provider package reference. Resolution happens before this call; this
@@ -185,6 +187,9 @@ public static class DbContextActivator
     /// <see cref="DetermineConstructorShape"/> returns <see cref="DbContextConstructorShape.GenericOptions"/>
     /// - for <see cref="DbContextConstructorShape.NonGenericOptions"/> use <see cref="BuildOptions"/>
     /// instead, which returns the non-generic type that shape's constructor actually requires.</summary>
+    /// <param name="contextType">The DbContext type for which to create options.</param>
+    /// <param name="entry">The registered database connection settings.</param>
+    /// <param name="provider">The effective database provider to configure.</param>
     /// <param name="configureAdditional">Optional extra configuration applied after the provider is
     /// set up, e.g. <c>b => b.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)</c>.</param>
     /// <param name="migrationsAssembly">See <see cref="CreateInstance"/>.</param>
@@ -245,6 +250,9 @@ public static class DbContextActivator
     /// for <see cref="DbContextConstructorShape.GenericOptions"/> use <see cref="CreateGenericOptions"/>
     /// instead, and design-time-factory / parameterless contexts configure themselves and have no
     /// server-built options to layer <paramref name="configureAdditional"/> onto.</summary>
+    /// <param name="contextType">The DbContext type for which to build options.</param>
+    /// <param name="entry">The registered database connection settings.</param>
+    /// <param name="provider">The effective database provider to configure.</param>
     /// <param name="configureAdditional">Optional extra configuration applied after the provider is
     /// set up, e.g. <c>b => b.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)</c>.</param>
     /// <param name="migrationsAssembly">See <see cref="CreateInstance"/>.</param>
@@ -291,7 +299,7 @@ public static class DbContextActivator
     /// parameterless constructor + OnConfiguring) set up. Internal (not private) so <see
     /// cref="Querying.RoslynQueryExecutor"/> can apply the same override to its Roslyn-compiled
     /// <c>UserQuery_{token}</c> subclasses of parameterless-shape contexts, which construct via
-    /// <see cref="Activator.CreateInstance(Type, object?[]?)"/> directly rather than through this
+    /// <c>Activator.CreateInstance(Type, object?[]?)</c> directly rather than through this
     /// class's <see cref="CreateInstance"/>.</summary>
     internal static void OverrideConnectionString(DbContext instance, ConnectionRegistryEntry entry, Type contextType, DatabaseProvider provider)
     {
