@@ -932,10 +932,10 @@ public sealed class EfCoreMcpTools(
 
     /// <summary>Recognizes the small family of exceptions ("field/method not found", "type could not be
     /// loaded", "could not load file or assembly") that .NET throws when code in the isolated target
-    /// <see cref="AssemblyLoadContext"/> touches a type from an assembly that is loaded twice - once in
+    /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> touches a type from an assembly that is loaded twice - once in
     /// the default context (shared by the server and, transitively, EF Core) and once as a second,
     /// type-identity-incompatible copy inside the target's own context - instead of resolving to a
-    /// single shared copy. This is a server-side <c>TargetAssemblyLoadContext.SharedAssemblyNames</c>
+    /// single shared copy. This is a server-side <c>SharedFrameworkAssemblyNames.SharedAssemblyNames</c>
     /// configuration gap, not a problem with the target project, but the raw CLR exception message
     /// (e.g. "Field not found: 'Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.CommandExecuting'")
     /// gives no hint of that, sending anyone debugging it down the wrong path entirely. Returns

@@ -20,7 +20,7 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     // non-shared dependency resolved via _resolver/_probe). Populated only by
     // LoadAssemblyFromStream, so it always reflects exactly what was loaded *into this context*
     // - shared assemblies resolved by returning null from Load() (and therefore satisfied by the
-    // default context) are deliberately excluded, since those already have a MetadataReference
+    // default context) are deliberately excluded, since those already have a <c>MetadataReference</c>
     // available through the server's own PackageReference-restored copies. A thread-safe
     // collection is used because AssemblyLoadContext.Load can be re-entered (e.g. resolving one
     // dependency's own dependencies) while another thread is concurrently probing the target.
@@ -50,7 +50,7 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     /// order and without duplicates. Used to build a curated <c>MetadataReference</c> list for
     /// compiling user-authored queries against this exact target - see
     /// <c>docs/development/roslyn-user-query.md</c>. Does not include assemblies satisfied by the
-    /// default load context (see <see cref="SharedAssemblyNames"/>); callers needing those already
+    /// default load context (see <see cref="SharedFrameworkAssemblyNames"/>); callers needing those already
     /// have a same-identity copy available via the server's own package references.</summary>
     public IReadOnlyCollection<string> LoadedAssemblyPaths => _loadedAssemblyPaths;
 
@@ -95,13 +95,13 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     /// with the same simple name was already loaded into this context from the *same* path (e.g.
     /// because it's a dependency of the main target, or a previous call already loaded it), the
     /// existing instance is returned instead of loading a second, distinctly-identified copy - EF
-    /// Core matches migrations to a <see cref="DbContext"/> by <see cref="Type"/> reference
+    /// Core matches migrations to a <see cref="Microsoft.EntityFrameworkCore.DbContext"/> by <see cref="Type"/> reference
     /// equality, so a second copy of the same assembly would silently fail to associate. If the
     /// simple name instead collides with an assembly already loaded from a *different* path,
     /// silently returning that unrelated assembly could produce wrong migrations, so this throws
     /// instead.</summary>
     /// <exception cref="AssemblyLoadFailedException">A same-named assembly is already loaded into
-    /// this context from a different path than <paramref name="assemblyPath"/>.</exception>
+    /// this context from a different path than <c>assemblyPath</c>.</exception>
     // File systems are case-insensitive on Windows/macOS but case-sensitive on Linux. Comparing
     // paths with OrdinalIgnoreCase unconditionally would treat two distinct files on Linux that
     // differ only in casing as "the same" path, silently substituting the wrong assembly instead

@@ -32,7 +32,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
     /// before <c>ToQueryString()</c> is ever reached.</para>
     /// <para>Only <see cref="IQueryable"/> results have SQL to preview; a
     /// <see cref="QueryExecutionException"/> is thrown for scalars, already-materialized sequences,
-    /// and plain <see cref="IEnumerable"/> results produced by operators with no SQL translation
+    /// and plain <c>IEnumerable</c> results produced by operators with no SQL translation
     /// (e.g. <c>Zip</c>), matching the same distinction <see cref="ShapeResultAsync"/> draws between
     /// row-shaped and scalar results.</para></summary>
     public async Task<QuerySqlPreviewResult> PreviewSqlAsync(
@@ -202,10 +202,10 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
     /// <summary>Shapes the return value of the user's compiled query into rows or a scalar.
     /// <para>Scope decision: only <see cref="IQueryable"/> results (i.e. an unmaterialized query
     /// against a root <c>DbSet</c>) are capped, executed against the database, and shaped into
-    /// rows. Any other return value - including plain <see cref="IEnumerable"/> sequences produced
+    /// rows. Any other return value - including plain <c>IEnumerable</c> sequences produced
     /// by operators with no SQL translation (e.g. <c>Zip</c>), already-materialized lists, or
     /// scalars like <c>int</c>/<c>bool</c> - is returned as-is via the <see cref="QueryResult.Scalar"/>
-    /// slot. Widening this to also shape plain <see cref="IEnumerable"/> results was considered,
+    /// slot. Widening this to also shape plain <c>IEnumerable</c> results was considered,
     /// but rejected: unlike <see cref="IQueryable"/> there is no expression tree to inspect for a
     /// user-supplied <c>Take</c>, so the effective-take cap (<see cref="QueryExecutor.GetEffectiveTake"/>)
     /// and timeout-aware materialization could not be applied consistently, and an already-enumerated

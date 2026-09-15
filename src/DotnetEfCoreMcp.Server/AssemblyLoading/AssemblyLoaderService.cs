@@ -202,9 +202,9 @@ public sealed class AssemblyLoaderService
     /// target's <c>AssemblyDependencyResolver</c>/<c>TargetDependencyProbe</c> against its own
     /// .deps.json) - this covers the common case where the migrations assembly is already a
     /// project or package reference of the loaded target (e.g. a web API project that references a
-    /// shared data-access library and is itself the assembly passed to <see cref="Load"/>). A value
+    /// shared data-access library and is itself the assembly passed to <see cref="Load(string, string?)"/>). A value
     /// that looks like a path is instead loaded explicitly by file, subject to the same
-    /// <c>AssemblyLoader:AllowedRoots</c> containment check as <see cref="Load"/>, since it is
+    /// <c>AssemblyLoader:AllowedRoots</c> containment check as <see cref="Load(string, string?)"/>, since it is
     /// another arbitrary-file-load primitive.</summary>
     /// <exception cref="AssemblyLoadFailedException">
     /// The name could not be resolved as a dependency of the loaded target, the path is outside the
