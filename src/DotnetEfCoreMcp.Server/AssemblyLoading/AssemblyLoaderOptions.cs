@@ -1,6 +1,6 @@
 namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 
-/// <summary>Server-wide restrictions on which assembly paths <see cref="AssemblyLoaderService.Load"/>
+/// <summary>Server-wide restrictions on which assembly paths <see cref="AssemblyLoaderService.Load(string, string?)"/>
 /// will accept. `load_assembly` takes an arbitrary path from the MCP client and loads it into the
 /// server process (a code-execution primitive via module initializers/type loaders), so this is the
 /// primary control for constraining that surface in less-trusted deployments.</summary>

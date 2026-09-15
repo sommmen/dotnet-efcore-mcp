@@ -35,7 +35,7 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// Because this "any assembly reachable from a shared assembly's public API surface" rule is easy to
 /// violate silently (adding a provider or upgrading EF Core can introduce a new public member that
 /// reaches an assembly not yet listed here), <c>SharedFrameworkAssemblyClosureTests</c> walks the
-/// public API closure of every entry below with a <see cref="System.Reflection.MetadataLoadContext"/>
+/// public API closure of every entry below with a <c>System.Reflection.MetadataLoadContext</c>
 /// and fails if it finds a non-BCL assembly that is not itself in this list. Prefer fixing a failure
 /// there by adding the missing assembly name rather than suppressing the test.
 ///
