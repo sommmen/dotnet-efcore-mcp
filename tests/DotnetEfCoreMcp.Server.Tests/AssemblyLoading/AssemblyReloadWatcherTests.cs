@@ -126,6 +126,46 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
     }
 
     [Fact]
+    public async Task Watcher_IgnoresDelayedDuplicateChanges_ButReloadsANewerVersion()
+    {
+        var dllPath = CopyFixtureDll();
+        var loader = new AssemblyLoaderService();
+        loader.Load(dllPath);
+
+        var reloadCount = 0;
+        loader.AssemblyLoaded += _ => Interlocked.Increment(ref reloadCount);
+
+        using var watcher = new AssemblyReloadWatcher(loader, new AssemblyLoaderOptions(), NullLogger<AssemblyReloadWatcher>.Instance);
+        await watcher.StartAsync(CancellationToken.None);
+        Interlocked.Exchange(ref reloadCount, 0);
+
+        TouchFile(dllPath);
+        var firstReloaded = await WaitForConditionAsync(
+            () => Volatile.Read(ref reloadCount) == 1,
+            timeout: TimeSpan.FromSeconds(10));
+        Assert.True(firstReloaded, "Expected the initial file change to trigger an automatic reload.");
+
+        // A delayed notification for a version already loaded must not reload again. Moving the
+        // timestamp backwards emits a real watcher event while preserving that condition.
+        var loadedWriteTimeUtc = File.GetLastWriteTimeUtc(dllPath);
+        File.SetLastWriteTimeUtc(dllPath, loadedWriteTimeUtc.AddSeconds(-1));
+        await Task.Delay(1000);
+        Assert.Equal(1, Volatile.Read(ref reloadCount));
+
+        // A genuinely newer version must still cause one more reload.
+        File.SetLastWriteTimeUtc(dllPath, loadedWriteTimeUtc.AddSeconds(1));
+        var secondReloaded = await WaitForConditionAsync(
+            () => Volatile.Read(ref reloadCount) == 2,
+            timeout: TimeSpan.FromSeconds(10));
+        Assert.True(secondReloaded, "Expected a newer file version to trigger another automatic reload.");
+
+        await Task.Delay(1000);
+        Assert.Equal(2, Volatile.Read(ref reloadCount));
+
+        await watcher.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Watcher_Retargets_WhenADifferentAssemblyIsLoaded()
     {
         var firstPath = CopyFixtureDll("first");

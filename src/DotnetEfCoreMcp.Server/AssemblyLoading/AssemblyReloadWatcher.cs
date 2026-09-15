@@ -55,7 +55,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
         {
             if (IsAutoReloadEnabledFor(target.AutoReloadEnabled))
             {
-                Retarget(target.Name, target.Handle.AssemblyPath);
+                Retarget(target.Name, target.Handle.AssemblyPath, target.Handle.LoadedWriteTimeUtc);
             }
         }
 
@@ -119,7 +119,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
             return;
         }
 
-        Retarget(args.TargetName, args.Handle.AssemblyPath);
+        Retarget(args.TargetName, args.Handle.AssemblyPath, args.Handle.LoadedWriteTimeUtc);
     }
 
     /// <summary>(Re)points the target's <see cref="FileSystemWatcher"/> at
@@ -127,7 +127,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
     /// no-op if already watching the same path for that target, which is the common case of our own
     /// automatic reload (or a repeated manual `load_assembly` of the same file) raising
     /// <see cref="AssemblyLoaderService.AssemblyLoaded"/> again.</summary>
-    private void Retarget(string targetName, string assemblyPath)
+    private void Retarget(string targetName, string assemblyPath, DateTime loadedWriteTimeUtc)
     {
         lock (_gate)
         {
@@ -139,6 +139,11 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
             if (_states.TryGetValue(targetName, out var existing) &&
                 string.Equals(existing.WatchedPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
             {
+                if (loadedWriteTimeUtc > existing.LastReloadedWriteTimeUtc)
+                {
+                    existing.LastReloadedWriteTimeUtc = loadedWriteTimeUtc;
+                }
+
                 return;
             }
 
@@ -157,7 +162,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                 return;
             }
 
-            var state = new TargetWatchState(assemblyPath);
+            var state = new TargetWatchState(assemblyPath, loadedWriteTimeUtc);
             _states[targetName] = state;
 
             try
@@ -225,13 +230,27 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                 return;
             }
 
-            path = _states.TryGetValue(targetName, out var state) ? state.WatchedPath : null;
+            if (!_states.TryGetValue(targetName, out var state))
+            {
+                return;
+            }
+
+            path = state.WatchedPath;
+            if (state.ReloadInProgress)
+            {
+                state.ReloadPending = true;
+                return;
+            }
+
+            if (File.GetLastWriteTimeUtc(path) <= state.LastReloadedWriteTimeUtc)
+            {
+                return;
+            }
+
+            state.ReloadInProgress = true;
         }
 
-        if (path is not null)
-        {
-            _ = ReloadWithRetryAsync(targetName, path);
-        }
+        _ = ReloadWithRetryAsync(targetName, path);
     }
 
     /// <summary>Attempts to reload <paramref name="path"/> under <paramref name="targetName"/>,
@@ -260,6 +279,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                 try
                 {
                     _assemblyLoader.Load(path, targetName == AssemblyLoaderService.DefaultTargetName ? null : targetName);
+
                     _logger.LogInformation("Automatically reloaded target assembly '{AssemblyPath}' (target '{TargetName}') after detecting a change on disk.", path, targetName);
                     return;
                 }
@@ -285,6 +305,26 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
             // escape and crash the process.
             _logger.LogWarning(ex, "Unexpected error while automatically reloading '{AssemblyPath}' (target '{TargetName}').", path, targetName);
         }
+        finally
+        {
+            var reloadAgain = false;
+            lock (_gate)
+            {
+                if (_states.TryGetValue(targetName, out var state) &&
+                    string.Equals(state.WatchedPath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    state.ReloadInProgress = false;
+                    reloadAgain = state.ReloadPending && File.GetLastWriteTimeUtc(path) > state.LastReloadedWriteTimeUtc;
+                    state.ReloadPending = false;
+                    state.ReloadInProgress = reloadAgain;
+                }
+            }
+
+            if (reloadAgain)
+            {
+                _ = ReloadWithRetryAsync(targetName, path);
+            }
+        }
     }
 
     /// <summary>Caller must hold <see cref="_gate"/>.</summary>
@@ -301,9 +341,12 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
         state.DebounceTimer = null;
     }
 
-    private sealed class TargetWatchState(string watchedPath)
+    private sealed class TargetWatchState(string watchedPath, DateTime loadedWriteTimeUtc)
     {
         public string WatchedPath { get; } = watchedPath;
+        public DateTime LastReloadedWriteTimeUtc { get; set; } = loadedWriteTimeUtc;
+        public bool ReloadInProgress { get; set; }
+        public bool ReloadPending { get; set; }
         public FileSystemWatcher? Watcher { get; set; }
         public Timer? DebounceTimer { get; set; }
     }
