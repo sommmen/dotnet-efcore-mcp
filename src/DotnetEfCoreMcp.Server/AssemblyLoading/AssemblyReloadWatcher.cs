@@ -139,8 +139,10 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
             if (_states.TryGetValue(targetName, out var existing) &&
                 string.Equals(existing.WatchedPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
             {
-                existing.LastReloadedWriteTimeUtc =
-                    DateTime.Max(existing.LastReloadedWriteTimeUtc, loadedWriteTimeUtc);
+                if (loadedWriteTimeUtc > existing.LastReloadedWriteTimeUtc)
+                {
+                    existing.LastReloadedWriteTimeUtc = loadedWriteTimeUtc;
+                }
 
                 return;
             }
