@@ -935,7 +935,7 @@ public sealed class EfCoreMcpTools(
     /// <see cref="System.Runtime.Loader.AssemblyLoadContext"/> touches a type from an assembly that is loaded twice - once in
     /// the default context (shared by the server and, transitively, EF Core) and once as a second,
     /// type-identity-incompatible copy inside the target's own context - instead of resolving to a
-    /// single shared copy. This is a server-side <c>SharedFrameworkAssemblyNames.SharedAssemblyNames</c>
+    /// single shared copy. This is a server-side <c>SharedFrameworkAssemblyNames.Value</c>
     /// configuration gap, not a problem with the target project, but the raw CLR exception message
     /// (e.g. "Field not found: 'Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.CommandExecuting'")
     /// gives no hint of that, sending anyone debugging it down the wrong path entirely. Returns
