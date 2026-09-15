@@ -140,8 +140,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                 string.Equals(existing.WatchedPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
             {
                 existing.LastReloadedWriteTimeUtc =
-                    existing.LoadingWriteTimeUtc ?? loadedWriteTimeUtc;
-                existing.LoadingWriteTimeUtc = null;
+                    DateTime.Max(existing.LastReloadedWriteTimeUtc, loadedWriteTimeUtc);
 
                 return;
             }
@@ -161,7 +160,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                 return;
             }
 
-            var state = new TargetWatchState(assemblyPath);
+            var state = new TargetWatchState(assemblyPath, loadedWriteTimeUtc);
             _states[targetName] = state;
 
             try
@@ -277,25 +276,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
 
                 try
                 {
-                    var loadedWriteTimeUtc = File.GetLastWriteTimeUtc(path);
-                    lock (_gate)
-                    {
-                        if (_states.TryGetValue(targetName, out var state) &&
-                            string.Equals(state.WatchedPath, path, StringComparison.OrdinalIgnoreCase))
-                        {
-                            state.LoadingWriteTimeUtc = loadedWriteTimeUtc;
-                        }
-                    }
-
                     _assemblyLoader.Load(path, targetName == AssemblyLoaderService.DefaultTargetName ? null : targetName);
-                    lock (_gate)
-                    {
-                        if (_states.TryGetValue(targetName, out var state) &&
-                            string.Equals(state.WatchedPath, path, StringComparison.OrdinalIgnoreCase))
-                        {
-                            state.LastReloadedWriteTimeUtc = loadedWriteTimeUtc;
-                        }
-                    }
 
                     _logger.LogInformation("Automatically reloaded target assembly '{AssemblyPath}' (target '{TargetName}') after detecting a change on disk.", path, targetName);
                     return;
@@ -331,7 +312,6 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
                     string.Equals(state.WatchedPath, path, StringComparison.OrdinalIgnoreCase))
                 {
                     state.ReloadInProgress = false;
-                    state.LoadingWriteTimeUtc = null;
                     reloadAgain = state.ReloadPending && File.GetLastWriteTimeUtc(path) > state.LastReloadedWriteTimeUtc;
                     state.ReloadPending = false;
                     state.ReloadInProgress = reloadAgain;
@@ -359,11 +339,10 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
         state.DebounceTimer = null;
     }
 
-    private sealed class TargetWatchState(string watchedPath)
+    private sealed class TargetWatchState(string watchedPath, DateTime loadedWriteTimeUtc)
     {
         public string WatchedPath { get; } = watchedPath;
-        public DateTime LastReloadedWriteTimeUtc { get; set; } = File.GetLastWriteTimeUtc(watchedPath);
-        public DateTime? LoadingWriteTimeUtc { get; set; }
+        public DateTime LastReloadedWriteTimeUtc { get; set; } = loadedWriteTimeUtc;
         public bool ReloadInProgress { get; set; }
         public bool ReloadPending { get; set; }
         public FileSystemWatcher? Watcher { get; set; }
