@@ -151,6 +151,7 @@ public sealed class AssemblyLoaderService
             var previous = _targets.TryGetValue(resolvedName, out var previousEntry) ? previousEntry : null;
 
             var contextName = $"TargetAssembly_{Guid.NewGuid():N}";
+            var loadedWriteTimeUtc = File.GetLastWriteTimeUtc(fullPath);
             var context = new TargetAssemblyLoadContext(fullPath, contextName);
 
             Assembly assembly;
@@ -178,7 +179,13 @@ public sealed class AssemblyLoaderService
                 throw new AssemblyLoadFailedException($"Failed to load '{fullPath}': {ex.Message}", ex);
             }
 
-            handle = new LoadedAssemblyHandle(context, assembly, fullPath, DateTimeOffset.UtcNow, normalizedAdditionalAllowedRoots);
+            handle = new LoadedAssemblyHandle(
+                context,
+                assembly,
+                fullPath,
+                DateTimeOffset.UtcNow,
+                loadedWriteTimeUtc,
+                normalizedAdditionalAllowedRoots);
             _targets[resolvedName] = new TargetEntry(handle, fileInfo.LastWriteTimeUtc, autoReloadOverride);
 
             previous?.Handle.Unload();

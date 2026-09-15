@@ -55,7 +55,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
         {
             if (IsAutoReloadEnabledFor(target.AutoReloadEnabled))
             {
-                Retarget(target.Name, target.Handle.AssemblyPath);
+                Retarget(target.Name, target.Handle.AssemblyPath, target.Handle.LoadedWriteTimeUtc);
             }
         }
 
@@ -119,7 +119,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
             return;
         }
 
-        Retarget(args.TargetName, args.Handle.AssemblyPath);
+        Retarget(args.TargetName, args.Handle.AssemblyPath, args.Handle.LoadedWriteTimeUtc);
     }
 
     /// <summary>(Re)points the target's <see cref="FileSystemWatcher"/> at
@@ -127,7 +127,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
     /// no-op if already watching the same path for that target, which is the common case of our own
     /// automatic reload (or a repeated manual `load_assembly` of the same file) raising
     /// <see cref="AssemblyLoaderService.AssemblyLoaded"/> again.</summary>
-    private void Retarget(string targetName, string assemblyPath)
+    private void Retarget(string targetName, string assemblyPath, DateTime loadedWriteTimeUtc)
     {
         lock (_gate)
         {
@@ -139,15 +139,9 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
             if (_states.TryGetValue(targetName, out var existing) &&
                 string.Equals(existing.WatchedPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
             {
-                if (existing.LoadingWriteTimeUtc is { } loadingWriteTimeUtc)
-                {
-                    existing.LastReloadedWriteTimeUtc = loadingWriteTimeUtc;
-                    existing.LoadingWriteTimeUtc = null;
-                }
-                else
-                {
-                    existing.LastReloadedWriteTimeUtc = File.GetLastWriteTimeUtc(assemblyPath);
-                }
+                existing.LastReloadedWriteTimeUtc =
+                    existing.LoadingWriteTimeUtc ?? loadedWriteTimeUtc;
+                existing.LoadingWriteTimeUtc = null;
 
                 return;
             }
