@@ -82,7 +82,14 @@ The server is published to NuGet.org as a .NET tool (a NuGet package with
 `QueryExecution:Mode=Auto` (the default) finds it automatically.
 
 ```powershell
-dotnet tool install --global DotnetEfCoreMcp.Server
+dotnet tool install --global DotnetEfCoreMcp.Server --prerelease
+```
+
+While releases are preview-only, `--prerelease` is required. If a repository-local `NuGet.config`
+or private feed prevents the tool from resolving, explicitly add NuGet.org for this command:
+
+```powershell
+dotnet tool install --global DotnetEfCoreMcp.Server --prerelease --add-source https://api.nuget.org/v3/index.json
 ```
 
 This installs the `dotnet-efcore-mcp` command. Point an MCP client at it directly (see the
@@ -93,7 +100,7 @@ arguments once installed as a tool).
 Alternatively, run it without a persistent install via [`dnx`](https://learn.microsoft.com/en-us/nuget/consume-packages/dnx-overview):
 
 ```powershell
-dnx DotnetEfCoreMcp.Server --yes
+dnx DotnetEfCoreMcp.Server --prerelease --yes
 ```
 
 ### Install via npm
@@ -374,9 +381,10 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `list_assembly_candidates` | `workspacePath: string`, `pathFilter?: string`, `includeAllBuilds?: bool` | `workspacePath` and DbContext-first, preference-ordered `candidates` (assembly path, project, configuration, target framework, write time, preferred flag). By default, one preferred candidate per project is returned with `otherBuildsOfThisProject`; set `includeAllBuilds` to list every configuration/TFM output. |
 | `load_assembly` | `assemblyPath: string` | Loaded assembly path/time and discovered `DbContext` names, full names, and construction kinds |
 | `list_contexts` | *(none)* | Current assembly path, stale flag, and discovered contexts |
-| `get_schema` | `contextName: string`, `connectionName: string` | Entities with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), primary keys, foreign keys, navigations, owned-type/TPH-inheritance metadata |
-| `get_entity_schema` | `entityName: string`, `contextName?: string` | Complete cached definition for one exact entity (same shape as `get_schema`'s `entities`). Reuses the schema already cached by a prior `get_schema` call for the resolved context, or builds and caches it on demand if none exists yet — a prior `get_schema` call is never required. |
-| `search_schema` | `contextName?: string`, `query: string`, `maxResults?: int` | Compact, case-insensitive substring matches (`entityName`, `entityNameMatched`, `matchingProperties`, `matchingRelationships`) across entity/property/relationship names, plus `totalMatchCount` and `truncated`. `maxResults` defaults to 10 and is capped at 25. Same lazy cache-build behavior as `get_entity_schema`. |
+| `get_schema` | `contextName?: string`, `connectionName?: string`, `page?: int`, `pageSize?: int`, `cursor?: string` | A bounded entity page with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), keys, relationships, navigations, and inheritance metadata. Follow `nextCursor` for page-size-independent continuation. |
+| `list_entities` | `contextName?: string`, `connectionName?: string` | Lightweight policy-filtered list of entity CLR names and relational table names for discovery before requesting a full schema. |
+| `get_entity_schema` | `entityName: string`, `contextName?: string`, `connectionName?: string` | Complete policy-filtered definition for one exact entity (same shape as `get_schema`'s `entities`). Builds and caches the resolved context's schema on demand. |
+| `search_schema` | `contextName?: string`, `query: string`, `maxResults?: int`, `connectionName?: string` | Compact, case-insensitive substring matches (`entityName`, `entityNameMatched`, `matchingProperties`, `matchingRelationships`) across entity/property/relationship names, plus `totalMatchCount` and `truncated`. | `maxResults` defaults to 10 and is capped at 25. Same lazy cache-build behavior as `get_entity_schema`. |
 | `run_query` | `contextName: string`, `query: string`, `connectionName?: string`, `targetName?: string`, `include?: string[]`, `pagination?: { mode: "cursor", cursor?: string }` | Root DbSet name, scalar-or-sequence result, effective sequence page size, safely projected rows, a `hasMoreRows` continuation flag, and (in cursor mode) a `nextCursor`. `include` accepts dot-separated navigation paths (e.g. `["Orders.OrderLines"]`), validated against the EF Core model before execution (unknown/scalar segments, cycles, repeated navigations, and duplicate paths are rejected, subject to `MaxIncludeDepth`/`MaxIncludeCount`); when supplied, each collection level is deterministically ordered and capped server-side at `MaxIncludedCollectionItems` before materialization, and only the requested branches are projected. |
 | `preview_query_sql` | `contextName: string`, `query: string`, `connectionName?: string`, `targetName?: string`, `include?: string[]` | The provider-generated SQL for a `run_query`-style expression, obtained from the compiled, unexecuted `IQueryable` via `ToQueryString()`. Requires `QueryExecution:Mode` to be `InProcess`. When successful, the `ToQueryString()` call itself never opens a database connection, runs a command, or reads/writes rows — however, a caller-supplied expression may force enumeration or execute side effects before that point. Rejects scalar/element results, already-materialized results, and non-translatable operators (e.g. `Zip`) with a message directing the caller to `run_query` instead. `include` is validated identically to `run_query` and reflected in the previewed SQL (including any split-query plan applied for nested collection includes). |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
@@ -435,9 +443,11 @@ when globally enabled. On an eligible development `ReadWrite` connection it can 
 SQL, including `DELETE`, `TRUNCATE`, or schema changes—enable it only where that risk is
 acceptable.
 
-`get_schema` and `run_query` both require `connectionName` even though `get_schema` never
-queries the database — constructing the `DbContext` object at all (even for schema-only
-purposes) requires a real connection string/provider to build its `DbContextOptions`.
+Schema and query tools need a configured connection because constructing the `DbContext` (even
+for schema-only inspection) needs its provider and connection string. With multiple configured
+connections, omitting `connectionName` uses the active connection selected by `swap_connection`;
+pass `connectionName` to override that selection. `get_schema`, `get_entity_schema`,
+`search_schema`, and query tools all follow this same rule.
 
 `list_migrations` is always-on, read-only inspection (no DDL/DML, never mutates the target
 database): it reports which migrations the assembly knows about, which are recorded as applied

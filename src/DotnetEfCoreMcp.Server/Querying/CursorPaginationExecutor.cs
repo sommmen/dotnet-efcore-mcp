@@ -20,6 +20,7 @@ internal static class CursorPaginationExecutor
         QueryPagination pagination,
         QueryExecutionOptions options,
         int effectiveTake,
+        string? rootEntityName,
         CancellationToken cancellationToken)
     {
         if (!string.Equals(pagination.Mode, "cursor", StringComparison.OrdinalIgnoreCase))
@@ -56,7 +57,7 @@ internal static class CursorPaginationExecutor
             var nextCursor = hasMoreRows && values.Count > 0
                 ? EncodeCursor(contextType, entityType, orderingShape, ReadValues(orderings, values[^1]!), options.CursorSigningKey)
                 : null;
-            return new QueryResult("C#", values.Count, effectiveTake, hasMoreRows, false, null,
+            return new QueryResult(rootEntityName ?? "C#", values.Count, effectiveTake, hasMoreRows, false, null,
                 values.Select(QueryExecutor.ProjectValue).ToList(), nextCursor);
         }
         catch (QueryExecutionException)

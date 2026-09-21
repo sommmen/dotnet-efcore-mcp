@@ -23,6 +23,40 @@ namespace DotnetEfCoreMcp.Server.Tests.Tools;
 public sealed class EfCoreMcpToolsSchemaSlicingTests
 {
     [Fact]
+    public void ListEntities_ReturnsCompactEntityAndTableNames()
+    {
+        var tools = CreateTools();
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        using var document = JsonDocument.Parse(tools.ListEntities("SampleAppDbContext"));
+        var root = document.RootElement;
+
+        Assert.Equal("SampleAppDbContext", root.GetProperty("contextName").GetString());
+        Assert.True(root.GetProperty("totalEntityCount").GetInt32() > 0);
+        var customer = root.GetProperty("entities").EnumerateArray()
+            .Single(entity => entity.GetProperty("name").GetString() == "Customer");
+        Assert.Equal("Customers", customer.GetProperty("tableName").GetString());
+    }
+
+    [Fact]
+    public void GetSchema_CursorContinuesWithoutDependingOnOriginalPageSize()
+    {
+        var tools = CreateTools();
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        using var firstPage = JsonDocument.Parse(tools.GetSchema("SampleAppDbContext", pageSize: 1));
+        var cursor = firstPage.RootElement.GetProperty("nextCursor").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(cursor));
+        var firstName = firstPage.RootElement.GetProperty("entities")[0].GetProperty("Name").GetString();
+
+        using var continuation = JsonDocument.Parse(tools.GetSchema("SampleAppDbContext", cursor: cursor));
+        var continuationNames = continuation.RootElement.GetProperty("entities")
+            .EnumerateArray().Select(entity => entity.GetProperty("Name").GetString()).ToArray();
+
+        Assert.DoesNotContain(firstName, continuationNames);
+    }
+
+    [Fact]
     public void GetEntitySchema_WithExactName_ReturnsCompleteEntityDefinition()
     {
         var tools = CreateTools();
@@ -208,7 +242,7 @@ public sealed class EfCoreMcpToolsSchemaSlicingTests
     public void SearchSchema_DeclaresContextNameAsOptional()
     {
         var parameter = typeof(EfCoreMcpTools)
-            .GetMethod(nameof(EfCoreMcpTools.SearchSchema), new[] { typeof(string), typeof(string), typeof(int?) })?
+            .GetMethod(nameof(EfCoreMcpTools.SearchSchema), new[] { typeof(string), typeof(string), typeof(int?), typeof(string), typeof(string) })?
             .GetParameters()[0];
 
         Assert.NotNull(parameter);

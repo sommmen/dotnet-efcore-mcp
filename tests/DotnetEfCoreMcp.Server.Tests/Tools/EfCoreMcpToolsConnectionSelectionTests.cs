@@ -14,60 +14,34 @@ using ModelContextProtocol;
 
 namespace DotnetEfCoreMcp.Server.Tests.Tools;
 
-/// <summary>Covers <c>connectionName</c> resolution across MCP tools: when omitted with exactly
-/// one registered connection it must resolve silently (unambiguous), but when omitted with two or
-/// more registered connections it must throw a helpful disambiguation error listing every
-/// registered connection name - mirroring the existing <c>contextName</c> disambiguation behavior
-/// (see <see cref="EfCoreMcpToolsSchemaSelectionTests"/>) - rather than silently falling back to
-/// whichever connection happens to be "active".</summary>
+/// <summary>Covers <c>connectionName</c> resolution across MCP tools. Omitted names use the
+/// selected active connection, while explicit names continue to override that selection.</summary>
 public sealed class EfCoreMcpToolsConnectionSelectionTests
 {
     [Fact]
-    public void GetSchema_WhenConnectionNameIsOmittedWithMultipleConnections_ListsConnectionNames()
+    public void GetSchema_WhenConnectionNameIsOmittedWithMultipleConnections_UsesActiveConnection()
     {
-        var tools = CreateTools(new Dictionary<string, string?>
-        {
-            ["Connections:Alpha:ConnectionString"] = "Data Source=:memory:",
-            ["Connections:Alpha:Provider"] = "Sqlite",
-            ["Connections:Alpha:Environment"] = "Development",
-            ["Connections:Alpha:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
-            ["Connections:Beta:ConnectionString"] = "Data Source=:memory:",
-            ["Connections:Beta:Provider"] = "Sqlite",
-            ["Connections:Beta:Environment"] = "Development",
-            ["Connections:Beta:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
-        });
+        var tools = CreateTwoConnectionTools();
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        tools.SwapConnection("Beta");
 
-        var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext"));
+        using var document = JsonDocument.Parse(tools.GetSchema("SampleAppDbContext"));
 
-        Assert.Contains("Alpha", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Beta", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("connectionName", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("list_connections", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("SampleAppDbContext", document.RootElement.GetProperty("contextName").GetString());
     }
 
     [Fact]
-    public async Task RunQuery_WhenConnectionNameIsOmittedWithMultipleConnections_ListsConnectionNames()
+    public async Task RunQuery_WhenConnectionNameIsOmittedWithMultipleConnections_UsesActiveConnection()
     {
-        var tools = CreateTools(new Dictionary<string, string?>
-        {
-            ["Connections:Alpha:ConnectionString"] = "Data Source=:memory:",
-            ["Connections:Alpha:Provider"] = "Sqlite",
-            ["Connections:Alpha:Environment"] = "Development",
-            ["Connections:Alpha:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
-            ["Connections:Beta:ConnectionString"] = "Data Source=:memory:",
-            ["Connections:Beta:Provider"] = "Sqlite",
-            ["Connections:Beta:Environment"] = "Development",
-            ["Connections:Beta:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
-        });
+        var tools = CreateTwoConnectionTools();
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        tools.SwapConnection("Beta");
 
         var exception = await Assert.ThrowsAsync<McpException>(
             () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
 
-        Assert.Contains("Alpha", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Beta", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("more than one connection is registered", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Alpha", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("connectionName", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -107,6 +81,18 @@ public sealed class EfCoreMcpToolsConnectionSelectionTests
 
         Assert.Equal("SampleAppDbContext", document.RootElement.GetProperty("contextName").GetString());
     }
+
+    private static EfCoreMcpTools CreateTwoConnectionTools() => CreateTools(new Dictionary<string, string?>
+    {
+        ["Connections:Alpha:ConnectionString"] = "Data Source=:memory:",
+        ["Connections:Alpha:Provider"] = "Sqlite",
+        ["Connections:Alpha:Environment"] = "Development",
+        ["Connections:Alpha:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
+        ["Connections:Beta:ConnectionString"] = "Data Source=:memory:",
+        ["Connections:Beta:Provider"] = "Sqlite",
+        ["Connections:Beta:Environment"] = "Development",
+        ["Connections:Beta:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
+    });
 
     private static EfCoreMcpTools CreateTools(Dictionary<string, string?> connectionSettings)
     {

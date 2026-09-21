@@ -36,7 +36,7 @@ public static class SchemaBuilder
             var properties = entityType.GetProperties()
                 .Select(p => new PropertySchema(
                     Name: p.Name,
-                    ClrTypeName: p.ClrType.Name,
+                    ClrTypeName: FormatClrTypeName(p.ClrType),
                     ColumnName: TryGetColumnName(p),
                     StoreType: isRelational ? p.GetColumnType() : null,
                     IsNullable: p.IsNullable,
@@ -117,6 +117,19 @@ public static class SchemaBuilder
     // Table/column/store-type metadata comes from the relational annotation extensions
     // (Microsoft.EntityFrameworkCore.Relational). These return null for non-relational providers
     // (e.g. Cosmos), which is fine - the fields are simply omitted from the response.
+    private static string FormatClrTypeName(Type type)
+    {
+        if (Nullable.GetUnderlyingType(type) is { } nullableUnderlyingType)
+            return $"{FormatClrTypeName(nullableUnderlyingType)}?";
+
+        if (!type.IsGenericType)
+            return type.Name;
+
+        var genericTypeName = type.Name[..type.Name.IndexOf('`')];
+        var genericArguments = string.Join(", ", type.GetGenericArguments().Select(FormatClrTypeName));
+        return $"{genericTypeName}<{genericArguments}>";
+    }
+
     private static string? TryGetTableName(IEntityType entityType) => entityType.GetTableName();
 
     private static string? TryGetColumnName(IProperty property) => property.GetColumnName();

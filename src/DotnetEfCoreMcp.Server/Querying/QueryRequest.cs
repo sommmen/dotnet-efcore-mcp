@@ -10,6 +10,9 @@ public sealed class QueryRequest
     /// <summary>Optional dot-separated EF navigation paths to load, such as <c>Orders.OrderLines</c>.</summary>
     public IReadOnlyList<string>? Include { get; init; }
 
+    /// <summary>The public DbSet property that roots the query, when known.</summary>
+    public string? RootEntityName { get; init; }
+
     /// <summary>Optional forward-only cursor paging request.</summary>
     public QueryPagination? Pagination { get; init; }
 }

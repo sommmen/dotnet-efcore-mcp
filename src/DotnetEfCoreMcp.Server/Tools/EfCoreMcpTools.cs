@@ -270,16 +270,17 @@ public sealed class EfCoreMcpTools(
 
     [McpServerTool(Name = "get_schema"), Description(
         "Returns a bounded, paginated page of the EF Core model (entities, properties, keys, foreign keys, navigations) " +
-        "for a DbContext in the currently loaded target assembly. Use nextPage when hasMore is true.")]
+        "for a DbContext in the currently loaded target assembly. Prefer the returned nextCursor when hasMore is true; it continues safely even if page sizes change.")]
     public string GetSchema(
         [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
-        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         [Description("One-based entity page number. Defaults to 1.")] int page = 1,
-        [Description("Number of entities per page. Defaults to 25 and is capped at 100.")] int pageSize = 25,
+        [Description("Number of entities per page. Defaults to 25 and is capped at 100. Reuse the pageSize returned by the prior response when following nextPage.")] int pageSize = 25,
+        [Description("Optional opaque continuation returned as nextCursor. Supply it alone to continue without depending on the caller's page size; it cannot be combined with page/pageSize changes.")] string? cursor = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null)
-        => Execute("get_schema", () => GetSchemaCore(contextName, connectionName, page, pageSize, targetName));
+        => Execute("get_schema", () => GetSchemaCore(contextName, connectionName, page, pageSize, cursor, targetName));
 
-    private string GetSchemaCore(string? contextName, string? connectionName, int page, int pageSize, string? targetName = null)
+    private string GetSchemaCore(string? contextName, string? connectionName, int page, int pageSize, string? cursor, string? targetName = null)
     {
         if (page < 1)
             throw new McpException("`page` must be at least 1.");
@@ -297,11 +298,15 @@ public sealed class EfCoreMcpTools(
         var schema = policy.Apply(cachedSchema);
 
         var totalEntityCount = schema.Entities.Count;
-        var offset = (long)(page - 1) * pageSize;
+        if (cursor is not null && (page != 1 || pageSize != 25))
+            throw new McpException("`cursor` cannot be combined with page or pageSize. Supply the cursor by itself to continue.");
+
+        var offset = DecodeSchemaCursor(cursor, schema.ContextName, totalEntityCount) ?? (long)(page - 1) * pageSize;
         var entities = offset >= totalEntityCount
             ? []
             : schema.Entities.Skip((int)offset).Take(pageSize).ToArray();
         var hasMore = offset + pageSize < totalEntityCount;
+        var nextOffset = offset + entities.Length;
         return resultFormatter.Format(new
         {
             contextName = schema.ContextName,
@@ -311,8 +316,38 @@ public sealed class EfCoreMcpTools(
             entities,
             truncated = hasMore,
             hasMore,
-            nextPage = hasMore ? page + 1 : (int?)null,
-            hint = hasMore ? $"Call get_schema with page={page + 1} and pageSize={pageSize} to retrieve the next entity page." : null,
+            nextPage = cursor is null && hasMore ? page + 1 : (int?)null,
+            nextCursor = hasMore ? EncodeSchemaCursor(schema.ContextName, totalEntityCount, nextOffset) : null,
+            hint = hasMore
+                ? cursor is null
+                    ? $"Call get_schema with cursor='{EncodeSchemaCursor(schema.ContextName, totalEntityCount, nextOffset)}' to continue safely, or reuse pageSize={pageSize} with page={page + 1}."
+                    : $"Call get_schema with cursor='{EncodeSchemaCursor(schema.ContextName, totalEntityCount, nextOffset)}' to retrieve the next entity page."
+                : null,
+        });
+    }
+
+    [McpServerTool(Name = "list_entities"), Description(
+        "Lists the entity CLR names and relational table names available from a DbContext without returning full schema definitions. " +
+        "Use get_entity_schema for one entity or get_schema when detailed model metadata is needed.")]
+    public string ListEntities(
+        [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null)
+        => Execute("list_entities", () => ListEntitiesCore(contextName, connectionName, targetName));
+
+    private string ListEntitiesCore(string? contextName, string? connectionName, string? targetName)
+    {
+        var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry, targetName);
+        EnsureContextReachable(contextType, entry);
+        var schema = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName)
+            .Apply(GetOrBuildSchema(contextType, entry));
+
+        return resultFormatter.Format(new
+        {
+            contextName = schema.ContextName,
+            totalEntityCount = schema.Entities.Count,
+            entities = schema.Entities.Select(entity => new { name = entity.Name, tableName = entity.TableName }),
         });
     }
 
@@ -323,16 +358,18 @@ public sealed class EfCoreMcpTools(
         "on demand - a prior get_schema call is never required.")]
     public string GetEntitySchema(
         [Description("Exact entity name (CLR type name), as returned by get_schema/list_contexts entity names.")] string entityName,
-        [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null)
-        => Execute("get_entity_schema", () => GetEntitySchemaCore(contextName, entityName));
+        [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null)
+        => Execute("get_entity_schema", () => GetEntitySchemaCore(contextName, entityName, connectionName, targetName));
 
-    private string GetEntitySchemaCore(string? contextName, string entityName)
+    private string GetEntitySchemaCore(string? contextName, string entityName, string? connectionName, string? targetName)
     {
         if (string.IsNullOrWhiteSpace(entityName))
             throw new McpException("`entityName` must not be empty.");
 
-        var entry = ResolveConnection(null);
-        var contextType = ResolveContextType(contextName, entry);
+        var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry, targetName);
         EnsureContextReachable(contextType, entry);
         var schema = GetOrBuildSchema(contextType, entry);
         var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
@@ -368,10 +405,12 @@ public sealed class EfCoreMcpTools(
     public string SearchSchema(
         [Description("Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.")] string? contextName = null,
         [Description("Non-empty, case-insensitive substring to match against entity, property, and relationship names.")] string query = "",
-        [Description("Maximum number of entity matches to return. Defaults to 10 and is capped at 25.")] int? maxResults = null)
-        => Execute("search_schema", () => SearchSchemaCore(contextName, query, maxResults));
+        [Description("Maximum number of entity matches to return. Defaults to 10 and is capped at 25.")] int? maxResults = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
+        [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null)
+        => Execute("search_schema", () => SearchSchemaCore(contextName, query, maxResults, connectionName, targetName));
 
-    private string SearchSchemaCore(string? contextName, string query, int? maxResults)
+    private string SearchSchemaCore(string? contextName, string query, int? maxResults, string? connectionName, string? targetName)
     {
         if (string.IsNullOrWhiteSpace(query))
             throw new McpException("`query` must not be empty.");
@@ -380,8 +419,8 @@ public sealed class EfCoreMcpTools(
         if (effectiveMaxResults < 1 || effectiveMaxResults > Schema.SchemaSlicer.MaxSearchResults)
             throw new McpException($"`maxResults` must be between 1 and {Schema.SchemaSlicer.MaxSearchResults}.");
 
-        var entry = ResolveConnection(null);
-        var contextType = ResolveContextType(contextName, entry);
+        var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry, targetName);
         EnsureContextReachable(contextType, entry);
         var schema = GetOrBuildSchema(contextType, entry);
         var policy = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName);
@@ -420,7 +459,7 @@ public sealed class EfCoreMcpTools(
     public Task<string> RunQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
-        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         [Description("Optional dot-separated EF navigation paths to include, e.g. [\"Orders\", \"Orders.OrderLines\"]. Each included collection is capped server-side at a configured per-parent maximum and ordered deterministically by primary key.")] IReadOnlyList<string>? include = null,
         [Description("Optional forward-only keyset pagination. Use { mode: \"cursor\" } for the first page and pass the returned nextCursor as cursor for later pages. Requires an explicitly ordered entity query and cannot be combined with Skip().")] QueryPagination? pagination = null,
@@ -454,7 +493,7 @@ public sealed class EfCoreMcpTools(
             QueryResult result;
             try
             {
-                result = await ExecuteRoslynAsync(contextType, entry, expressionText, targetName, include, pagination, cancellationToken);
+                result = await ExecuteRoslynAsync(contextType, entry, rootName, expressionText, targetName, include, pagination, cancellationToken);
             }
             catch (QueryExecutionException)
             {
@@ -471,7 +510,7 @@ public sealed class EfCoreMcpTools(
             throw new McpException(FormatQueryError(ex));
         }
     }
-    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string query, string? targetName, IReadOnlyList<string>? include, QueryPagination? pagination, CancellationToken cancellationToken)
+    private Task<QueryResult> ExecuteRoslynAsync(Type contextType, ConnectionRegistryEntry entry, string rootName, string query, string? targetName, IReadOnlyList<string>? include, QueryPagination? pagination, CancellationToken cancellationToken)
     {
         if (entry.Source == ConnectionSource.ApplicationFactory && queryExecutionOptions.Mode == QueryExecutionMode.InProcess)
         {
@@ -482,7 +521,7 @@ public sealed class EfCoreMcpTools(
 
         var target = RequireLoadedAssembly(targetName);
         var provider = ResolveEffectiveProvider(contextType, entry);
-        var request = new QueryRequest { Query = query, Include = include, Pagination = pagination };
+        var request = new QueryRequest { Query = query, Include = include, RootEntityName = rootName, Pagination = pagination };
         return queryExecutionOptions.Mode switch
         {
             QueryExecutionMode.InProcess => roslynQueryExecutor.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken),
@@ -498,14 +537,14 @@ public sealed class EfCoreMcpTools(
         "or other side effects before that point. Accepts the exact same LINQPad-style expression syntax as run_query, e.g. " +
         "Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL " +
         "to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and " +
-        "operators with no SQL translation (Zip) are rejected - use run_query for those instead; also rejected when the server's " +
-        "QueryExecution:Mode is not InProcess, since previewing requires compiling and evaluating the query locally. " +
+        "operators with no SQL translation (Zip) are rejected - use run_query for those instead. Preview compilation runs in the " +
+        "configured isolated query host unless QueryExecution:Mode is InProcess; ApplicationFactory connections remain unavailable. " +
         "Optionally accepts include, with the same syntax and validation as run_query's include parameter, to preview the SQL including " +
         "the filtered/capped Include()/ThenInclude() calls it would issue.")]
     public Task<string> PreviewQuerySql(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ")] string query,
-        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         [Description("Optional dot-separated EF navigation paths to include, e.g. [\"Orders\", \"Orders.OrderLines\"]. Same validation and capping rules as run_query's include parameter.")] IReadOnlyList<string>? include = null,
         CancellationToken cancellationToken = default)
@@ -528,30 +567,22 @@ public sealed class EfCoreMcpTools(
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
 
-            // preview_query_sql must compile and evaluate the query's C# expression locally to build
-            // the IQueryable for ToQueryString(). It only works when QueryExecution:Mode is InProcess
-            // because the out-of-process/pooled wire protocol only carries materialized QueryResultWire,
-            // never an unexecuted IQueryable. ApplicationFactory connections are prohibited in-process.
             if (entry.Source == ConnectionSource.ApplicationFactory)
             {
                 throw new QueryExecutionException(
-                    "preview_query_sql is unavailable for ApplicationFactory connections because it requires " +
-                    "in-process query evaluation, while application startup must run in an isolated query host.");
-            }
-
-            if (queryExecutionOptions.Mode != QueryExecutionMode.InProcess)
-            {
-                throw new QueryExecutionException(
-                    "preview_query_sql requires QueryExecution:Mode to be InProcess because it must compile " +
-                    "and evaluate the query's C# expression locally to build the IQueryable for ToQueryString(); " +
-                    "the current mode ('" + queryExecutionOptions.Mode + "') isolates user-authored query " +
-                    "execution in a separate process, which preview_query_sql does not use.");
+                    "preview_query_sql is unavailable for ApplicationFactory connections because application startup must run in an isolated query host.");
             }
 
             var target = RequireLoadedAssembly(targetName);
             var provider = ResolveEffectiveProvider(contextType, entry);
             var request = new QueryRequest { Query = expressionText, Include = include };
-            var result = await roslynQueryExecutor.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken);
+            var result = queryExecutionOptions.Mode switch
+            {
+                QueryExecutionMode.InProcess => await roslynQueryExecutor.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken),
+                QueryExecutionMode.Pooled => await pooledOutOfProcessRoslynQueryExecutor.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken),
+                QueryExecutionMode.OutOfProcess or QueryExecutionMode.Auto => await outOfProcessRoslynQueryExecutor.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken),
+                _ => throw new InvalidOperationException($"Unsupported query execution mode '{queryExecutionOptions.Mode}'."),
+            };
             return resultFormatter.Format(result);
         }
         catch (QueryExecutionException ex)
@@ -568,7 +599,7 @@ public sealed class EfCoreMcpTools(
     public Task<string> RunSqlQuery(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("Raw SQL command text. Use @p0, @p1, ... for values rather than embedding them in this string.")] string sql,
-        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         [Description("Positional parameter values referenced by SQL placeholders @p0, @p1, ...")] object?[]? parameters = null,
         [Description("Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.")] string? targetName = null,
         CancellationToken cancellationToken = default)
@@ -627,7 +658,7 @@ public sealed class EfCoreMcpTools(
         "with appliedStateAvailable set to false rather than presenting metadata as applied state.")]
     public Task<string> ListMigrations(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         [Description("Simple name or DLL path of the assembly containing the migrations, when they live in a different assembly than the DbContext type. Omit when migrations are in the same assembly as the DbContext (the default). A simple name is resolved as a dependency of the currently loaded target assembly; a path is loaded explicitly, subject to the same AssemblyLoader:AllowedRoots restriction as load_assembly.")] string? migrationsAssembly = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("list_migrations", () => ListMigrationsCore(contextName, connectionName, migrationsAssembly, cancellationToken));
@@ -671,7 +702,7 @@ public sealed class EfCoreMcpTools(
         "best-effort statement boundary when it exceeds the cap.")]
     public Task<string> GenerateMigrationScript(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         [Description("Migration ID to script from (exclusive). Omit or pass \"0\" to script from the beginning of history.")] string? fromMigration = null,
         [Description("Migration ID to script to (inclusive). Omit to script through the latest known migration.")] string? toMigration = null,
         [Description("If true (default), generate a script safe to run on an already-applied database (__EFMigrationsHistory-guarded). Not every provider supports idempotent scripts.")] bool idempotent = true,
@@ -1160,17 +1191,6 @@ public sealed class EfCoreMcpTools(
         {
             if (string.IsNullOrWhiteSpace(connectionName))
             {
-                // Mirrors ResolveContextType's disambiguation behavior: silently resolving to
-                // "whichever connection happens to be active" is safe only when there is exactly
-                // one candidate. With two or more registered connections, guessing risks silently
-                // running against the wrong database/environment, so require an explicit choice.
-                if (connectionRegistry.ConnectionNames.Count > 1)
-                {
-                    throw new McpException(BuildConnectionSelectionError(
-                        connectionRegistry.ConnectionNames,
-                        "`connectionName` is required because more than one connection is registered."));
-                }
-
                 var active = connectionRegistry.ActiveConnection;
                 if (active is null)
                 {
@@ -1202,12 +1222,31 @@ public sealed class EfCoreMcpTools(
         return entry;
     }
 
-    private static string BuildConnectionSelectionError(IReadOnlyCollection<string> connectionNames, string reason)
+    private static string EncodeSchemaCursor(string contextName, int totalEntityCount, long offset)
+        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{contextName}\n{totalEntityCount}\n{offset}"));
+
+    private static long? DecodeSchemaCursor(string? cursor, string contextName, int totalEntityCount)
     {
-        var choices = connectionNames.Count == 0
-            ? "(none)"
-            : string.Join(", ", connectionNames.OrderBy(name => name, StringComparer.Ordinal));
-        return $"{reason} Choose one of these connection names: {choices}. Next step: call list_connections, then pass connectionName using a listed name.";
+        if (string.IsNullOrWhiteSpace(cursor))
+            return null;
+
+        try
+        {
+            var parts = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(cursor)).Split('\n');
+            if (parts.Length != 3 ||
+                !string.Equals(parts[0], contextName, StringComparison.Ordinal) ||
+                !int.TryParse(parts[1], out var cursorEntityCount) || cursorEntityCount != totalEntityCount ||
+                !long.TryParse(parts[2], out var offset) || offset < 0)
+            {
+                throw new FormatException();
+            }
+
+            return offset;
+        }
+        catch (FormatException)
+        {
+            throw new McpException("`cursor` is invalid or does not match the current schema. Start again from page 1 to obtain a new cursor.");
+        }
     }
 
     private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry, System.Reflection.Assembly? migrationsAssembly = null)
@@ -1311,7 +1350,7 @@ public sealed class EfCoreMcpTools(
         "redacted status (healthy/failed/timedOut).")]
     public Task<string> TestConnection(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
-        [Description("Logical connection name from the server's connection registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.")] string? connectionName = null,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         CancellationToken cancellationToken = default)
         => ExecuteAsync("test_connection", () => TestConnectionCore(contextName, connectionName, cancellationToken));
 

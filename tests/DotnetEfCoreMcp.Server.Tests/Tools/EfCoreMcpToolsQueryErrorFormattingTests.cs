@@ -60,7 +60,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
     }
 
     [Fact]
-    public async Task PreviewQuerySql_WithOutOfProcessMode_RejectsPreviewBecauseModeRequiresInProcess()
+    public async Task PreviewQuerySql_WithOutOfProcessModeAndNoHostConfigured_ReportsAServerConfigurationHint()
     {
         var tools = CreateTools(new QueryExecutionOptions
         {
@@ -74,8 +74,8 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
                 "SampleAppDbContext",
                 "Customers.Where(c => c.Age >= 18)"));
 
-        Assert.Contains("requires QueryExecution:Mode to be InProcess", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("OutOfProcess", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("QueryExecution:OutOfProcessHostPath", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("server-side configuration problem", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

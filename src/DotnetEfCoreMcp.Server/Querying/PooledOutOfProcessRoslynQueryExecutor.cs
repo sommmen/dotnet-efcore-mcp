@@ -14,4 +14,13 @@ public sealed class PooledOutOfProcessRoslynQueryExecutor(QueryHostPool pool)
         QueryRequest request,
         CancellationToken cancellationToken)
         => pool.ExecuteAsync(target, contextType, entry, provider, request, cancellationToken);
+
+    public Task<QuerySqlPreviewResult> PreviewSqlAsync(
+        LoadedAssemblyHandle target,
+        Type contextType,
+        ConnectionRegistryEntry entry,
+        DatabaseProvider provider,
+        QueryRequest request,
+        CancellationToken cancellationToken)
+        => pool.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken);
 }

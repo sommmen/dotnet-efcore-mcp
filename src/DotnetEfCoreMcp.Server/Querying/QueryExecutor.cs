@@ -129,6 +129,13 @@ public static class QueryExecutor
     {
         if (effectiveTake == 0) return ([], false);
 
+        var explicitTake = TakeFinder.FindTerminalTake(sequence.Expression);
+        if (explicitTake is not null && explicitTake <= effectiveTake)
+        {
+            var terminalValues = await MaterializeUntypedAsync(sequence, cancellationToken).ConfigureAwait(false);
+            return (terminalValues, false);
+        }
+
         var withoutExistingTake = TakeRemover.RemovePagePipelineTakes(sequence.Expression);
         var page = sequence.Provider.CreateQuery(Expression.Call(
             typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], withoutExistingTake,
@@ -167,6 +174,20 @@ public static class QueryExecutor
         {
             Visit(expression);
             return _take;
+        }
+
+        public static int? FindTerminalTake(Expression expression)
+        {
+            if (expression is MethodCallExpression methodCall
+                && methodCall.Method.DeclaringType == typeof(Queryable)
+                && methodCall.Method.Name == nameof(Queryable.Take)
+                && methodCall.Arguments.Count == 2
+                && methodCall.Arguments[1] is ConstantExpression { Value: int take })
+            {
+                return take;
+            }
+
+            return null;
         }
 
         protected override Expression VisitMethodCall(MethodCallExpression node)

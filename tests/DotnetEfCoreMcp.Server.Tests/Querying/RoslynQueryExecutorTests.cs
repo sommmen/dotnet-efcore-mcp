@@ -56,14 +56,14 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
-    public async Task ExecuteAsync_ExpressionQuery_MaterializesCappedProjection()
+    public async Task ExecuteAsync_ExpressionQuery_UsesRootEntityName()
     {
         var result = await CreateExecutor().ExecuteAsync(
             _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
-            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" },
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)", RootEntityName = "Customers" },
             CancellationToken.None);
 
-        Assert.Equal("C#", result.Entity);
+        Assert.Equal("Customers", result.Entity);
         Assert.Equal(1, result.RowCount);
         Assert.False(result.IsScalar);
         Assert.Single(result.Rows);
@@ -195,14 +195,14 @@ public sealed class RoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task PreviewSqlAsync_ExpressionQuery_ReturnsQueryStringForFinalIQueryable()
+    public async Task PreviewSqlAsync_ExpressionQuery_UsesRootEntityName()
     {
         var result = await CreateExecutor().PreviewSqlAsync(
             _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
-            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" },
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)", RootEntityName = "Customers" },
             CancellationToken.None);
 
-        Assert.Equal("C#", result.Entity);
+        Assert.Equal("Customers", result.Entity);
         Assert.Contains("SELECT", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WHERE", result.Sql, StringComparison.OrdinalIgnoreCase);
     }
