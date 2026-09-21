@@ -35,6 +35,20 @@ public sealed class SchemaBuilderTests
     }
 
     [Fact]
+    public void Build_FormatsNullablePropertyTypeWithoutClrAritySuffix()
+    {
+        var (context, db) = CreateSampleAppContext();
+        using (context)
+        using (db)
+        {
+            var schema = SchemaBuilder.Build(context);
+
+            var customer = schema.Entities.Single(e => e.Name == "Customer");
+            Assert.Equal("Int32?", customer.Properties.Single(p => p.Name == "Version").ClrTypeName);
+        }
+    }
+
+    [Fact]
     public void Build_CustomerHasOrdersCollectionNavigation()
     {
         var (context, db) = CreateSampleAppContext();

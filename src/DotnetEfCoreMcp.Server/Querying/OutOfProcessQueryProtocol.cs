@@ -15,6 +15,7 @@ public sealed class OutOfProcessQueryRequest
     public required DatabaseProvider Provider { get; init; }
     public required QueryRequest Query { get; init; }
     public required QueryExecutionOptions Options { get; init; }
+    public string Operation { get; init; } = "execute";
 }
 
 public sealed class OutOfProcessShutdownRequest
@@ -29,6 +30,7 @@ public sealed class OutOfProcessQueryResponse
     public int ProtocolVersion { get; init; }
     public required string RequestId { get; init; }
     public QueryResultWire? Result { get; init; }
+    public QuerySqlPreviewResult? Preview { get; init; }
     public string? Error { get; init; }
 }
 

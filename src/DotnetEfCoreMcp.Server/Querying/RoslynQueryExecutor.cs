@@ -18,7 +18,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         CancellationToken cancellationToken)
     {
         using var invocation = await CompileAndInvokeAsync(target, contextType, entry, provider, request, cancellationToken).ConfigureAwait(false);
-        return await ShapeResultAsync(invocation.Value, invocation.Context, contextType, request.Include, request.Pagination, entry.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+        return await ShapeResultAsync(invocation.Value, invocation.Context, contextType, request, entry.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Compiles and evaluates the user's query up to (but not including) materializing any
@@ -56,7 +56,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         {
             var (includedSequence, _) = IncludeQueryProcessor.Apply(sequence, invocation.Context, request.Include, executionOptions);
             var sql = includedSequence.ToQueryString();
-            return new QuerySqlPreviewResult("C#", sql);
+            return new QuerySqlPreviewResult(request.RootEntityName ?? "C#", sql);
         }
         catch (Exception ex) when (ex is InvalidOperationException or TargetInvocationException)
         {
@@ -212,30 +212,30 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
     /// sequence could be unbounded. Users who want row-shaped output from a non-translatable
     /// operator can end the query with <c>.ToList()</c> and inspect the resulting scalar.</para></summary>
     private async Task<QueryResult> ShapeResultAsync(object? value, DbContext context, Type contextType,
-        IReadOnlyList<string>? include, QueryPagination? pagination, int commandTimeoutSeconds, CancellationToken cancellationToken)
+        QueryRequest request, int commandTimeoutSeconds, CancellationToken cancellationToken)
     {
         if (value is not IQueryable sequence)
         {
-            if (pagination is not null)
+            if (request.Pagination is not null)
                 throw new QueryExecutionException("Cursor pagination requires a query returning a mapped entity type.");
-            return new QueryResult("C#", 1, null, false, true, value, []);
+            return new QueryResult(request.RootEntityName ?? "C#", 1, null, false, true, value, []);
         }
 
-        var (includedSequence, includePlan) = IncludeQueryProcessor.Apply(sequence, context, include, executionOptions);
+        var (includedSequence, includePlan) = IncludeQueryProcessor.Apply(sequence, context, request.Include, executionOptions);
         sequence = includedSequence;
         var effectiveTake = QueryExecutor.GetEffectiveTake(sequence.Expression, executionOptions);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(commandTimeoutSeconds) + executionOptions.CancellationMargin);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
-            if (pagination is not null)
+            if (request.Pagination is not null)
             {
                 return await CursorPaginationExecutor.ExecuteAsync(
-                    sequence, context, contextType, pagination, executionOptions, effectiveTake, linked.Token).ConfigureAwait(false);
+                    sequence, context, contextType, request.Pagination, executionOptions, effectiveTake, request.RootEntityName, linked.Token).ConfigureAwait(false);
             }
 
             var (values, hasMoreRows) = await QueryExecutor.MaterializeWithContinuationAsync(sequence, effectiveTake, linked.Token).ConfigureAwait(false);
-            return new QueryResult("C#", values.Count, effectiveTake, hasMoreRows, false, null, includePlan is null
+            return new QueryResult(request.RootEntityName ?? "C#", values.Count, effectiveTake, hasMoreRows, false, null, includePlan is null
                 ? values.Select(QueryExecutor.ProjectValue).ToList()
                 : values.Select(rowValue => IncludeQueryProcessor.Project(rowValue!, includePlan)).ToList());
         }

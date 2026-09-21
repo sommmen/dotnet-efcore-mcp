@@ -105,6 +105,31 @@ public sealed class QueryHostPool(
         }
     }
 
+    public async Task<QuerySqlPreviewResult> PreviewSqlAsync(
+        LoadedAssemblyHandle target,
+        Type contextType,
+        ConnectionRegistryEntry entry,
+        DatabaseProvider provider,
+        QueryRequest request,
+        CancellationToken cancellationToken)
+    {
+        var worker = await CheckoutWorkerAsync(target, cancellationToken).ConfigureAwait(false);
+        if (worker is null)
+        {
+            Interlocked.Increment(ref _fallbackExecutions);
+            return await fallbackExecutor.PreviewSqlAsync(target, contextType, entry, provider, request, cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            return await worker.PreviewSqlAsync(contextType, entry, provider, request, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await CheckInWorkerAsync(worker, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     internal async Task<QueryHostPoolSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -551,6 +576,57 @@ public sealed class QueryHostPool(
             catch (OperationCanceledException ex) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
                 throw new QueryExecutionException($"Query timed out after {entry.CommandTimeoutSeconds}s.", ex);
+            }
+        }
+
+        public async Task<QuerySqlPreviewResult> PreviewSqlAsync(
+            Type contextType,
+            ConnectionRegistryEntry entry,
+            DatabaseProvider provider,
+            QueryRequest request,
+            CancellationToken cancellationToken)
+        {
+            LastCallCompletedCleanly = false;
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(entry.CommandTimeoutSeconds) + options.CancellationMargin);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+            var payload = new OutOfProcessQueryRequest
+            {
+                RequestId = Guid.NewGuid().ToString("N"),
+                TargetAssemblyPath = Key.TargetAssemblyPath,
+                ContextTypeName = contextType.FullName ?? contextType.Name,
+                Connection = entry,
+                Provider = provider,
+                Query = request,
+                Options = options,
+                Operation = "preview",
+            };
+
+            try
+            {
+                if (Process.HasExited)
+                    throw new QueryExecutionException("The pooled query host exited before it could accept the query preview.");
+
+                await Process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions)).WaitAsync(linkedCts.Token).ConfigureAwait(false);
+                await Process.StandardInput.FlushAsync().WaitAsync(linkedCts.Token).ConfigureAwait(false);
+                var responseLine = await Process.StandardOutput.ReadLineAsync().WaitAsync(linkedCts.Token).ConfigureAwait(false);
+                if (responseLine is null)
+                    throw new QueryExecutionException("The pooled query host closed its output before returning a preview.");
+
+                var response = JsonSerializer.Deserialize<OutOfProcessQueryResponse>(responseLine, JsonOptions);
+                if (response is null || response.ProtocolVersion != OutOfProcessQueryRequest.CurrentProtocolVersion || response.RequestId != payload.RequestId)
+                    throw new QueryExecutionException("The pooled query host returned an invalid response.");
+
+                QueriesServed++;
+                LastActivityUtc = DateTimeOffset.UtcNow;
+                LastCallCompletedCleanly = true;
+                if (!string.IsNullOrWhiteSpace(response.Error))
+                    throw new QueryExecutionException(response.Error);
+                return response.Preview ?? throw new QueryExecutionException("The pooled query host did not return a SQL preview.");
+            }
+            catch (OperationCanceledException ex) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw new QueryExecutionException($"Query preview timed out after {entry.CommandTimeoutSeconds}s.", ex);
             }
         }
 

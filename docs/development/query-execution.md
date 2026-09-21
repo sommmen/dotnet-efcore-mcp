@@ -193,19 +193,15 @@ thrown for:
 - results produced by operators with no SQL translation, e.g. `Zip` (which returns a
   client-side-evaluated `IEnumerable<T>`, not an `IQueryable`).
 
-**Execution mode is required to be in-process for preview; the tool rejects all non-`InProcess`
-`QueryExecution:Mode` settings.** `ToQueryString()` requires local, live access to the compiled
-`IQueryable`/query provider, and only a fully materialized `QueryResultWire` ever crosses the
-out-of-process/pooled query host boundary — never a live, unexecuted `IQueryable`. Extending that
-wire protocol to carry an unexecuted query would be substantially more invasive (a new protocol
-version, DTOs, host process branches, and pool/worker plumbing) for no added safety benefit, since
-the `ToQueryString()` call itself never opens a database connection or executes a command. Note that
-the preceding compilation/invocation step executes the caller-supplied C# expression as ordinary code
-(via `RoslynQueryExecutor.CompileAndInvokeAsync`), and such an expression can force early enumeration
-(e.g., `Customers.ToList().AsQueryable()`) before `ToQueryString()` is reached. This requirement is
-enforced by `EfCoreMcpTools.PreviewQuerySqlCore` (which rejects non-`InProcess` modes), and then calls
-`RoslynQueryExecutor.PreviewSqlAsync` directly instead of going through `run_query`'s
-`ExecuteRoslynAsync` mode switch.
+`preview_query_sql` uses the same execution-mode selection as `run_query`. In the default
+`QueryExecution:Mode=Auto`, preview is compiled and evaluated in the isolated query host; pooled
+mode keeps the same boundary. The host returns only the generated SQL result, never a live
+`IQueryable`. This preserves process isolation while allowing `ToQueryString()` to remain
+non-executing: it does not open a database connection or issue a command. Preview intentionally
+rejects `ConnectionSource.ApplicationFactory`, because application startup must occur only in the
+isolated host. As with normal query execution, the caller expression is still ordinary compiled C#;
+an expression such as `Customers.ToList().AsQueryable()` can enumerate before SQL generation and is
+therefore rejected when its final value is not an unexecuted provider query.
 
 ## Access-policy scope and limitations
 

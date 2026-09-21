@@ -93,6 +93,77 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
         }
     }
 
+    public async Task<QuerySqlPreviewResult> PreviewSqlAsync(LoadedAssemblyHandle target, Type contextType, ConnectionRegistryEntry entry,
+        DatabaseProvider provider, QueryRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(options.OutOfProcessHostPath))
+            throw new QueryExecutionException("Out-of-process query execution requires QueryExecution:OutOfProcessHostPath.");
+
+        var hostConfiguration = ResolveHostConfiguration(options, target);
+        var requestId = Guid.NewGuid().ToString("N");
+        var payload = new OutOfProcessQueryRequest
+        {
+            RequestId = requestId,
+            TargetAssemblyPath = target.AssemblyPath,
+            ContextTypeName = contextType.FullName ?? contextType.Name,
+            Connection = entry,
+            Provider = provider,
+            Query = request,
+            Options = options,
+            Operation = "preview",
+        };
+
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("dotnet")
+            {
+                ArgumentList = { "exec", "--runtimeconfig", hostConfiguration.RuntimeConfigPath, "--depsfile", hostConfiguration.HostDepsFilePath, hostConfiguration.HostPath },
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            },
+        };
+
+        try
+        {
+            process.Start();
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions)).ConfigureAwait(false);
+            process.StandardInput.Close();
+            var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var stderr = await stderrTask.ConfigureAwait(false);
+            if (process.ExitCode != 0)
+                throw new QueryExecutionException(string.IsNullOrWhiteSpace(stderr)
+                    ? $"The out-of-process query host failed to preview the query (exit code {process.ExitCode})."
+                    : $"The out-of-process query host failed to preview the query (exit code {process.ExitCode}): {stderr.Trim()}");
+
+            var response = JsonSerializer.Deserialize<OutOfProcessQueryResponse>(stdout, JsonOptions);
+            if (response is null || response.ProtocolVersion != OutOfProcessQueryRequest.CurrentProtocolVersion || response.RequestId != requestId)
+                throw new QueryExecutionException("The out-of-process query host returned an invalid response.");
+            if (!string.IsNullOrWhiteSpace(response.Error))
+                throw new QueryExecutionException(response.Error);
+            return response.Preview ?? throw new QueryExecutionException("The out-of-process query host did not return a SQL preview.");
+        }
+        catch (OperationCanceledException)
+        {
+            KillIfRunning(process);
+            throw;
+        }
+        catch (QueryExecutionException)
+        {
+            KillIfRunning(process);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            KillIfRunning(process);
+            throw new QueryExecutionException("Unable to preview the query in the out-of-process query host.", ex);
+        }
+    }
+
     internal static OutOfProcessHostConfiguration ResolveHostConfiguration(QueryExecutionOptions options, LoadedAssemblyHandle target)
     {
         var hostPath = Path.GetFullPath(options.OutOfProcessHostPath!);

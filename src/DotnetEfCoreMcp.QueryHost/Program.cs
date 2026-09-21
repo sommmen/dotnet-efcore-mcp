@@ -25,13 +25,19 @@ try
     var contextType = target.Assembly.GetType(request.ContextTypeName, throwOnError: false)
         ?? throw new QueryExecutionException("The requested DbContext type was not found in the target assembly.");
     var executor = new RoslynQueryExecutor(request.Options, new QueryCompiler(new QueryCompilationOptions()));
-    var result = await executor.ExecuteAsync(target, contextType, request.Connection, request.Provider, request.Query, CancellationToken.None);
-    response = new OutOfProcessQueryResponse
-    {
-        ProtocolVersion = OutOfProcessQueryRequest.CurrentProtocolVersion,
-        RequestId = request.RequestId,
-        Result = ToWire(result),
-    };
+    response = string.Equals(request.Operation, "preview", StringComparison.OrdinalIgnoreCase)
+        ? new OutOfProcessQueryResponse
+        {
+            ProtocolVersion = OutOfProcessQueryRequest.CurrentProtocolVersion,
+            RequestId = request.RequestId,
+            Preview = await executor.PreviewSqlAsync(target, contextType, request.Connection, request.Provider, request.Query, CancellationToken.None),
+        }
+        : new OutOfProcessQueryResponse
+        {
+            ProtocolVersion = OutOfProcessQueryRequest.CurrentProtocolVersion,
+            RequestId = request.RequestId,
+            Result = ToWire(await executor.ExecuteAsync(target, contextType, request.Connection, request.Provider, request.Query, CancellationToken.None)),
+        };
 }
 catch (QueryExecutionException ex)
 {
@@ -109,13 +115,19 @@ static async Task RunPersistentAsync(int poolIdleTimeoutSeconds, JsonSerializerO
                 var contextType = loadedTarget!.Assembly.GetType(request.ContextTypeName, throwOnError: false)
                     ?? throw new QueryExecutionException("The requested DbContext type was not found in the target assembly.");
                 var executor = new RoslynQueryExecutor(request.Options, compiler);
-                var result = await executor.ExecuteAsync(loadedTarget, contextType, request.Connection, request.Provider, request.Query, CancellationToken.None);
-                response = new OutOfProcessQueryResponse
-                {
-                    ProtocolVersion = OutOfProcessQueryRequest.CurrentProtocolVersion,
-                    RequestId = request.RequestId,
-                    Result = ToWire(result),
-                };
+                response = string.Equals(request.Operation, "preview", StringComparison.OrdinalIgnoreCase)
+                    ? new OutOfProcessQueryResponse
+                    {
+                        ProtocolVersion = OutOfProcessQueryRequest.CurrentProtocolVersion,
+                        RequestId = request.RequestId,
+                        Preview = await executor.PreviewSqlAsync(loadedTarget, contextType, request.Connection, request.Provider, request.Query, CancellationToken.None),
+                    }
+                    : new OutOfProcessQueryResponse
+                    {
+                        ProtocolVersion = OutOfProcessQueryRequest.CurrentProtocolVersion,
+                        RequestId = request.RequestId,
+                        Result = ToWire(await executor.ExecuteAsync(loadedTarget, contextType, request.Connection, request.Provider, request.Query, CancellationToken.None)),
+                    };
             }
             catch (QueryExecutionException ex)
             {
