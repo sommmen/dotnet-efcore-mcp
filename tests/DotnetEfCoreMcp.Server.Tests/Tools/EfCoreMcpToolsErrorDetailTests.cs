@@ -248,6 +248,10 @@ public sealed class EfCoreMcpToolsErrorDetailTests
     [InlineData("Login failed. Password=\"abc;hunter2;Database=app", "hunter2")]
     [InlineData("Login failed. Password='abc;hunter2;Database=app", "hunter2")]
     [InlineData("Server=\"db;Password=hunter2", "hunter2")]
+    // Provider diagnostics are frequently multi-line, so the unterminated branch must span
+    // newlines; '.' excludes them unless Singleline is set.
+    [InlineData("Login failed. Password=\"abc\nhunter2;Database=app", "hunter2")]
+    [InlineData("Login failed. Password='abc\r\nhunter2;Database=app", "hunter2")]
     public void Redact_RedactsThroughEndOfTextForAnUnterminatedQuotedValue(string message, string secret)
     {
         var redacted = SensitiveTextRedactor.Redact(message);

@@ -33,11 +33,12 @@ public static partial class SensitiveTextRedactor
     //      consumed whole because a quoted value may legally contain the ';' delimiter;
     //   2. a value that opens a quote but never closes it - which happens in truncated diagnostics -
     //      redacted through to the end of the text, since there is no reliable terminator and
-    //      falling through to rule 3 would stop at the first ';' and leak the rest;
+    //      falling through to rule 3 would stop at the first ';' and leak the rest. `[\s\S]` rather
+    //      than `.` because provider diagnostics are often multi-line and `.` excludes newlines;
     //   3. an ordinary unquoted run that stops at the delimiter.
     [GeneratedRegex(
         """
-        \b(Password|Pwd|User\s*ID|Uid|UserName|Username|User|Server|Host|Data\s*Source|DataSource|Initial\s*Catalog|AccountKey|AccountName|SharedAccessSignature|Sig|Token|ApiKey|Api\s*Key|Secret)\s*=(?!=|>)\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|["'].*|[^;]*)
+        \b(Password|Pwd|User\s*ID|Uid|UserName|Username|User|Server|Host|Data\s*Source|DataSource|Initial\s*Catalog|AccountKey|AccountName|SharedAccessSignature|Sig|Token|ApiKey|Api\s*Key|Secret)\s*=(?!=|>)\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|["'][\s\S]*|[^;]*)
         """,
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace)]
     private static partial Regex CredentialKeyword();
