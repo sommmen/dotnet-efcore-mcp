@@ -1160,7 +1160,7 @@ public sealed class EfCoreMcpTools(
         if (message.Contains("QueryExecution:OutOfProcessHostPath", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("out-of-process query host was not found", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("out-of-process query host is missing its dependency file", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("runtime configuration file for out-of-process query execution", StringComparison.OrdinalIgnoreCase))
+            message.Contains("could not be synthesized for out-of-process query execution", StringComparison.OrdinalIgnoreCase))
         {
             return $"{message} Next step: This is a server-side configuration problem with the out-of-process query host, not a problem with the query itself; ask the server operator to check the QueryExecution:OutOfProcessHostPath setting and the target project's build output.";
         }

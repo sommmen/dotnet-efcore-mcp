@@ -49,12 +49,42 @@ run`/tests, no packaging step has run), the locator falls back to the sibling
 `DotnetEfCoreMcp.QueryHost` project's own build output. Set `OutOfProcessHostPath` explicitly to
 override auto-detection, e.g. when pointing at a custom or externally deployed query host.
 
-For isolated execution, configure the query-host DLL and retain both deployment artifacts:
+For isolated execution, the query host is launched with `dotnet exec` under two artifacts:
 
-- the target application's adjacent `<target>.runtimeconfig.json`, which selects the target
-  runtime/framework;
+- a runtime configuration file that selects the target runtime/framework;
 - the query host's adjacent `<query-host>.deps.json`, which resolves the query host and server
-  dependency closure.
+  dependency closure. This one must be retained next to the query-host DLL.
+
+### Targets without their own `runtimeconfig.json`
+
+The runtime configuration is preferentially the target application's own adjacent
+`<target>.runtimeconfig.json`. That file does not always exist: the SDK emits one only for projects
+built to *run*, so a `DbContext` in a class library has none, and neither does a `DbContext`
+assembly that reaches the output folder as a project-reference or NuGet-package dependency copy of
+some host app. Requiring the adjacent file previously forced those targets onto
+`QueryExecution:Mode=InProcess`, defeating the isolation the out-of-process host exists to provide.
+
+[`TargetRuntimeConfigResolver`](../../src/DotnetEfCoreMcp.Server/Querying/TargetRuntimeConfigResolver.cs)
+removes that restriction by synthesizing an equivalent runtime config when no usable adjacent one
+is present, resolving the frameworks in this order:
+
+1. the target's adjacent `<target>.runtimeconfig.json`, used verbatim when it declares a shared
+   framework (a *self-contained* app's config records `includedFrameworks` instead, which
+   `dotnet exec` cannot launch against, so it falls through to synthesis);
+2. the target's restore graph — `obj/project.assets.json` `frameworkReferences` — which is how a
+   class library's `Microsoft.AspNetCore.App` reference is recovered (shared with
+   [`TargetDependencyProbe`](../../src/DotnetEfCoreMcp.Server/AssemblyLoading/TargetDependencyProbe.cs));
+3. the union of any *other* application `*.runtimeconfig.json` files in the target's own output
+   folder — the backstop for a dependency copy, where the owning app's config is the only remaining
+   description of the runtime that folder was built for;
+4. `Microsoft.NETCore.App` at the runtime this server is itself running on.
+
+Synthesized configs use `rollForward: latestMinor` (the target was built, never published against a
+pinned runtime) and three-part `major.minor.patch` versions, which `hostfxr` requires. They are
+cached under `%TEMP%/dotnet-efcore-mcp/runtimeconfig/<hash>/` keyed by a content hash of the target
+path plus the config body, so repeated queries and long-lived pooled workers converge on one stable
+file. Both the one-shot and `Pooled` paths resolve through this, so neither mode requires the target
+to ship a runtime config.
 
 The host receives a versioned JSON request through standard input and returns one JSON response on
 standard output. Connection strings travel only in that request, not on the process command line.
