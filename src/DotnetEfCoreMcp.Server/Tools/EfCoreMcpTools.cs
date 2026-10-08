@@ -171,7 +171,7 @@ public sealed class EfCoreMcpTools(
         catch (AssemblyDiscoveryException ex)
         {
             logger.LogWarning(ex, "Failed to discover target assemblies. WorkspacePath={WorkspacePath}", workspacePath);
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -221,7 +221,7 @@ public sealed class EfCoreMcpTools(
         catch (AssemblyLoadFailedException ex)
         {
             logger.LogWarning(ex, "Failed to load target assembly. Path={AssemblyPath}", assemblyPath);
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -538,7 +538,8 @@ public sealed class EfCoreMcpTools(
         "Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL " +
         "to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and " +
         "operators with no SQL translation (Zip) are rejected - use run_query for those instead. Preview compilation runs in the " +
-        "configured isolated query host unless QueryExecution:Mode is InProcess; ApplicationFactory connections remain unavailable. " +
+        "configured isolated query host unless QueryExecution:Mode is InProcess, and is available for every connection run_query " +
+        "supports, including ApplicationFactory connections (which require an isolated mode). " +
         "Optionally accepts include, with the same syntax and validation as run_query's include parameter, to preview the SQL including " +
         "the filtered/capped Include()/ThenInclude() calls it would issue.")]
     public Task<string> PreviewQuerySql(
@@ -567,10 +568,11 @@ public sealed class EfCoreMcpTools(
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
 
-            if (entry.Source == ConnectionSource.ApplicationFactory)
+            if (entry.Source == ConnectionSource.ApplicationFactory && queryExecutionOptions.Mode == QueryExecutionMode.InProcess)
             {
                 throw new QueryExecutionException(
-                    "preview_query_sql is unavailable for ApplicationFactory connections because application startup must run in an isolated query host.");
+                    "ApplicationFactory connections require QueryExecution:Mode to be OutOfProcess, Pooled, or Auto; " +
+                    "the target application's startup logic must not run in the MCP server process.");
             }
 
             var target = RequireLoadedAssembly(targetName);
@@ -690,7 +692,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (MigrationInspectionException ex)
         {
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -756,7 +758,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (MigrationInspectionException ex)
         {
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -947,18 +949,61 @@ public sealed class EfCoreMcpTools(
     {
         var errorId = Guid.NewGuid().ToString("N");
         logger.LogError(exception, "Unexpected error invoking MCP tool {ToolName}. ErrorId={ErrorId}", operation, errorId);
+        return new McpException(FormatUnexpectedToolFailure(
+            operation, exception, errorId, toolDiagnosticsOptions.ExposeSafeErrorDetails));
+    }
 
-        if (!toolDiagnosticsOptions.ExposeSafeErrorDetails)
-        {
-            return new McpException(
-                $"{operation} failed unexpectedly. Error reference: {errorId}. " +
-                "Check the server logs or contact the server operator.");
-        }
+    /// <summary>Renders a subsystem failure (migrations, assembly loading, ...) as its own message
+    /// plus the flattened inner diagnostic, skipping the cause when the wrapper already inlined it
+    /// so it is never reported twice. Credential material is removed either way.</summary>
+    internal static string FormatSubsystemError(Exception exception)
+    {
+        var message = exception.Message;
+        var cause = QueryExceptionDetail.Unwrap(exception.InnerException);
+        var detail = cause?.Message.Trim();
 
+        if (string.IsNullOrEmpty(detail) || message.Contains(detail, StringComparison.Ordinal))
+            return SensitiveTextRedactor.Redact(message) ?? message;
+
+        return SensitiveTextRedactor.Redact($"{message} Cause: {cause!.GetType().Name}: {detail}") ?? message;
+    }
+
+    /// <summary>Builds the client-facing message for an otherwise-unhandled tool failure, always
+    /// including the flattened underlying diagnostic.
+    /// <para>This path used to replace the message with an opaque "failed unexpectedly. Error
+    /// reference: &lt;id&gt;" unless <c>ToolDiagnostics:ExposeSafeErrorDetails</c> was enabled
+    /// <em>and</em> the host was Development - so in a normal deployment an EF Core translation error
+    /// or provider SQL error never reached the calling agent, which is exactly the signal it needs to
+    /// correct its own query (issue #85). The detail is now always surfaced, with credential material
+    /// removed by <see cref="SensitiveTextRedactor"/>; the error reference is still emitted so a
+    /// response can be correlated with the full stack trace in the server logs.</para>
+    /// <para><paramref name="exposeSafeErrorDetails"/> no longer controls whether the cause is
+    /// disclosed. It now adds the <em>outer</em> exception's type, which the flattened cause
+    /// deliberately omits and which is informative when the wrapper itself is the interesting part
+    /// (an assembly load failure, say). It remains Development-only.</para>
+    /// <para><strong>Residual risk, accepted deliberately.</strong> This is the generic catch-all, so
+    /// the exception can originate in arbitrary code - target application startup, a result
+    /// formatter, a provider extension - and such a message could in principle embed row values or
+    /// filesystem paths that a credential-keyword redactor cannot recognize. That is accepted
+    /// because an MCP caller reaching this path is already authorized to read rows through
+    /// <c>run_query</c>, so echoed row content is not a privilege escalation for it; the narrow
+    /// exception is a caller whose access policy denies an entity whose data then appears inside an
+    /// unrelated failure message. Operators who cannot accept that should restrict entity access at
+    /// the connection level rather than rely on error opacity, which also withheld every
+    /// actionable EF Core diagnostic.</para></summary>
+    internal static string FormatUnexpectedToolFailure(
+        string operation, Exception exception, string errorId, bool exposeSafeErrorDetails = false)
+    {
+        var detail = SensitiveTextRedactor.Redact(QueryExceptionDetail.Describe(exception));
         var hint = DescribeIfAssemblyIdentitySplit(exception) ?? GenericUnexpectedErrorHint;
-        return new McpException(
-            $"{operation} failed unexpectedly. Error reference: {errorId}. " +
-            $"Failure category: {exception.GetType().Name}. Next step: {hint}");
+        var prefix = $"{operation} failed unexpectedly. Error reference: {errorId}.";
+        var category = exposeSafeErrorDetails || string.IsNullOrEmpty(detail)
+            ? $" Failure category: {exception.GetType().Name}."
+            : string.Empty;
+
+        return string.IsNullOrEmpty(detail)
+            ? $"{prefix}{category} Next step: {hint}"
+            : $"{prefix}{category} Cause: {detail} Next step: {hint}";
     }
 
     /// <summary>Recognizes the small family of exceptions ("field/method not found", "type could not be
@@ -1076,7 +1121,19 @@ public sealed class EfCoreMcpTools(
         return $"{reason} Choose one of these short context names: {choices}. Next step: call list_contexts, then pass contextName using a listed short name or fully qualified name.";
     }
 
+    /// <summary>Test seam for <see cref="FormatQueryError"/>, which is otherwise reachable only by
+    /// provoking a real provider failure.</summary>
+    internal static string FormatQueryErrorForTesting(QueryExecutionException exception) => FormatQueryError(exception);
+
     private static string FormatQueryError(QueryExecutionException exception)
+    {
+        // Redact before returning: a provider can embed its own connection details in a translation
+        // or execution error, and this path surfaces the cause just like the others.
+        var formatted = FormatQueryErrorCore(exception);
+        return SensitiveTextRedactor.Redact(formatted) ?? formatted;
+    }
+
+    private static string FormatQueryErrorCore(QueryExecutionException exception)
     {
         var message = exception.Message;
 
@@ -1119,29 +1176,78 @@ public sealed class EfCoreMcpTools(
             return $"{message} Next step: This indicates a protocol-level failure between the server and the query host rather than a problem with the query; consult server logs and retry.";
         }
 
-        var cause = exception.InnerException?.Message?.Trim();
-        if (string.IsNullOrEmpty(cause))
-            return $"{message} Next step: {GenericQueryRecoveryHint}";
+        // Out-of-process modes have no InnerException to read: the isolated host already flattened
+        // the cause into its single wire-level Error string (see QueryHost's ErrorWithCause), so the
+        // detail arrives inside `message` and must not be duplicated behind a second "Cause:".
+        var cause = message.Contains(" Cause: ", StringComparison.Ordinal)
+            ? null
+            : QueryExceptionDetail.Describe(exception.InnerException);
 
+        if (string.IsNullOrEmpty(cause))
+            return $"{message} Next step: {ResolveCauseHint(message)}";
+
+        return $"{message} Cause: {cause} Next step: {ResolveCauseHint(cause)}";
+    }
+
+    /// <summary>Maps a flattened cause onto the most specific remediation hint available, falling
+    /// back to the generic schema/syntax hint. The EF Core translation cases are recognized by the
+    /// provider's own wording because EF does not expose distinct exception types for them.</summary>
+    private static string ResolveCauseHint(string cause)
+    {
         if (cause.Contains("RowLimitingOperationWithoutOrderByWarning", StringComparison.OrdinalIgnoreCase) ||
             (cause.Contains("Skip", StringComparison.OrdinalIgnoreCase) && cause.Contains("Take", StringComparison.OrdinalIgnoreCase)))
         {
-            return $"{message} Cause: {cause} Next step: Add a deterministic orderBy expression whenever using skip or take, then retry the query.";
+            return "Add a deterministic orderBy expression whenever using skip or take, then retry the query.";
         }
 
         if (cause.Contains("Globalization Invariant Mode is not supported", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{message} Cause: {cause} Next step: Enable ICU/globalization support in the target .NET runtime or container, then retry the query.";
+            return "Enable ICU/globalization support in the target .NET runtime or container, then retry the query.";
         }
 
-        return $"{message} Next step: {GenericQueryRecoveryHint}";
+        if (cause.Contains("projection containing a collection", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EF Core cannot combine this operator with a projection that contains a collection. " +
+                "Apply the operator before projecting the collection, project only scalar columns, or request the " +
+                "related rows through run_query's include parameter instead, then retry.";
+        }
+
+        if (cause.Contains("doesn't project necessary information required to uniquely identify it", StringComparison.OrdinalIgnoreCase))
+        {
+            return "This is EF Core rejecting a collection include over a projection or set operation (Concat/Union/Except/Intersect). " +
+                "Apply Include()/ThenInclude() to a single, non-combined query before any set operator, or drop the include and fetch " +
+                "the related rows with a second query keyed on the parent ids, then retry.";
+        }
+
+        if (cause.Contains("could not be translated", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EF Core could not translate part of this expression to SQL - the cause above names the offending sub-expression. " +
+                "Replace it with a server-translatable equivalent (EF.Functions.*, a supported string/date operator, or a simple " +
+                "comparison), or materialize first with run_query and filter client-side, then retry.";
+        }
+
+        if (cause.Contains("set operations", StringComparison.OrdinalIgnoreCase) ||
+            cause.Contains("Concat", StringComparison.Ordinal) ||
+            cause.Contains("Union", StringComparison.Ordinal))
+        {
+            return "EF Core restricts what may be combined through a set operator (Concat/Union/Except/Intersect) - the cause above " +
+                "names the conflict. Align the projections on both sides (same shape, same types, no includes), then retry.";
+        }
+
+        if (cause.Contains("no suitable method found to override", StringComparison.OrdinalIgnoreCase) ||
+            cause.Contains("does not contain a definition for", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"The expression references a member that does not exist on the entity. {GenericQueryRecoveryHint}";
+        }
+
+        return GenericQueryRecoveryHint;
     }
 
     private const string GenericQueryRecoveryHint =
         "verify entity and property names with get_schema, validate LINQ query syntax, and consult server logs if the problem persists.";
 
     private const string GenericUnexpectedErrorHint =
-        "check the server logs using the error reference; diagnostic messages and stack traces are intentionally not returned to MCP callers.";
+        "review the cause above; if it is not conclusive, consult the server logs using the error reference, which correlates with the full stack trace (stack traces are intentionally not returned to MCP callers).";
 
     /// <summary>Adds actionable next-step guidance to raw SQL execution failures, similar in
     /// spirit to <see cref="FormatQueryError"/> for the structured run_query tool. Raw SQL errors
@@ -1150,10 +1256,13 @@ public sealed class EfCoreMcpTools(
     /// pointer back toward get_schema/list_contexts.</summary>
     private static string FormatSqlQueryError(QueryExecutionException exception)
     {
-        var cause = exception.InnerException?.Message?.Trim();
-        return string.IsNullOrEmpty(cause)
-            ? $"{exception.Message} Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists."
-            : $"{exception.Message} Cause: {cause} Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists.";
+        const string hint = "Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists.";
+        var cause = QueryExceptionDetail.Describe(exception.InnerException);
+        var formatted = string.IsNullOrEmpty(cause)
+            ? $"{exception.Message} {hint}"
+            : $"{exception.Message} Cause: {cause} {hint}";
+
+        return SensitiveTextRedactor.Redact(formatted) ?? formatted;
     }
 
     /// <summary>Turns a <see cref="DbContextScanResult"/>'s type-load diagnostics into

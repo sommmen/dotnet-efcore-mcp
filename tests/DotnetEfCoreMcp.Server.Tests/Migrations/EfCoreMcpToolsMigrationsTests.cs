@@ -176,7 +176,10 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
             () => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", idempotent: true));
 
         Assert.Contains("idempotent: false", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("NotSupportedException", exception.Message, StringComparison.Ordinal);
+        // Issue #85: the provider's own limitation text is now appended as the cause, since that is
+        // what tells the caller which provider refused and why. Credentials are still redacted.
+        Assert.Contains("Cause: NotSupportedException", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Data Source", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

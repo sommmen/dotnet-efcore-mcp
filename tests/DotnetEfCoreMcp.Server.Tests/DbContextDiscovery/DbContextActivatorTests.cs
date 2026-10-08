@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DotnetEfCoreMcp.Server.Tests.DbContextDiscovery;
 
+[Collection(ApplicationFactoryEnvironmentCollection.Name)]
 public sealed class DbContextActivatorTests
 {
     [Fact]

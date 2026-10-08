@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DotnetEfCoreMcp.Server.Tests.Querying;
 
+[Collection(ApplicationFactoryEnvironmentCollection.Name)]
 public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
 {
     private readonly SqliteTestDatabase _db = new();
@@ -108,6 +109,46 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
 
         Assert.True(result.IsScalar);
         Assert.Equal(1, result.Scalar);
+    }
+
+    [Fact]
+    public async Task PreviewSqlAsync_ApplicationFactoryConnection_ReturnsSqlFromIsolatedHost()
+    {
+        var previous = Environment.GetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION");
+        Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", _db.ConnectionString);
+        try
+        {
+            var contextType = DbContextScanner.FindDbContextTypes(_handle.Assembly).Descriptors
+                .Single(d => d.Name == "ApplicationFactoryDbContext").ClrType;
+            var entry = _db.ToRegistryEntry(source: ConnectionSource.ApplicationFactory);
+
+            var result = await CreateOneShotExecutor().PreviewSqlAsync(
+                _handle, contextType, entry, DatabaseProvider.Sqlite,
+                new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)", RootEntityName = "Customer" },
+                CancellationToken.None);
+
+            Assert.Equal("Customer", result.Entity);
+            Assert.Contains("SELECT", result.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Customers", result.Sql, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", previous);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UntranslatableQuery_PropagatesTheRealEfDiagnosticAcrossTheWire()
+    {
+        // Issue #85: the isolated host must not flatten a failure to its outermost wrapper before
+        // serializing it, or the provider's diagnostic is lost in the default (Auto/OutOfProcess)
+        // mode regardless of how well the server formats what it receives.
+        var exception = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateOneShotExecutor().ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Name.Normalize() == \"x\").Take(1)" }, CancellationToken.None));
+
+        Assert.Contains("could not be translated", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Normalize", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

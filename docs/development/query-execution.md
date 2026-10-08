@@ -197,9 +197,10 @@ thrown for:
 `QueryExecution:Mode=Auto`, preview is compiled and evaluated in the isolated query host; pooled
 mode keeps the same boundary. The host returns only the generated SQL result, never a live
 `IQueryable`. This preserves process isolation while allowing `ToQueryString()` to remain
-non-executing: it does not open a database connection or issue a command. Preview intentionally
-rejects `ConnectionSource.ApplicationFactory`, because application startup must occur only in the
-isolated host. As with normal query execution, the caller expression is still ordinary compiled C#;
+non-executing: it does not open a database connection or issue a command. `ConnectionSource.ApplicationFactory`
+connections are supported on exactly the same terms as `run_query`: permitted in `OutOfProcess`, `Pooled`, and
+`Auto`, and rejected only under `QueryExecution:Mode=InProcess`, because application startup must occur only in
+the isolated host. As with normal query execution, the caller expression is still ordinary compiled C#;
 an expression such as `Customers.ToList().AsQueryable()` can enumerate before SQL generation and is
 therefore rejected when its final value is not an unexecuted provider query.
 
