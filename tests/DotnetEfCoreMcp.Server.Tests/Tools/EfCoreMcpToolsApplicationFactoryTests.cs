@@ -27,14 +27,6 @@ namespace DotnetEfCoreMcp.Server.Tests.Tools;
 public sealed class EfCoreMcpToolsApplicationFactoryTests
 {
     [Fact]
-    public void SensitiveTextRedactor_EfExpressionWithEqualityAndLambda_PreservesExpression()
-    {
-        const string diagnostic = "The LINQ expression 'u => u.Token == Normalize(value)' could not be translated.";
-
-        Assert.Equal(diagnostic, SensitiveTextRedactor.Redact(diagnostic));
-    }
-
-    [Fact]
     public async Task RunQuery_ApplicationFactoryConnection_InProcessMode_ThrowsMcpException()
     {
         var tools = CreateTools(QueryExecutionMode.InProcess);

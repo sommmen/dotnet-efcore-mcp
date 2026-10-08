@@ -230,6 +230,42 @@ public sealed class EfCoreMcpToolsErrorDetailTests
         Assert.Equal("The migration 'X' was not found. Next step: call list_migrations.", message);
     }
 
+    [Theory]
+    // `==` and `=>` are not keyword assignments, so the value pattern must not start matching at
+    // them - otherwise it eats the rest of an EF expression and destroys the diagnostic.
+    [InlineData("The LINQ expression 'u => u.Token == Normalize(value)' could not be translated.")]
+    [InlineData("Translation failed: x.Secret == y.Secret")]
+    [InlineData("Predicate 'c => c.Password == input' is not supported.")]
+    public void Redact_LeavesComparisonsAndLambdasInExpressionsIntact(string diagnostic)
+    {
+        Assert.Equal(diagnostic, SensitiveTextRedactor.Redact(diagnostic));
+    }
+
+    [Theory]
+    // A truncated diagnostic can leave a quoted value unterminated. Falling back to the unquoted
+    // branch then stops at the first ';' and leaks the remainder, so an unterminated quote must be
+    // treated conservatively and redacted through to the end of the text.
+    [InlineData("Login failed. Password=\"abc;hunter2;Database=app", "hunter2")]
+    [InlineData("Login failed. Password='abc;hunter2;Database=app", "hunter2")]
+    [InlineData("Server=\"db;Password=hunter2", "hunter2")]
+    public void Redact_RedactsThroughEndOfTextForAnUnterminatedQuotedValue(string message, string secret)
+    {
+        var redacted = SensitiveTextRedactor.Redact(message);
+
+        Assert.DoesNotContain(secret, redacted, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[REDACTED]", redacted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Redact_StillRedactsASingleEqualsAssignmentAfterAComparison()
+    {
+        // Guards the negative lookahead: skipping `==` must not also skip a real assignment.
+        var redacted = SensitiveTextRedactor.Redact("x == y. Password=hunter2;Database=app");
+
+        Assert.DoesNotContain("hunter2", redacted, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("x == y.", redacted, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Redact_LeavesOrdinaryEfDiagnosticsIntact()
     {

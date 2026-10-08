@@ -25,12 +25,19 @@ public static partial class SensitiveTextRedactor
         string.IsNullOrEmpty(text) ? text : CredentialKeyword().Replace(text, $"$1={Placeholder}");
 
     // Keywords are matched on a word boundary so ordinary prose mentioning e.g. "password" without
-    // an assignment is left alone. The value alternation is ordered deliberately: a double- or
-    // single-quoted run (allowing the doubled-quote escape form) is consumed whole before falling
-    // back to an unquoted run that stops at the delimiter.
+    // an assignment is left alone. `=(?!=|>)` skips `==` and `=>` so an EF expression such as
+    // `u => u.Token == x` is not mistaken for an assignment and eaten.
+    //
+    // The value alternation is ordered deliberately:
+    //   1. a properly closed double- or single-quoted run (allowing the doubled-quote escape form),
+    //      consumed whole because a quoted value may legally contain the ';' delimiter;
+    //   2. a value that opens a quote but never closes it - which happens in truncated diagnostics -
+    //      redacted through to the end of the text, since there is no reliable terminator and
+    //      falling through to rule 3 would stop at the first ';' and leak the rest;
+    //   3. an ordinary unquoted run that stops at the delimiter.
     [GeneratedRegex(
         """
-        \b(Password|Pwd|User\s*ID|Uid|UserName|Username|User|Server|Host|Data\s*Source|DataSource|Initial\s*Catalog|AccountKey|AccountName|SharedAccessSignature|Sig|Token|ApiKey|Api\s*Key|Secret)\s*=(?!=|>)\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)
+        \b(Password|Pwd|User\s*ID|Uid|UserName|Username|User|Server|Host|Data\s*Source|DataSource|Initial\s*Catalog|AccountKey|AccountName|SharedAccessSignature|Sig|Token|ApiKey|Api\s*Key|Secret)\s*=(?!=|>)\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|["'].*|[^;]*)
         """,
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace)]
     private static partial Regex CredentialKeyword();
