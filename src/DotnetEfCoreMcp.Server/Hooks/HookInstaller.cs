@@ -6,11 +6,10 @@ namespace DotnetEfCoreMcp.Server.Hooks;
 /// <summary>
 /// The outcome of installing or removing hooks for one client.
 /// </summary>
-/// <param name="Client">The client the result refers to.</param>
 /// <param name="FilePath">The config file that was inspected or written.</param>
 /// <param name="Changed">Whether the file's contents changed.</param>
 /// <param name="Message">A human-readable summary for CLI output.</param>
-public sealed record HookInstallResult(HookClient Client, string FilePath, bool Changed, string Message);
+public sealed record HookInstallResult(string FilePath, bool Changed, string Message);
 
 /// <summary>
 /// Writes repo-local hook configuration for the supported agent CLIs.
@@ -76,7 +75,7 @@ public sealed class HookInstaller
 
         if (existing is null)
         {
-            return new HookInstallResult(client, path, Changed: false,
+            return new HookInstallResult(path, Changed: false,
                 $"Skipped {path}: the file exists but is not a JSON object. Fix or remove it, then retry.");
         }
 
@@ -86,7 +85,7 @@ public sealed class HookInstaller
             var refreshed = ApplyHooks(CloneWithoutManagedHooks(existing, client), client);
             if (JsonNode.DeepEquals(refreshed, existing))
             {
-                return new HookInstallResult(client, path, Changed: false,
+                return new HookInstallResult(path, Changed: false,
                     $"Already up to date: {path}");
             }
         }
@@ -94,7 +93,7 @@ public sealed class HookInstaller
         var updated = ApplyHooks(CloneWithoutManagedHooks(existing, client), client);
         WriteJson(path, updated);
 
-        return new HookInstallResult(client, path, Changed: true,
+        return new HookInstallResult(path, Changed: true,
             alreadyManaged ? $"Updated {path}" : $"Installed {path}");
     }
 
@@ -105,19 +104,19 @@ public sealed class HookInstaller
 
         if (!File.Exists(path))
         {
-            return new HookInstallResult(client, path, Changed: false, $"Nothing to remove: {path}");
+            return new HookInstallResult(path, Changed: false, $"Nothing to remove: {path}");
         }
 
         var existing = ReadJsonObject(path);
         if (existing is null)
         {
-            return new HookInstallResult(client, path, Changed: false,
+            return new HookInstallResult(path, Changed: false,
                 $"Skipped {path}: the file is not a JSON object.");
         }
 
         if (!HasManagedHook(existing, client))
         {
-            return new HookInstallResult(client, path, Changed: false,
+            return new HookInstallResult(path, Changed: false,
                 $"No dotnet-efcore-mcp hooks found in {path}");
         }
 
@@ -127,11 +126,11 @@ public sealed class HookInstaller
         if (IsEffectivelyEmpty(cleaned, client))
         {
             File.Delete(path);
-            return new HookInstallResult(client, path, Changed: true, $"Removed {path}");
+            return new HookInstallResult(path, Changed: true, $"Removed {path}");
         }
 
         WriteJson(path, cleaned);
-        return new HookInstallResult(client, path, Changed: true, $"Updated {path}");
+        return new HookInstallResult(path, Changed: true, $"Updated {path}");
     }
 
     /// <summary>Reports whether a client currently has this installer's hooks.</summary>
@@ -141,16 +140,16 @@ public sealed class HookInstaller
 
         if (!File.Exists(path))
         {
-            return new HookInstallResult(client, path, Changed: false, "not installed");
+            return new HookInstallResult(path, Changed: false, "not installed");
         }
 
         var existing = ReadJsonObject(path);
         if (existing is null)
         {
-            return new HookInstallResult(client, path, Changed: false, "unreadable (not a JSON object)");
+            return new HookInstallResult(path, Changed: false, "unreadable (not a JSON object)");
         }
 
-        return new HookInstallResult(client, path, Changed: false,
+        return new HookInstallResult(path, Changed: false,
             HasManagedHook(existing, client) ? "installed" : "not installed");
     }
 
