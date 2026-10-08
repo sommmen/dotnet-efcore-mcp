@@ -22,15 +22,20 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
       on `IConfiguration`, so adding another provider later is a Program.cs-only change.
   - [x] Redact connection strings from all logs, error messages, and MCP tool output
     - `ConnectionRegistryEntry.ToString()` never includes the raw connection string.
-  - [x] Keep unexpected tool-failure diagnostics safe and development-only
-    - By default, MCP callers receive an opaque error reference only; the full exception is
-      logged to server stderr with the same reference.
-    - To add a safe failure category and vetted recovery hint while developing, set
-      `ToolDiagnostics:ExposeSafeErrorDetails=true` (or
-      `DOTNETEFCOREMCP_ToolDiagnostics__ExposeSafeErrorDetails=true`). The setting is
-      forcibly ignored unless the server host environment is `Development`.
-    - This mode never returns raw exception or inner-exception messages, stack traces,
-      connection strings, SQL, query parameters, server names, or other provider data.
+  - [x] Surface actionable tool-failure diagnostics while redacting credentials
+    - MCP callers receive the underlying diagnostic, flattened to the innermost meaningful
+      exception and rendered as `Cause: TypeName: message`, alongside an error reference that
+      correlates with the full stack trace logged to server stderr.
+    - This is deliberate: EF Core translation errors and provider SQL errors describe the
+      *query*, not the data, and they are the signal a calling agent needs to correct itself.
+      Withholding them made a genuinely broken query indistinguishable from a healthy tool
+      refusing to work (issue #85).
+    - `SensitiveTextRedactor` strips credential-bearing connection-string keywords
+      (`Password`, `User ID`, `Server`, `Data Source`, `AccountKey`, ...) from any message
+      before it is returned. Stack traces are still never returned.
+    - `ToolDiagnostics:ExposeSafeErrorDetails` no longer gates whether the cause is disclosed;
+      it remains available for additional development-time diagnostic verbosity and is still
+      forcibly ignored outside the `Development` host environment.
 - [x] Validate/allowlist which providers are supported initially (e.g. SQL Server, PostgreSQL, SQLite) and reject unknown providers explicitly
   - Supported: `Sqlite`, `SqlServer`, `PostgreSql` (PostgreSQL). Unknown provider names throw
     `ConnectionRegistryConfigurationException` at registry construction time (fail fast,

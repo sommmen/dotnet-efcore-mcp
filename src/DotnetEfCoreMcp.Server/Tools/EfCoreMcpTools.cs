@@ -171,7 +171,7 @@ public sealed class EfCoreMcpTools(
         catch (AssemblyDiscoveryException ex)
         {
             logger.LogWarning(ex, "Failed to discover target assemblies. WorkspacePath={WorkspacePath}", workspacePath);
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -221,7 +221,7 @@ public sealed class EfCoreMcpTools(
         catch (AssemblyLoadFailedException ex)
         {
             logger.LogWarning(ex, "Failed to load target assembly. Path={AssemblyPath}", assemblyPath);
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -692,7 +692,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (MigrationInspectionException ex)
         {
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -758,7 +758,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (MigrationInspectionException ex)
         {
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 
@@ -949,18 +949,42 @@ public sealed class EfCoreMcpTools(
     {
         var errorId = Guid.NewGuid().ToString("N");
         logger.LogError(exception, "Unexpected error invoking MCP tool {ToolName}. ErrorId={ErrorId}", operation, errorId);
+        return new McpException(FormatUnexpectedToolFailure(operation, exception, errorId));
+    }
 
-        if (!toolDiagnosticsOptions.ExposeSafeErrorDetails)
-        {
-            return new McpException(
-                $"{operation} failed unexpectedly. Error reference: {errorId}. " +
-                "Check the server logs or contact the server operator.");
-        }
+    /// <summary>Renders a subsystem failure (migrations, assembly loading, ...) as its own message
+    /// plus the flattened inner diagnostic, skipping the cause when the wrapper already inlined it
+    /// so it is never reported twice. Credential material is removed either way.</summary>
+    internal static string FormatSubsystemError(Exception exception)
+    {
+        var message = exception.Message;
+        var cause = QueryExceptionDetail.Unwrap(exception.InnerException);
+        var detail = cause?.Message?.Trim();
 
+        if (string.IsNullOrEmpty(detail) || message.Contains(detail, StringComparison.Ordinal))
+            return SensitiveTextRedactor.Redact(message) ?? message;
+
+        return SensitiveTextRedactor.Redact($"{message} Cause: {cause!.GetType().Name}: {detail}") ?? message;
+    }
+
+    /// <summary>Builds the client-facing message for an otherwise-unhandled tool failure, always
+    /// including the flattened underlying diagnostic.
+    /// <para>This path used to replace the message with an opaque "failed unexpectedly. Error
+    /// reference: &lt;id&gt;" unless <c>ToolDiagnostics:ExposeSafeErrorDetails</c> was enabled
+    /// <em>and</em> the host was Development - so in a normal deployment an EF Core translation error
+    /// or provider SQL error never reached the calling agent, which is exactly the signal it needs to
+    /// correct its own query (issue #85). The detail is now always surfaced, with credential material
+    /// removed by <see cref="SensitiveTextRedactor"/>; the error reference is still emitted so a
+    /// response can be correlated with the full stack trace in the server logs.</para></summary>
+    internal static string FormatUnexpectedToolFailure(string operation, Exception exception, string errorId)
+    {
+        var detail = SensitiveTextRedactor.Redact(QueryExceptionDetail.Describe(exception));
         var hint = DescribeIfAssemblyIdentitySplit(exception) ?? GenericUnexpectedErrorHint;
-        return new McpException(
-            $"{operation} failed unexpectedly. Error reference: {errorId}. " +
-            $"Failure category: {exception.GetType().Name}. Next step: {hint}");
+        var prefix = $"{operation} failed unexpectedly. Error reference: {errorId}.";
+
+        return string.IsNullOrEmpty(detail)
+            ? $"{prefix} Failure category: {exception.GetType().Name}. Next step: {hint}"
+            : $"{prefix} Cause: {detail} Next step: {hint}";
     }
 
     /// <summary>Recognizes the small family of exceptions ("field/method not found", "type could not be
@@ -1121,29 +1145,78 @@ public sealed class EfCoreMcpTools(
             return $"{message} Next step: This indicates a protocol-level failure between the server and the query host rather than a problem with the query; consult server logs and retry.";
         }
 
-        var cause = exception.InnerException?.Message?.Trim();
-        if (string.IsNullOrEmpty(cause))
-            return $"{message} Next step: {GenericQueryRecoveryHint}";
+        // Out-of-process modes have no InnerException to read: the isolated host already flattened
+        // the cause into its single wire-level Error string (see QueryHost's ErrorWithCause), so the
+        // detail arrives inside `message` and must not be duplicated behind a second "Cause:".
+        var cause = message.Contains(" Cause: ", StringComparison.Ordinal)
+            ? null
+            : QueryExceptionDetail.Describe(exception.InnerException);
 
+        if (string.IsNullOrEmpty(cause))
+            return $"{message} Next step: {ResolveCauseHint(message)}";
+
+        return $"{message} Cause: {cause} Next step: {ResolveCauseHint(cause)}";
+    }
+
+    /// <summary>Maps a flattened cause onto the most specific remediation hint available, falling
+    /// back to the generic schema/syntax hint. The EF Core translation cases are recognized by the
+    /// provider's own wording because EF does not expose distinct exception types for them.</summary>
+    private static string ResolveCauseHint(string cause)
+    {
         if (cause.Contains("RowLimitingOperationWithoutOrderByWarning", StringComparison.OrdinalIgnoreCase) ||
             (cause.Contains("Skip", StringComparison.OrdinalIgnoreCase) && cause.Contains("Take", StringComparison.OrdinalIgnoreCase)))
         {
-            return $"{message} Cause: {cause} Next step: Add a deterministic orderBy expression whenever using skip or take, then retry the query.";
+            return "Add a deterministic orderBy expression whenever using skip or take, then retry the query.";
         }
 
         if (cause.Contains("Globalization Invariant Mode is not supported", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{message} Cause: {cause} Next step: Enable ICU/globalization support in the target .NET runtime or container, then retry the query.";
+            return "Enable ICU/globalization support in the target .NET runtime or container, then retry the query.";
         }
 
-        return $"{message} Next step: {GenericQueryRecoveryHint}";
+        if (cause.Contains("projection containing a collection", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EF Core cannot combine this operator with a projection that contains a collection. " +
+                "Apply the operator before projecting the collection, project only scalar columns, or request the " +
+                "related rows through run_query's include parameter instead, then retry.";
+        }
+
+        if (cause.Contains("doesn't project necessary information required to uniquely identify it", StringComparison.OrdinalIgnoreCase))
+        {
+            return "This is EF Core rejecting a collection include over a projection or set operation (Concat/Union/Except/Intersect). " +
+                "Apply Include()/ThenInclude() to a single, non-combined query before any set operator, or drop the include and fetch " +
+                "the related rows with a second query keyed on the parent ids, then retry.";
+        }
+
+        if (cause.Contains("could not be translated", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EF Core could not translate part of this expression to SQL - the cause above names the offending sub-expression. " +
+                "Replace it with a server-translatable equivalent (EF.Functions.*, a supported string/date operator, or a simple " +
+                "comparison), or materialize first with run_query and filter client-side, then retry.";
+        }
+
+        if (cause.Contains("set operations", StringComparison.OrdinalIgnoreCase) ||
+            cause.Contains("Concat", StringComparison.Ordinal) ||
+            cause.Contains("Union", StringComparison.Ordinal))
+        {
+            return "EF Core restricts what may be combined through a set operator (Concat/Union/Except/Intersect) - the cause above " +
+                "names the conflict. Align the projections on both sides (same shape, same types, no includes), then retry.";
+        }
+
+        if (cause.Contains("no suitable method found to override", StringComparison.OrdinalIgnoreCase) ||
+            cause.Contains("does not contain a definition for", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"The expression references a member that does not exist on the entity. {GenericQueryRecoveryHint}";
+        }
+
+        return GenericQueryRecoveryHint;
     }
 
     private const string GenericQueryRecoveryHint =
         "verify entity and property names with get_schema, validate LINQ query syntax, and consult server logs if the problem persists.";
 
     private const string GenericUnexpectedErrorHint =
-        "check the server logs using the error reference; diagnostic messages and stack traces are intentionally not returned to MCP callers.";
+        "review the cause above; if it is not conclusive, consult the server logs using the error reference, which correlates with the full stack trace (stack traces are intentionally not returned to MCP callers).";
 
     /// <summary>Adds actionable next-step guidance to raw SQL execution failures, similar in
     /// spirit to <see cref="FormatQueryError"/> for the structured run_query tool. Raw SQL errors

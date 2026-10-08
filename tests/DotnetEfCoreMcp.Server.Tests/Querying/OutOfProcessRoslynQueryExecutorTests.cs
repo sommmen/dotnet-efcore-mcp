@@ -137,6 +137,20 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_UntranslatableQuery_PropagatesTheRealEfDiagnosticAcrossTheWire()
+    {
+        // Issue #85: the isolated host must not flatten a failure to its outermost wrapper before
+        // serializing it, or the provider's diagnostic is lost in the default (Auto/OutOfProcess)
+        // mode regardless of how well the server formats what it receives.
+        var exception = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateOneShotExecutor().ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Name.Normalize() == \"x\").Take(1)" }, CancellationToken.None));
+
+        Assert.Contains("could not be translated", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Normalize", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MissingHost_ThrowsConfigurationError()
     {
         var executor = new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions

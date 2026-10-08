@@ -41,11 +41,11 @@ try
 }
 catch (QueryExecutionException ex)
 {
-    response = Error(requestId, ex.Message);
+    response = ErrorWithCause(requestId, ex);
 }
 catch (Exception ex)
 {
-    response = Error(requestId, $"The out-of-process query host could not execute the query: {ex.GetType().Name}: {ex.Message}");
+    response = Error(requestId, $"The out-of-process query host could not execute the query: {QueryExceptionDetail.Describe(ex)}");
 }
 
 await Console.Out.WriteAsync(JsonSerializer.Serialize(response, jsonOptions));
@@ -131,11 +131,11 @@ static async Task RunPersistentAsync(int poolIdleTimeoutSeconds, JsonSerializerO
             }
             catch (QueryExecutionException ex)
             {
-                response = Error(requestId, ex.Message);
+                response = ErrorWithCause(requestId, ex);
             }
             catch (Exception ex)
             {
-                response = Error(requestId, $"The out-of-process query host could not execute the query: {ex.GetType().Name}: {ex.Message}");
+                response = Error(requestId, $"The out-of-process query host could not execute the query: {QueryExceptionDetail.Describe(ex)}");
             }
             finally
             {
@@ -204,6 +204,16 @@ static OutOfProcessQueryResponse Error(string requestId, string error) => new()
     RequestId = requestId,
     Error = error,
 };
+
+// Serializes a failure as its message plus the flattened innermost diagnostic. The wire protocol
+// carries a single Error string, so a cause dropped here cannot be recovered by the server no matter
+// how well it formats what it receives - which is what made untranslatable queries indistinguishable
+// from healthy ones in the default out-of-process mode (issue #85).
+static OutOfProcessQueryResponse ErrorWithCause(string requestId, QueryExecutionException exception)
+{
+    var cause = QueryExceptionDetail.Describe(exception.InnerException);
+    return Error(requestId, cause is null ? exception.Message : $"{exception.Message} Cause: {cause}");
+}
 
 static QueryResultWire ToWire(QueryResult result) => new()
 {

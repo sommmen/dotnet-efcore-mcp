@@ -36,3 +36,43 @@ public sealed class QueryExecutionException : Exception
     public QueryExecutionException(string message) : base(message) { }
     public QueryExecutionException(string message, Exception innerException) : base(message, innerException) { }
 }
+
+/// <summary>Renders an exception chain as the actionable diagnostic a query caller needs.
+/// <para>EF Core wraps translation failures several layers deep - a
+/// <see cref="System.Reflection.TargetInvocationException"/> or <see cref="AggregateException"/>
+/// around the real <see cref="InvalidOperationException"/> - and only the innermost message names
+/// the offending sub-expression. Reporting just the outer wrapper makes a genuinely broken query
+/// indistinguishable from a healthy tool refusing to work (issue #85).</para>
+/// <para>Lives here, beside <see cref="QueryExecutionException"/>, so the isolated query host and the
+/// MCP server flatten identically: the host must preserve the detail when it serializes a failure to
+/// its single <c>Error</c> string, or no amount of server-side formatting can recover it.</para>
+/// <para>Translation and SQL diagnostics describe the <em>query</em>, not the data, so they carry no
+/// row-level information.</para></summary>
+public static class QueryExceptionDetail
+{
+    /// <summary>Returns <c>TypeName: message</c> for the innermost meaningful exception in
+    /// <paramref name="exception"/>'s chain, or <c>null</c> when there is no usable detail.</summary>
+    public static string? Describe(Exception? exception)
+    {
+        var cause = Unwrap(exception);
+        if (cause is null)
+            return null;
+
+        var detail = cause.Message?.Trim();
+        return string.IsNullOrEmpty(detail) ? null : $"{cause.GetType().Name}: {detail}";
+    }
+
+    /// <summary>Walks past exception types that exist purely to wrap another exception and carry no
+    /// diagnostic text of their own, so callers see the provider's message rather than
+    /// "Exception has been thrown by the target of an invocation."</summary>
+    public static Exception? Unwrap(Exception? exception)
+    {
+        while (exception is System.Reflection.TargetInvocationException or AggregateException
+            && exception.InnerException is not null)
+        {
+            exception = exception.InnerException;
+        }
+
+        return exception;
+    }
+}

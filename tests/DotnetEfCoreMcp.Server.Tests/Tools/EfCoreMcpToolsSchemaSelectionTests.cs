@@ -43,23 +43,27 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     }
 
     [Fact]
-    public void GetSchema_WhenAnUnexpectedExceptionOccurs_ReturnsRedactedErrorByDefault()
+    public void GetSchema_WhenAnUnexpectedExceptionOccurs_SurfacesTheDiagnosticButRedactsCredentials()
     {
+        // Issue #85: the underlying diagnostic is now always surfaced (it is what lets a calling
+        // agent correct itself), with only credential-bearing segments removed. The error reference
+        // is still emitted so the response can be correlated with the server-side stack trace.
         var tools = CreateTools(new ThrowingResultFormatter());
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext"));
 
         Assert.StartsWith("get_schema failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("formatter failure", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("formatter failure", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("InvalidOperationException", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("secret-host", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("top-secret", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("InvalidOperationException", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void GetSchema_WhenAnUnexpectedExceptionOccursAndDiagnosticsAreEnabled_ExposesSafeCategoryOnly()
+    public void GetSchema_WhenAnUnexpectedExceptionOccursAndDiagnosticsAreEnabled_StillRedactsCredentials()
     {
+        // ToolDiagnostics:ExposeSafeErrorDetails no longer gates whether the cause is shown; it only
+        // affects server-side diagnostic verbosity. Credential redaction applies either way.
         var tools = CreateTools(
             new ThrowingResultFormatter(),
             toolDiagnosticsOptions: new ToolDiagnosticsOptions { ExposeSafeErrorDetails = true });
@@ -68,10 +72,8 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
         var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext"));
 
         Assert.StartsWith("get_schema failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Failure category: InvalidOperationException", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("formatter failure", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("InvalidOperationException", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("secret-host", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("top-secret", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -94,8 +96,11 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
     }
 
     [Fact]
-    public async Task RunQuery_WhenAnUnexpectedExceptionOccurs_ReturnsRedactedErrorByDefault()
+    public async Task RunQuery_WhenAnUnexpectedExceptionOccurs_SurfacesTheProviderDiagnostic()
     {
+        // The connection points at an empty in-memory database, so the provider reports a missing
+        // table. That text ("no such table: Customers") is precisely what an agent needs to realize
+        // the schema is not there - withholding it was the substance of issue #85.
         var tools = CreateTools(queryExecutionOptions: new QueryExecutionOptions { Mode = QueryExecutionMode.InProcess });
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
@@ -103,12 +108,12 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
             () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
 
         Assert.StartsWith("run_query failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("SqliteException", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SqliteException", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task RunQuery_WhenAnUnexpectedExceptionOccursAndDiagnosticsAreEnabled_ExposesSafeCategoryOnly()
+    public async Task RunQuery_WhenAnUnexpectedExceptionOccursAndDiagnosticsAreEnabled_SurfacesTheProviderDiagnostic()
     {
         var tools = CreateTools(
             toolDiagnosticsOptions: new ToolDiagnosticsOptions { ExposeSafeErrorDetails = true },
@@ -119,8 +124,8 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
             () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
 
         Assert.StartsWith("run_query failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Failure category: SqliteException", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SqliteException", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
