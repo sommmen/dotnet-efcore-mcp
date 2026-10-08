@@ -1,6 +1,7 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.Compilation;
+using DotnetEfCoreMcp.Server.Hooks;
 using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Querying;
@@ -14,6 +15,15 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+
+// CLI verbs are handled before the host is built: `hooks` runs as a one-shot command (including the
+// short-lived processes the installed agent hooks invoke on every tool call) rather than starting
+// the stdio MCP server. Launching with no arguments, or with only configuration arguments, still
+// starts the server exactly as before.
+if (args.Length > 0 && args[0].Equals(HooksCommand.VerbName, StringComparison.OrdinalIgnoreCase))
+{
+    return HooksCommand.Run(args, Console.Out, Console.Error, Console.In);
+}
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -247,3 +257,5 @@ foreach (var (targetName, targetOptions) in assemblyLoaderOptions.Targets)
 }
 
 await host.RunAsync();
+
+return 0;

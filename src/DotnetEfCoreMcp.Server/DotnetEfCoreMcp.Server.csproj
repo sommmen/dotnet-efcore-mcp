@@ -27,6 +27,16 @@
     <InternalsVisibleTo Include="DotnetEfCoreMcp.Server.Tests" />
   </ItemGroup>
 
+  <!-- `hooks install` pins the hooks it writes to this exact package version, so it has to know the
+       NuGet version rather than the assembly version. Nerdbank.GitVersioning appends a commit
+       suffix (e.g. 0.1.32-preview.g842ad5eb) to non-public builds, which AssemblyInformationalVersion
+       does not reproduce verbatim, so capture $(PackageVersion) after NB.GV has computed it. -->
+  <Target Name="EmbedPackageVersionMetadata" BeforeTargets="GetAssemblyAttributes" DependsOnTargets="GetBuildVersion">
+    <ItemGroup>
+      <AssemblyMetadata Include="NuGetPackageVersion" Value="$(PackageVersion)" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <!-- MCP server SDK: hosting/DI integration package, stdio transport for this MVP. -->
     <PackageReference Include="ModelContextProtocol" />
