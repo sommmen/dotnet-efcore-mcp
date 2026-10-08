@@ -58,7 +58,7 @@ public static class QueryExceptionDetail
         if (cause is null)
             return null;
 
-        var detail = cause.Message?.Trim();
+        var detail = cause.Message.Trim();
         return string.IsNullOrEmpty(detail) ? null : $"{cause.GetType().Name}: {detail}";
     }
 

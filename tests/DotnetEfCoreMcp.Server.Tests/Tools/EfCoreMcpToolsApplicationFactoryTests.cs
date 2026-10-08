@@ -22,7 +22,7 @@ namespace DotnetEfCoreMcp.Server.Tests.Tools;
 /// <c>CreateContext</c> helper) must reject an <c>ApplicationFactory</c> connection before doing so.
 /// <c>run_query</c> and <c>preview_query_sql</c> are the exceptions: both are permitted when
 /// <c>QueryExecution:Mode</c> routes compilation and execution out-of-process (see
-/// <see cref="OutOfProcessRoslynQueryExecutorTests"/> for the corresponding success paths).</summary>
+/// <see cref="DotnetEfCoreMcp.Server.Tests.Querying.OutOfProcessRoslynQueryExecutorTests"/> for the corresponding success paths).</summary>
 public sealed class EfCoreMcpToolsApplicationFactoryTests
 {
     [Fact]

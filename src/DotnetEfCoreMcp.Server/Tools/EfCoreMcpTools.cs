@@ -959,7 +959,7 @@ public sealed class EfCoreMcpTools(
     {
         var message = exception.Message;
         var cause = QueryExceptionDetail.Unwrap(exception.InnerException);
-        var detail = cause?.Message?.Trim();
+        var detail = cause?.Message.Trim();
 
         if (string.IsNullOrEmpty(detail) || message.Contains(detail, StringComparison.Ordinal))
             return SensitiveTextRedactor.Redact(message) ?? message;

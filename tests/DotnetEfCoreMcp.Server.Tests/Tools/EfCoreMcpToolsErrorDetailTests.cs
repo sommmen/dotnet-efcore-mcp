@@ -136,7 +136,7 @@ public sealed class EfCoreMcpToolsErrorDetailTests
         // types, whose outer message sometimes omits the provider/runtime detail held in the inner
         // exception. Those paths must surface the cause too, for the same reason as run_query.
         var inner = new InvalidOperationException("The migration 'X' was not found.");
-        var wrapper = new Server.Migrations.MigrationInspectionException("Migration inspection failed.", inner);
+        var wrapper = new MigrationInspectionException("Migration inspection failed.", inner);
 
         var message = EfCoreMcpTools.FormatSubsystemError(wrapper);
 
@@ -150,7 +150,7 @@ public sealed class EfCoreMcpToolsErrorDetailTests
         // MigrationInspector already inlines the provider text for its common case; the cause must
         // not then appear twice.
         var inner = new InvalidOperationException("The migration 'X' was not found.");
-        var wrapper = new Server.Migrations.MigrationInspectionException(
+        var wrapper = new MigrationInspectionException(
             "The migration 'X' was not found. Next step: call list_migrations.", inner);
 
         var message = EfCoreMcpTools.FormatSubsystemError(wrapper);
