@@ -22,6 +22,7 @@ Each module has its own implementation checklist, design decisions, and notes:
 | Module | Description |
 |---|---|
 | [Project scaffolding](./docs/development/project-scaffolding.md) | Solution/project setup, analyzers, test project, CI. |
+| [Agent hooks](./docs/development/agent-hooks.md) | `hooks` CLI verb installing Claude Code/Copilot CLI/Codex hooks that remind the agent to validate LINQ with this server. |
 | [Assembly loading](./docs/development/assembly-loading.md) | Loading a target project's compiled output into an isolated, collectible `AssemblyLoadContext`. |
 | [Multi-target assembly registry](./docs/development/assembly-registry.md) | P2 #15: named registry for holding several loaded target assemblies at once. |
 | [`DbContext` discovery](./docs/development/dbcontext-discovery.md) | Finding and constructing `DbContext` types in a loaded assembly. |

@@ -128,6 +128,50 @@ troubleshooting.
 Preview builds are published from every push to `main`; stable releases are published from
 tagged GitHub Releases (see [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)).
 
+### Install agent hooks
+
+AI agents reliably write LINQ that compiles and looks correct but fails at runtime because EF
+Core cannot translate it to SQL. The server already asks agents to validate queries through its
+`ServerInstructions`, but those are only read when the client actually loads the MCP server —
+with dynamic tool loading that often happens late, or never, and long sessions forget them.
+
+`hooks install` writes repo-local hooks that re-deliver that reminder at the moment it matters:
+right after the agent writes a LINQ query.
+
+```powershell
+dnx DotnetEfCoreMcp.Server --yes --prerelease -- hooks install
+```
+
+(`--prerelease` is required while releases are preview-only, same as the `dotnet tool install`
+command above. The hooks that get written pin the exact version that installed them, so they do
+not need the flag.)
+
+This writes one config file per agent CLI, which you can commit so the whole team gets them:
+
+| Client | File |
+|---|---|
+| Claude Code | `.claude/settings.json` |
+| GitHub Copilot CLI | `.github/hooks/dotnet-efcore-mcp.json` |
+| Codex CLI | `.codex/hooks.json` |
+
+Use `--client claude`, `--client copilot`, or `--client codex` (comma-separated, default `all`)
+to install for a subset, `--path <dir>` to target another repository, and `hooks status` or
+`hooks uninstall` to inspect or remove them. Existing settings and unrelated hooks in those files
+are preserved.
+
+Once installed, the agent gets a short reminder after it writes an EF Core LINQ query, pointing
+it at `preview_query_sql`, `run_query`, and `get_entity_schema`. The reminder is rate-limited
+(once per 10 minutes per session) and resets as soon as the agent actually uses the server, so it
+nudges without nagging. A secondary reminder suggests schema discovery when the agent reads
+several entity source files by hand.
+
+> **Note:** Claude Code and Codex CLI ask you to review and approve repo-local hooks the first
+> time they run, so a committed hook cannot execute without consent. Hooks run `dnx`, which
+> requires the .NET SDK on `PATH`.
+
+For the detection heuristics and per-client hook contracts, see
+[Agent hooks](docs/development/agent-hooks.md).
+
 ### Build & test
 
 ```powershell
