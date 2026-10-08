@@ -162,14 +162,14 @@ internal static class TargetRuntimeConfigResolver
                 return null;
             }
 
-            const string VersionMarker = "Version=v";
-            var versionIndex = name.IndexOf(VersionMarker, StringComparison.OrdinalIgnoreCase);
+            const string versionMarker = "Version=v";
+            var versionIndex = name.IndexOf(versionMarker, StringComparison.OrdinalIgnoreCase);
             if (!name.StartsWith(".NETCoreApp", StringComparison.OrdinalIgnoreCase) || versionIndex < 0)
             {
                 return null;
             }
 
-            var version = name[(versionIndex + VersionMarker.Length)..];
+            var version = name[(versionIndex + versionMarker.Length)..];
             var end = 0;
             while (end < version.Length && (char.IsAsciiDigit(version[end]) || version[end] == '.'))
             {
