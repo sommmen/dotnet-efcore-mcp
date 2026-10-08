@@ -20,9 +20,9 @@ namespace DotnetEfCoreMcp.Server.Tests.Tools;
 /// never run inside the MCP server process, so every tool that would otherwise construct a
 /// <c>DbContext</c> in-process (directly or via <see cref="EfCoreMcpTools"/>'s shared
 /// <c>CreateContext</c> helper) must reject an <c>ApplicationFactory</c> connection before doing so.
-/// <c>run_query</c> is the sole exception: it is permitted when <c>QueryExecution:Mode</c> routes
-/// execution out-of-process (see <see cref="OutOfProcessRoslynQueryExecutorTests"/> for the
-/// corresponding success path).</summary>
+/// <c>run_query</c> and <c>preview_query_sql</c> are the exceptions: both are permitted when
+/// <c>QueryExecution:Mode</c> routes compilation and execution out-of-process (see
+/// <see cref="OutOfProcessRoslynQueryExecutorTests"/> for the corresponding success paths).</summary>
 public sealed class EfCoreMcpToolsApplicationFactoryTests
 {
     [Fact]
@@ -38,21 +38,42 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
         Assert.Contains("OutOfProcess", exception.Message, StringComparison.Ordinal);
     }
 
-    [Theory]
-    [InlineData(QueryExecutionMode.InProcess)]
-    [InlineData(QueryExecutionMode.OutOfProcess)]
-    [InlineData(QueryExecutionMode.Pooled)]
-    [InlineData(QueryExecutionMode.Auto)]
-    public async Task PreviewQuerySql_ApplicationFactoryConnection_AlwaysThrowsMcpException(QueryExecutionMode mode)
+    [Fact]
+    public async Task PreviewQuerySql_ApplicationFactoryConnection_InProcessMode_ThrowsMcpException()
     {
-        var tools = CreateTools(mode);
+        var tools = CreateTools(QueryExecutionMode.InProcess);
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
             () => tools.PreviewQuerySql("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)"));
 
         Assert.Contains("ApplicationFactory", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("preview_query_sql", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("OutOfProcess", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(QueryExecutionMode.OutOfProcess)]
+    [InlineData(QueryExecutionMode.Pooled)]
+    [InlineData(QueryExecutionMode.Auto)]
+    public async Task PreviewQuerySql_ApplicationFactoryConnection_IsolatedModes_ReturnsSql(QueryExecutionMode mode)
+    {
+        using var db = new SqliteTestDatabase();
+        var previous = Environment.GetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION");
+        Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", db.ConnectionString);
+        try
+        {
+            var tools = CreateTools(mode, outOfProcessHostPath: FixturePaths.QueryHostDllPath);
+            tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+            var json = await tools.PreviewQuerySql("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)");
+
+            Assert.Contains("SELECT", json, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Customers", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", previous);
+        }
     }
 
     [Fact]
@@ -127,7 +148,8 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
     private static EfCoreMcpTools CreateTools(
         QueryExecutionMode mode,
         bool readWrite = false,
-        bool rawSqlEnabled = false)
+        bool rawSqlEnabled = false,
+        string? outOfProcessHostPath = null)
     {
         var values = new Dictionary<string, string?>
         {
@@ -140,7 +162,7 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
         var rawSqlOptions = new RawSqlExecutionOptions { Enabled = rawSqlEnabled };
-        var queryExecutionOptions = new QueryExecutionOptions { Mode = mode };
+        var queryExecutionOptions = new QueryExecutionOptions { Mode = mode, OutOfProcessHostPath = outOfProcessHostPath };
         return new EfCoreMcpTools(
             new AssemblyLoaderService(),
             new AssemblyDiscoveryService(),

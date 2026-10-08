@@ -538,7 +538,8 @@ public sealed class EfCoreMcpTools(
         "Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL " +
         "to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and " +
         "operators with no SQL translation (Zip) are rejected - use run_query for those instead. Preview compilation runs in the " +
-        "configured isolated query host unless QueryExecution:Mode is InProcess; ApplicationFactory connections remain unavailable. " +
+        "configured isolated query host unless QueryExecution:Mode is InProcess, and is available for every connection run_query " +
+        "supports, including ApplicationFactory connections (which require an isolated mode). " +
         "Optionally accepts include, with the same syntax and validation as run_query's include parameter, to preview the SQL including " +
         "the filtered/capped Include()/ThenInclude() calls it would issue.")]
     public Task<string> PreviewQuerySql(
@@ -567,10 +568,11 @@ public sealed class EfCoreMcpTools(
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
 
-            if (entry.Source == ConnectionSource.ApplicationFactory)
+            if (entry.Source == ConnectionSource.ApplicationFactory && queryExecutionOptions.Mode == QueryExecutionMode.InProcess)
             {
                 throw new QueryExecutionException(
-                    "preview_query_sql is unavailable for ApplicationFactory connections because application startup must run in an isolated query host.");
+                    "ApplicationFactory connections require QueryExecution:Mode to be OutOfProcess, Pooled, or Auto; " +
+                    "the target application's startup logic must not run in the MCP server process.");
             }
 
             var target = RequireLoadedAssembly(targetName);

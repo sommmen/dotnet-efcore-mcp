@@ -111,6 +111,32 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task PreviewSqlAsync_ApplicationFactoryConnection_ReturnsSqlFromIsolatedHost()
+    {
+        var previous = Environment.GetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION");
+        Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", _db.ConnectionString);
+        try
+        {
+            var contextType = DbContextScanner.FindDbContextTypes(_handle.Assembly).Descriptors
+                .Single(d => d.Name == "ApplicationFactoryDbContext").ClrType;
+            var entry = _db.ToRegistryEntry(source: ConnectionSource.ApplicationFactory);
+
+            var result = await CreateOneShotExecutor().PreviewSqlAsync(
+                _handle, contextType, entry, DatabaseProvider.Sqlite,
+                new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)", RootEntityName = "Customer" },
+                CancellationToken.None);
+
+            Assert.Equal("Customer", result.Entity);
+            Assert.Contains("SELECT", result.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Customers", result.Sql, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DOTNET_EFCORE_MCP_APPLICATION_FACTORY_CONNECTION", previous);
+        }
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MissingHost_ThrowsConfigurationError()
     {
         var executor = new OutOfProcessRoslynQueryExecutor(new QueryExecutionOptions
