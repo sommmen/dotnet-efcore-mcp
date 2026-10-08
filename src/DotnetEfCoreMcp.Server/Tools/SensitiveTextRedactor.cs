@@ -15,16 +15,23 @@ public static partial class SensitiveTextRedactor
 {
     private const string Placeholder = "[REDACTED]";
 
-    /// <summary>Replaces the value of any credential-bearing connection-string keyword
-    /// (<c>Password</c>, <c>Pwd</c>, <c>User ID</c>, <c>Uid</c>, <c>Server</c>, <c>Data Source</c>, ...)
-    /// with <see cref="Placeholder"/>, leaving all other text untouched.</summary>
+    /// <summary>Replaces the value of any credential-bearing connection-string keyword with
+    /// <see cref="Placeholder"/>, leaving all other text untouched.
+    /// <para>Covers the keyword spellings used across the providers this server supports, including
+    /// Npgsql's <c>Host</c>/<c>Username</c>, and handles quoted values - which may legally contain
+    /// the <c>;</c> delimiter, so a naive "match up to the first semicolon" rule leaks the
+    /// remainder of the secret.</para></summary>
     public static string? Redact(string? text) =>
         string.IsNullOrEmpty(text) ? text : CredentialKeyword().Replace(text, $"$1={Placeholder}");
 
-    // Matches `keyword=value` up to the next `;` or end of string. Keywords are matched on a word
-    // boundary so ordinary prose mentioning e.g. "password" without an assignment is left alone.
+    // Keywords are matched on a word boundary so ordinary prose mentioning e.g. "password" without
+    // an assignment is left alone. The value alternation is ordered deliberately: a double- or
+    // single-quoted run (allowing the doubled-quote escape form) is consumed whole before falling
+    // back to an unquoted run that stops at the delimiter.
     [GeneratedRegex(
-        @"\b(Password|Pwd|User\s*ID|Uid|User|Server|Data\s*Source|Initial\s*Catalog|AccountKey|SharedAccessSignature)\s*=\s*[^;]*",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+        """
+        \b(Password|Pwd|User\s*ID|Uid|UserName|Username|User|Server|Host|Data\s*Source|DataSource|Initial\s*Catalog|AccountKey|AccountName|SharedAccessSignature|Sig|Token|ApiKey|Api\s*Key|Secret)\s*=\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)
+        """,
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace)]
     private static partial Regex CredentialKeyword();
 }

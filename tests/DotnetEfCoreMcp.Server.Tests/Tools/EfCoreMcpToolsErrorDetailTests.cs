@@ -39,15 +39,68 @@ public sealed class EfCoreMcpToolsErrorDetailTests
     }
 
     [Theory]
-    [InlineData("Login failed. Server=tcp:db.example.com,1433;Database=app;User ID=sa;Password=hunter2")]
-    [InlineData("Failed: Data Source=/var/app.db;Password=s3cret")]
-    public void Redact_RemovesCredentialBearingSegments(string message)
+    // SQL Server / generic.
+    [InlineData("Login failed. Server=tcp:db.example.com,1433;Database=app;User ID=sa;Password=hunter2", "hunter2")]
+    [InlineData("Failed: Data Source=/var/app.db;Password=s3cret", "s3cret")]
+    // A quoted value may itself contain the delimiter, so stopping at the first ';' leaks the tail.
+    [InlineData("Login failed for user. Password=\"abc;hunter2\";Database=app", "hunter2")]
+    [InlineData("Login failed for user. Password='abc;s3cret';Database=app", "s3cret")]
+    // Npgsql spells these differently and they were not matched at all.
+    [InlineData("Npgsql error. Host=db.internal;Username=postgres;Password=hunter2", "hunter2")]
+    [InlineData("Npgsql error. Host=db.internal;Password=s3cret;Database=app", "s3cret")]
+    // Doubled quotes are the escape form inside a quoted value.
+    [InlineData("Password=\"ab\"\"cd;hunter2\";Database=app", "hunter2")]
+    public void Redact_RemovesCredentialBearingSegments(string message, string secret)
     {
         var redacted = SensitiveTextRedactor.Redact(message);
 
-        Assert.DoesNotContain("hunter2", redacted, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("s3cret", redacted, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(secret, redacted, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("[REDACTED]", redacted, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("The query could not be translated or executed by the database provider.")]
+    [InlineData("Unable to execute the query in the out-of-process query host.")]
+    public void FormatQueryError_RedactsCredentialsFromTheSurfacedCause(string outerMessage)
+    {
+        // run_query/preview_query_sql surface the cause too, and a provider can embed its
+        // connection details in that text, so this path must redact like the others.
+        var exception = new QueryExecutionException(
+            outerMessage,
+            new InvalidOperationException("Login failed. Server=db.internal;User ID=sa;Password=hunter2"));
+
+        var message = EfCoreMcpTools.FormatQueryErrorForTesting(exception);
+
+        Assert.DoesNotContain("hunter2", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Login failed.", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FormatQueryError_LeavesTranslationDiagnosticsIntact()
+    {
+        // The guarantee from issue #85 must survive redaction.
+        var exception = new QueryExecutionException(
+            "The query could not be translated or executed by the database provider.",
+            new InvalidOperationException("The LINQ expression 'c.Name.Normalize()' could not be translated."));
+
+        var message = EfCoreMcpTools.FormatQueryErrorForTesting(exception);
+
+        Assert.Contains("Normalize", message, StringComparison.Ordinal);
+        Assert.Contains("could not be translated", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("[REDACTED]", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Redact_PreservesNonSecretKeywordsFollowingARedactedValue()
+    {
+        // Redaction must not swallow the rest of the message: the surrounding diagnostic text is
+        // the actionable part and has to survive.
+        var redacted = SensitiveTextRedactor.Redact(
+            "Login failed. Password=hunter2;Database=app. Next step: check credentials.");
+
+        Assert.DoesNotContain("hunter2", redacted, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Next step: check credentials.", redacted, StringComparison.Ordinal);
+        Assert.Contains("Login failed.", redacted, StringComparison.Ordinal);
     }
 
     [Fact]

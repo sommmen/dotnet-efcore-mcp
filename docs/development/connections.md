@@ -33,9 +33,10 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
     - `SensitiveTextRedactor` strips credential-bearing connection-string keywords
       (`Password`, `User ID`, `Server`, `Data Source`, `AccountKey`, ...) from any message
       before it is returned. Stack traces are still never returned.
-    - `ToolDiagnostics:ExposeSafeErrorDetails` no longer gates whether the cause is disclosed;
-      it remains available for additional development-time diagnostic verbosity and is still
-      forcibly ignored outside the `Development` host environment.
+    - `ToolDiagnostics:ExposeSafeErrorDetails` no longer gates whether the cause is disclosed.
+      It now additionally names the *outer* exception type ("Failure category"), which the
+      flattened cause omits and which matters when the wrapper itself is the interesting part
+      (an assembly load failure, say). It is still forcibly ignored outside `Development`.
 - [x] Validate/allowlist which providers are supported initially (e.g. SQL Server, PostgreSQL, SQLite) and reject unknown providers explicitly
   - Supported: `Sqlite`, `SqlServer`, `PostgreSql` (PostgreSQL). Unknown provider names throw
     `ConnectionRegistryConfigurationException` at registry construction time (fail fast,

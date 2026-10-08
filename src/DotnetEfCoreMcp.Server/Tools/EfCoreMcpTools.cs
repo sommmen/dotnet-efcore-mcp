@@ -980,7 +980,17 @@ public sealed class EfCoreMcpTools(
     /// <para><paramref name="exposeSafeErrorDetails"/> no longer controls whether the cause is
     /// disclosed. It now adds the <em>outer</em> exception's type, which the flattened cause
     /// deliberately omits and which is informative when the wrapper itself is the interesting part
-    /// (an assembly load failure, say). It remains Development-only.</para></summary>
+    /// (an assembly load failure, say). It remains Development-only.</para>
+    /// <para><strong>Residual risk, accepted deliberately.</strong> This is the generic catch-all, so
+    /// the exception can originate in arbitrary code - target application startup, a result
+    /// formatter, a provider extension - and such a message could in principle embed row values or
+    /// filesystem paths that a credential-keyword redactor cannot recognize. That is accepted
+    /// because an MCP caller reaching this path is already authorized to read rows through
+    /// <c>run_query</c>, so echoed row content is not a privilege escalation for it; the narrow
+    /// exception is a caller whose access policy denies an entity whose data then appears inside an
+    /// unrelated failure message. Operators who cannot accept that should restrict entity access at
+    /// the connection level rather than rely on error opacity, which also withheld every
+    /// actionable EF Core diagnostic.</para></summary>
     internal static string FormatUnexpectedToolFailure(
         string operation, Exception exception, string errorId, bool exposeSafeErrorDetails = false)
     {
@@ -1111,7 +1121,19 @@ public sealed class EfCoreMcpTools(
         return $"{reason} Choose one of these short context names: {choices}. Next step: call list_contexts, then pass contextName using a listed short name or fully qualified name.";
     }
 
+    /// <summary>Test seam for <see cref="FormatQueryError"/>, which is otherwise reachable only by
+    /// provoking a real provider failure.</summary>
+    internal static string FormatQueryErrorForTesting(QueryExecutionException exception) => FormatQueryError(exception);
+
     private static string FormatQueryError(QueryExecutionException exception)
+    {
+        // Redact before returning: a provider can embed its own connection details in a translation
+        // or execution error, and this path surfaces the cause just like the others.
+        var formatted = FormatQueryErrorCore(exception);
+        return SensitiveTextRedactor.Redact(formatted) ?? formatted;
+    }
+
+    private static string FormatQueryErrorCore(QueryExecutionException exception)
     {
         var message = exception.Message;
 
@@ -1234,10 +1256,13 @@ public sealed class EfCoreMcpTools(
     /// pointer back toward get_schema/list_contexts.</summary>
     private static string FormatSqlQueryError(QueryExecutionException exception)
     {
-        var cause = exception.InnerException?.Message?.Trim();
-        return string.IsNullOrEmpty(cause)
-            ? $"{exception.Message} Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists."
-            : $"{exception.Message} Cause: {cause} Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists.";
+        const string hint = "Next step: verify the SQL against get_schema's entity/table names, confirm parameter placeholders (@p0, @p1, ...) match the values supplied, and consult server logs if the problem persists.";
+        var cause = QueryExceptionDetail.Describe(exception.InnerException);
+        var formatted = string.IsNullOrEmpty(cause)
+            ? $"{exception.Message} {hint}"
+            : $"{exception.Message} Cause: {cause} {hint}";
+
+        return SensitiveTextRedactor.Redact(formatted) ?? formatted;
     }
 
     /// <summary>Turns a <see cref="DbContextScanResult"/>'s type-load diagnostics into

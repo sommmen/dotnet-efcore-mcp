@@ -23,6 +23,7 @@ namespace DotnetEfCoreMcp.Server.Tests.Tools;
 /// <c>run_query</c> and <c>preview_query_sql</c> are the exceptions: both are permitted when
 /// <c>QueryExecution:Mode</c> routes compilation and execution out-of-process (see
 /// <see cref="DotnetEfCoreMcp.Server.Tests.Querying.OutOfProcessRoslynQueryExecutorTests"/> for the corresponding success paths).</summary>
+[Collection(ApplicationFactoryEnvironmentCollection.Name)]
 public sealed class EfCoreMcpToolsApplicationFactoryTests
 {
     [Fact]

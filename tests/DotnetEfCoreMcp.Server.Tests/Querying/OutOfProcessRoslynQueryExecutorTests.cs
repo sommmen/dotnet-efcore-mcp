@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DotnetEfCoreMcp.Server.Tests.Querying;
 
+[Collection(ApplicationFactoryEnvironmentCollection.Name)]
 public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
 {
     private readonly SqliteTestDatabase _db = new();
