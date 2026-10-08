@@ -170,9 +170,10 @@ public sealed class OutOfProcessRoslynQueryExecutor(QueryExecutionOptions option
         if (!File.Exists(hostPath))
             throw new QueryExecutionException("The configured out-of-process query host was not found.");
 
-        var runtimeConfigPath = Path.ChangeExtension(target.AssemblyPath, "runtimeconfig.json");
-        if (!File.Exists(runtimeConfigPath))
-            throw new QueryExecutionException("The target application must provide a runtime configuration file for out-of-process query execution.");
+        // A target without its own runtime config (a class library, or a dependency copy inside
+        // another app's output) still has a knowable framework, so one is synthesized rather than
+        // forcing the caller back to in-process execution.
+        var runtimeConfigPath = TargetRuntimeConfigResolver.Resolve(target.AssemblyPath);
 
         var hostDepsFilePath = Path.ChangeExtension(hostPath, "deps.json");
         if (!File.Exists(hostDepsFilePath))

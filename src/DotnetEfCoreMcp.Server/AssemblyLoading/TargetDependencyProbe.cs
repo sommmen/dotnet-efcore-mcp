@@ -509,6 +509,13 @@ internal sealed class TargetDependencyProbe
         return directories;
     }
 
+    /// <summary>Reads the frameworks the target was built against, preferring its
+    /// <c>.runtimeconfig.json</c> and falling back to its restore graph. Exposed so the
+    /// out-of-process query host can synthesize a runtime configuration for targets that do not
+    /// ship one.</summary>
+    public static IReadOnlyList<(string Name, string Version)> GetFrameworkReferences(string mainAssemblyPath) =>
+        ReadFrameworkReferences(mainAssemblyPath, []).ToList();
+
     /// <summary>Reads the target's framework references, preferring its <c>.runtimeconfig.json</c>.
     /// A class library does not get one, so the restore graph is used as a fallback - without it an
     /// ASP.NET Core-referencing library would appear to need no shared framework at all.</summary>

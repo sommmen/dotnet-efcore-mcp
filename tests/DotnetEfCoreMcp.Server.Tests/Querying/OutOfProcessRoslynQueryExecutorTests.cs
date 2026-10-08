@@ -138,6 +138,53 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_TargetWithoutItsOwnRuntimeConfig_StillRunsOutOfProcess()
+    {
+        // PackageDependencyApp is a plain class library: the SDK emits no runtimeconfig.json for
+        // it, which previously made out-of-process execution impossible and forced InProcess mode.
+        Assert.False(File.Exists(Path.ChangeExtension(FixturePaths.PackageDependencyAppDllPath, ".runtimeconfig.json")));
+
+        // This fixture needs its own database: _db already holds the SampleApp schema, and
+        // EnsureCreated is a no-op once any table exists.
+        using var database = new SqliteTestDatabase();
+        var handle = new AssemblyLoaderService().Load(FixturePaths.PackageDependencyAppDllPath);
+        try
+        {
+            var contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors
+                .Single(descriptor => descriptor.Name == "PackageDependencyDbContext").ClrType;
+
+            using (var context = DbContextActivator.CreateInstance(contextType, database.ToRegistryEntry(), DatabaseProvider.Sqlite))
+            {
+                context.Database.EnsureCreated();
+                context.Add(EntitySeeding.CreateEntity(
+                    EntitySeeding.GetEntityClrType(context, "Document"),
+                    new Dictionary<string, object?> { ["Title"] = "Charter" }));
+                context.SaveChanges();
+            }
+
+            var request = new QueryRequest { Query = "Documents.Select(d => d.Title)" };
+
+            var result = await CreateOneShotExecutor().ExecuteAsync(
+                handle, contextType, database.ToRegistryEntry(), DatabaseProvider.Sqlite, request, CancellationToken.None);
+
+            Assert.Equal(1, result.RowCount);
+            Assert.Equal("Charter", result.Rows.Single().Values.Single());
+
+            // Pooled workers launch through the same resolved runtime config, so they must cope
+            // with the synthesized one as well.
+            await using var pool = await CreateStartedPoolAsync();
+            var pooled = await pool.ExecuteAsync(
+                handle, contextType, database.ToRegistryEntry(), DatabaseProvider.Sqlite, request, CancellationToken.None);
+
+            Assert.Equal("Charter", pooled.Rows.Single().Values.Single());
+        }
+        finally
+        {
+            handle.Unload();
+        }
+    }
+
+    [Fact]
     public async Task ExecuteAsync_UntranslatableQuery_PropagatesTheRealEfDiagnosticAcrossTheWire()
     {
         // Issue #85: the isolated host must not flatten a failure to its outermost wrapper before
@@ -149,6 +196,61 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
 
         Assert.Contains("could not be translated", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Normalize", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_TargetThatIsOnlyADependencyCopy_StillRunsOutOfProcess()
+    {
+        // Reproduces the reported shape: the DbContext assembly exists only as a dependency copy in
+        // a host application's output folder, so it has neither its own runtimeconfig.json nor a
+        // restore graph - only the owning app's runtime config describes the runtime.
+        var directory = Path.Combine(Path.GetTempPath(), "efcore-mcp-dependency-copy", Path.GetRandomFileName());
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var sourceDirectory = Path.GetDirectoryName(FixturePaths.SampleAppDllPath)!;
+            foreach (var file in Directory.EnumerateFiles(sourceDirectory, "SampleApp.*"))
+            {
+                var destination = Path.Combine(directory, Path.GetFileName(file));
+                if (destination.EndsWith(".runtimeconfig.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    destination = Path.Combine(directory, "HostApp.runtimeconfig.json");
+                }
+
+                File.Copy(file, destination);
+            }
+
+            var targetPath = Path.Combine(directory, "SampleApp.dll");
+            Assert.False(File.Exists(Path.ChangeExtension(targetPath, ".runtimeconfig.json")));
+
+            var handle = new AssemblyLoaderService().Load(targetPath);
+            try
+            {
+                var contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors
+                    .Single(descriptor => descriptor.Name == "SampleAppDbContext").ClrType;
+
+                var result = await CreateOneShotExecutor().ExecuteAsync(
+                    handle, contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+                    new QueryRequest { Query = "Customers.Select(c => c.Name)" }, CancellationToken.None);
+
+                Assert.Equal(2, result.RowCount);
+            }
+            finally
+            {
+                handle.Unload();
+            }
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A leftover temp copy must never fail the test run.
+            }
+        }
     }
 
     [Fact]
