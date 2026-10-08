@@ -949,7 +949,8 @@ public sealed class EfCoreMcpTools(
     {
         var errorId = Guid.NewGuid().ToString("N");
         logger.LogError(exception, "Unexpected error invoking MCP tool {ToolName}. ErrorId={ErrorId}", operation, errorId);
-        return new McpException(FormatUnexpectedToolFailure(operation, exception, errorId));
+        return new McpException(FormatUnexpectedToolFailure(
+            operation, exception, errorId, toolDiagnosticsOptions.ExposeSafeErrorDetails));
     }
 
     /// <summary>Renders a subsystem failure (migrations, assembly loading, ...) as its own message
@@ -975,16 +976,24 @@ public sealed class EfCoreMcpTools(
     /// or provider SQL error never reached the calling agent, which is exactly the signal it needs to
     /// correct its own query (issue #85). The detail is now always surfaced, with credential material
     /// removed by <see cref="SensitiveTextRedactor"/>; the error reference is still emitted so a
-    /// response can be correlated with the full stack trace in the server logs.</para></summary>
-    internal static string FormatUnexpectedToolFailure(string operation, Exception exception, string errorId)
+    /// response can be correlated with the full stack trace in the server logs.</para>
+    /// <para><paramref name="exposeSafeErrorDetails"/> no longer controls whether the cause is
+    /// disclosed. It now adds the <em>outer</em> exception's type, which the flattened cause
+    /// deliberately omits and which is informative when the wrapper itself is the interesting part
+    /// (an assembly load failure, say). It remains Development-only.</para></summary>
+    internal static string FormatUnexpectedToolFailure(
+        string operation, Exception exception, string errorId, bool exposeSafeErrorDetails = false)
     {
         var detail = SensitiveTextRedactor.Redact(QueryExceptionDetail.Describe(exception));
         var hint = DescribeIfAssemblyIdentitySplit(exception) ?? GenericUnexpectedErrorHint;
         var prefix = $"{operation} failed unexpectedly. Error reference: {errorId}.";
+        var category = exposeSafeErrorDetails || string.IsNullOrEmpty(detail)
+            ? $" Failure category: {exception.GetType().Name}."
+            : string.Empty;
 
         return string.IsNullOrEmpty(detail)
-            ? $"{prefix} Failure category: {exception.GetType().Name}. Next step: {hint}"
-            : $"{prefix} Cause: {detail} Next step: {hint}";
+            ? $"{prefix}{category} Next step: {hint}"
+            : $"{prefix}{category} Cause: {detail} Next step: {hint}";
     }
 
     /// <summary>Recognizes the small family of exceptions ("field/method not found", "type could not be

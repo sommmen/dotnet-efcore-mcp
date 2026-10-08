@@ -118,6 +118,25 @@ public sealed class EfCoreMcpToolsErrorDetailTests
     }
 
     [Fact]
+    public void FormatUnexpected_WithDiagnosticsEnabled_AlsoNamesTheOuterFailureCategory()
+    {
+        // ExposeSafeErrorDetails no longer gates whether the cause is disclosed. It still has a
+        // job: adding the outer exception's type, which the flattened cause deliberately hides and
+        // which matters when the wrapper itself is the interesting part (e.g. a load failure).
+        var exception = new System.Reflection.TargetInvocationException(
+            new InvalidOperationException("inner detail"));
+
+        var withDetails = EfCoreMcpTools.FormatUnexpectedToolFailure("run_query", exception, "ref1", exposeSafeErrorDetails: true);
+        var withoutDetails = EfCoreMcpTools.FormatUnexpectedToolFailure("run_query", exception, "ref1", exposeSafeErrorDetails: false);
+
+        Assert.Contains("Failure category: TargetInvocationException", withDetails, StringComparison.Ordinal);
+        Assert.DoesNotContain("Failure category", withoutDetails, StringComparison.Ordinal);
+        // The cause reaches the caller either way - that is the issue #85 guarantee.
+        Assert.Contains("inner detail", withDetails, StringComparison.Ordinal);
+        Assert.Contains("inner detail", withoutDetails, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FormatUnexpected_RedactsCredentialsFromTheDiagnostic()
     {
         var exception = new InvalidOperationException(
