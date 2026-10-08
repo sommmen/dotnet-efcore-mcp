@@ -30,7 +30,7 @@ public static partial class SensitiveTextRedactor
     // back to an unquoted run that stops at the delimiter.
     [GeneratedRegex(
         """
-        \b(Password|Pwd|User\s*ID|Uid|UserName|Username|User|Server|Host|Data\s*Source|DataSource|Initial\s*Catalog|AccountKey|AccountName|SharedAccessSignature|Sig|Token|ApiKey|Api\s*Key|Secret)\s*=\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)
+        \b(Password|Pwd|User\s*ID|Uid|UserName|Username|User|Server|Host|Data\s*Source|DataSource|Initial\s*Catalog|AccountKey|AccountName|SharedAccessSignature|Sig|Token|ApiKey|Api\s*Key|Secret)\s*=(?!=|>)\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)
         """,
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace)]
     private static partial Regex CredentialKeyword();
