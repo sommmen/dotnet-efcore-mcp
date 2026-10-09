@@ -404,3 +404,8 @@ tmp/
 src/Back-end/.github/copilot-instructions.md
 .maintenance
 .serena/
+
+# Skill evaluation runs: generated transcripts, gradings, and HTML reports.
+# Useful locally while iterating on a skill, but they are large, regenerable,
+# and say nothing about the shipped skill itself.
+skills/*-workspace/

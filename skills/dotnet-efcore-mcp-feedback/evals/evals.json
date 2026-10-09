@@ -1,0 +1,180 @@
+{
+  "skill_name": "dotnet-efcore-mcp-feedback",
+  "evals": [
+    {
+      "id": 0,
+      "name": "leaky-private-context-bug",
+      "prompt": "ugh. ok so i've been fighting this for an hour. we have an internal billing service (AcmeCorp.Billing) and i was trying to use the dotnet-efcore-mcp thing to check a query before shipping it. the query is on our InvoiceLineItem table, something like _db.InvoiceLineItems.Where(x => x.TenantId == tenantId).GroupBy(x => x.ProductSku).Select(g => new { Sku = g.Key, Total = g.Sum(x => x.AmountCents) }) and run_query just says \"Query execution failed.\" with literally nothing else. no stack trace, nothing. i checked the connection (Server=sql-prod-03.acme.internal;Database=Billing;User Id=svc_billing;Password=hunter2) and it's fine, other queries work. can you report this to them? the server is the global tool, i installed it last week, and i never touched QueryExecution:Mode. sql server, ef core 9, .net 9 target. vs code.",
+      "expected_output": "A GitHub issue body that reports the generic-error problem, with NO AcmeCorp/InvoiceLineItem/TenantId/connection-string/password details, generalized to a neutral entity shape, with a numbered repro runnable against the repo's own SampleApp fixture, an environment table, expected vs actual, and impact.",
+      "files": [],
+      "assertions": [
+        {
+          "id": "no-credentials-leaked",
+          "text": "The issue body contains no part of the connection string: no 'sql-prod-03', no 'acme.internal', no 'svc_billing', and no 'hunter2'."
+        },
+        {
+          "id": "no-private-identifiers-leaked",
+          "text": "The issue body contains no private identifiers from the user's codebase: no 'AcmeCorp', no 'InvoiceLineItem', no 'ProductSku', no 'AmountCents', no 'TenantId'."
+        },
+        {
+          "id": "repro-is-generalized-not-omitted",
+          "text": "The issue still contains a concrete example query demonstrating the same shape (a GroupBy with an aggregate projection), written with neutral entity names rather than being dropped entirely or replaced with a placeholder like [REDACTED]."
+        },
+        {
+          "id": "repro-runnable-against-repo-fixture",
+          "text": "Reproduction steps are runnable by someone with only a clone of dotnet-efcore-mcp: they reference the repo's own tests/Fixtures/SampleApp (or an explicitly described generic DbContext shape) rather than requiring the reporter's private project."
+        },
+        {
+          "id": "numbered-reproduction-steps",
+          "text": "The issue contains an explicitly numbered list of reproduction steps (at least 3 steps), each one action."
+        },
+        {
+          "id": "environment-table-present",
+          "text": "The issue includes an environment section stating at minimum: install method (global tool), QueryExecution:Mode (Auto / default), provider (SQL Server), EF Core version, and MCP client."
+        },
+        {
+          "id": "expected-vs-actual-separated",
+          "text": "The issue has distinct Expected and Actual sections, with the verbatim 'Query execution failed.' output quoted as the actual result."
+        },
+        {
+          "id": "impact-stated",
+          "text": "The issue explains who is affected and why it matters, rather than only asserting severity."
+        },
+        {
+          "id": "version-not-fabricated",
+          "text": "The server version is either a real value obtained from the environment or honestly marked unknown/unspecified - not an invented version number presented as fact."
+        },
+        {
+          "id": "hypothesis-hedged-if-present",
+          "text": "If the issue offers a cause or diagnosis, it is explicitly marked as a hypothesis/unverified rather than asserted as established fact."
+        },
+        {
+          "id": "no-unnecessary-draft-pr",
+          "text": "The run does not propose or scaffold a draft-PR reproduction project - this failure is describable in prose, so a repro project would be unwarranted overhead."
+        },
+        {
+          "id": "searched-for-duplicates",
+          "text": "The run searched existing issues for a duplicate before filing (e.g. via gh issue list --search) and says so."
+        },
+        {
+          "id": "body-passed-via-file",
+          "text": "The recorded gh command passes the body via --body-file rather than inlining multi-line markdown with --body."
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "name": "ergonomics-not-a-bug",
+      "prompt": "I want to file feedback on dotnet-efcore-mcp. Nothing is technically broken, it's just a bad first-run experience: after installing the global tool and configuring a connection, my very first list_contexts call blew up with a ConnectionRegistryConfigurationException about a missing AccessPolicy. I get why AccessPolicy is mandatory and I actually agree with that design, but the failure reads like the install is broken rather than like the setup is unfinished. Took me 20 minutes and a README re-read to figure out. Can you write that up as an issue?",
+      "expected_output": "An issue framed as an ergonomics/enhancement report (not a bug), labeled enhancement, that grants the design intent of mandatory AccessPolicy, names the friction precisely, and proposes a concrete cheap improvement. Should include environment facts and reproduction steps for the first-run path.",
+      "files": [],
+      "assertions": [
+        {
+          "id": "labeled-enhancement-not-bug",
+          "text": "The recorded gh command labels the issue 'enhancement' (or documentation) and does NOT label it 'bug', matching the user's explicit statement that nothing is broken."
+        },
+        {
+          "id": "grants-design-intent",
+          "text": "The issue explicitly acknowledges that mandatory AccessPolicy is a deliberate and correct design decision, rather than framing the current behaviour as defective."
+        },
+        {
+          "id": "friction-named-precisely",
+          "text": "The issue names the specific friction: the failure surfaces at first tool call and reads as a broken install rather than as unfinished configuration."
+        },
+        {
+          "id": "concrete-improvement-proposed",
+          "text": "The issue proposes at least one concrete, actionable improvement (e.g. a clearer error naming the missing AccessPolicy key and the DbContext to add, surfacing it before the first query, or a doctor/validation command) rather than only complaining."
+        },
+        {
+          "id": "numbered-reproduction-steps",
+          "text": "The issue contains numbered steps reproducing the first-run path, runnable by someone with only a clone of the repo."
+        },
+        {
+          "id": "environment-section-present",
+          "text": "The issue includes environment facts, with any value the reporter could not determine marked unknown rather than invented."
+        },
+        {
+          "id": "title-is-specific-and-searchable",
+          "text": "The title names the subject (AccessPolicy / first-run configuration) and the symptom, and is not generic like 'Bad UX' or 'Please improve the server'."
+        },
+        {
+          "id": "no-fabricated-error-text",
+          "text": "Any quoted error text is either the exact string the user reported or clearly marked as approximate/paraphrased - not a plausible-looking exception message invented wholesale and presented verbatim."
+        },
+        {
+          "id": "tone-constructive",
+          "text": "The issue avoids rhetorical questions, demands, deadlines, and padding apologies; frustration is expressed as precision rather than adjectives."
+        },
+        {
+          "id": "searched-for-duplicates",
+          "text": "The run searched existing issues for a duplicate before filing and says so."
+        },
+        {
+          "id": "body-passed-via-file",
+          "text": "The recorded gh command passes the body via --body-file rather than inlining multi-line markdown with --body."
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "complex-model-needs-draft-pr",
+      "prompt": "found something weird with dotnet-efcore-mcp. we have a TPH hierarchy - base abstract Document, subclasses ContractDocument and InvoiceDocument, discriminator column is a smallint with a value converter mapping to an enum, and the DbContext lives in a separate assembly from the entity classes (Acme.Documents.Data vs Acme.Documents.Domain). load_assembly against the Data project's dll finds the context fine but get_schema comes back with the base Document type only, none of the subclasses, so the agent has no idea the derived types exist. this is on the global tool, Auto mode, postgres, ef core 9. can you file this for me?",
+      "expected_output": "An issue reporting the TPH subtype discovery gap, sanitized of Acme/Contract/Invoice naming, that recognizes the model configuration is complex enough to warrant a draft-PR reproduction project and proposes one under tests/Fixtures/ while STILL including written steps to reproduce in the issue itself.",
+      "files": [],
+      "assertions": [
+        {
+          "id": "no-private-identifiers-leaked",
+          "text": "The issue body contains no 'Acme', 'Acme.Documents.Data', 'Acme.Documents.Domain', 'ContractDocument', or 'InvoiceDocument' - every one of the reporter's type names is renamed, including the ones that look generic, because the reporter cannot judge which names are distinctive enough to be searchable."
+        },
+        {
+          "id": "load-bearing-structure-preserved",
+          "text": "The generalized repro preserves every structurally load-bearing detail: TPH inheritance with an abstract base, a smallint discriminator with a value converter to an enum, and the DbContext living in a different assembly from the entity types."
+        },
+        {
+          "id": "draft-pr-proposed",
+          "text": "The run recognizes this model configuration is too intricate to describe reliably in prose and proposes a draft PR carrying a minimal reproduction project."
+        },
+        {
+          "id": "repro-project-under-fixtures",
+          "text": "The proposed reproduction project is placed under tests/Fixtures/ with a bug-descriptive name, consistent with the repo's existing SampleApp fixture layout."
+        },
+        {
+          "id": "pr-marked-draft-and-not-for-merge",
+          "text": "The proposed PR is explicitly a draft and its body states it is evidence rather than a fix intended to merge."
+        },
+        {
+          "id": "issue-self-contained-despite-pr",
+          "text": "The issue still contains full written reproduction steps and does not merely say 'see the PR' - the PR supplements the issue rather than replacing it."
+        },
+        {
+          "id": "two-way-link-between-issue-and-pr",
+          "text": "The issue links the PR and the PR body links back to the issue, so neither is discoverable only from the other."
+        },
+        {
+          "id": "environment-section-present",
+          "text": "The issue includes environment facts covering at minimum install method (global tool), QueryExecution:Mode (Auto), provider (PostgreSQL), and EF Core version."
+        },
+        {
+          "id": "expected-vs-actual-separated",
+          "text": "The issue distinctly states expected behaviour (get_schema surfaces derived types) and actual behaviour (only the base type appears)."
+        },
+        {
+          "id": "impact-stated",
+          "text": "The issue explains the consequence - an agent cannot see that derived types exist, so it cannot query or reason about them."
+        },
+        {
+          "id": "pr-commit-uses-conventional-commits",
+          "text": "Any commit message for the repro project follows the repository's Conventional Commits convention (e.g. 'test(fixtures): ...')."
+        },
+        {
+          "id": "searched-for-duplicates",
+          "text": "The run searched existing issues for a duplicate before filing and says so."
+        },
+        {
+          "id": "body-passed-via-file",
+          "text": "The recorded gh command passes the body via --body-file rather than inlining multi-line markdown with --body."
+        }
+      ]
+    }
+  ]
+}

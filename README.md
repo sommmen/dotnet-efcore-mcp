@@ -172,6 +172,36 @@ several entity source files by hand.
 For the detection heuristics and per-client hook contracts, see
 [Agent hooks](docs/development/agent-hooks.md).
 
+### Install agent skills
+
+This repo ships agent skills under [`skills/`](./skills). A skill teaches your agent a
+workflow it would otherwise have to reinvent each time.
+
+| Skill | What it does |
+|---|---|
+| [`dotnet-efcore-mcp-feedback`](./skills/dotnet-efcore-mcp-feedback) | Turns a frustrating encounter with this server into a self-contained GitHub issue — scrubbed of your private code and connection strings, with a reproduction the maintainer can run against this repo's own `tests/Fixtures/SampleApp`. |
+
+```powershell
+./skills/install-skills.ps1              # Windows
+```
+
+```bash
+./skills/install-skills.sh               # macOS / Linux
+```
+
+This copies them into `~/.agents/skills` by default; use `-Target claude` for
+`~/.claude/skills`, or `-Target repo -Path <dir>` to install them into another
+repository's `.github/skills` so the whole team gets them on clone. Restart your agent
+CLI afterwards so it rescans. See [`skills/README.md`](./skills/README.md) for the full
+options, including installing without a clone.
+
+Reporting a problem with this server is unusually awkward, which is why the feedback
+skill exists: the evidence lives inside someone's private codebase alongside a real
+`DbContext` and a real connection string, so a useful report has to be a translation
+rather than a copy-paste. The skill does that translation — strip the secrets,
+generalize the model shape, rebuild the failure against the sample fixture — so the
+issue is reproducible by someone who will never see your repo.
+
 ### Build & test
 
 ```powershell
