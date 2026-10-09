@@ -68,9 +68,11 @@ if ($env:QueryExecution__Mode) {
     )
     foreach ($candidate in $configCandidates) {
         if (-not (Test-Path $candidate)) { continue }
-        $match = Select-String -Path $candidate -Pattern 'QueryExecution(__|:|")\s*[:"]?\s*Mode' -ErrorAction SilentlyContinue
-        if ($match) {
-            $queryMode = "see $candidate (line $($match[0].LineNumber))"
+        $content = Get-Content -Raw -Path $candidate -ErrorAction SilentlyContinue
+        $match = [regex]::Match($content, '(?s)"QueryExecution"\s*:\s*\{(?:(?!\}).)*?"Mode"\s*:|"QueryExecution(?:__|:)\s*Mode"\s*:')
+        if ($match.Success) {
+            $lineNumber = ($content.Substring(0, $match.Index) -split "`n").Count
+            $queryMode = "see $candidate (line $lineNumber)"
             break
         }
     }

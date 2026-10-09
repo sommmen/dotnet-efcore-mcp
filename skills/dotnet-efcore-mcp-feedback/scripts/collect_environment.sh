@@ -37,7 +37,21 @@ else
   for candidate in .vscode/mcp.json .mcp.json appsettings.json \
                    appsettings.Development.json .vscode/settings.json; do
     [ -f "$candidate" ] || continue
-    if grep -qE 'QueryExecution(__|:|")[[:space:]]*[:"]?[[:space:]]*Mode' "$candidate" 2>/dev/null; then
+    if awk '
+      /"QueryExecution(__|:)[[:space:]]*Mode"[[:space:]]*:/ { found = 1; exit }
+      !in_section && /"QueryExecution"[[:space:]]*:[[:space:]]*\{/ {
+        in_section = 1
+      }
+      in_section {
+        if (/"Mode"[[:space:]]*:/) { found = 1; exit }
+        line = $0
+        opens = gsub(/\{/, "{", line)
+        closes = gsub(/\}/, "}", line)
+        depth += opens - closes
+        if (depth <= 0) { in_section = 0 }
+      }
+      END { exit !found }
+    ' "$candidate" 2>/dev/null; then
       query_mode="see $candidate"
       break
     fi

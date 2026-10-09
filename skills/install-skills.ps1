@@ -110,9 +110,17 @@ foreach ($root in $roots) {
         $destination = Join-Path $root $skillDir.Name
 
         if (Test-Path $destination) {
-            # Remove-Item on a junction deletes the link, not the target, but be
-            # explicit about it so a mistake cannot eat the repo copy.
+            # Only replace installs created by this script; preserve unrelated skills.
             $existing = Get-Item $destination -Force
+            $managed = if ($existing.LinkType) {
+                $targetPath = (Resolve-Path -LiteralPath $existing.Target -ErrorAction SilentlyContinue).Path
+                $targetPath -eq $skillDir.FullName
+            } else {
+                Test-Path (Join-Path $destination '.dotnet-efcore-mcp-skill-install') -PathType Leaf
+            }
+            if (-not $managed) {
+                throw "Refusing to replace unmanaged destination: $destination"
+            }
             if ($existing.LinkType) {
                 $existing.Delete()
             } else {
@@ -126,13 +134,15 @@ foreach ($root in $roots) {
         }
 
         if ($Link) {
-            New-Item -ItemType Junction -Path $destination -Target $skillDir.FullName | Out-Null
+            $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+            New-Item -ItemType $linkType -Path $destination -Target $skillDir.FullName | Out-Null
             Write-Host "linked   $destination -> $($skillDir.FullName)"
         } else {
             Copy-Item -Recurse -Path $skillDir.FullName -Destination $destination
             # Eval scaffolding is for skill development, not for users of the skill.
             $evals = Join-Path $destination 'evals'
             if (Test-Path $evals) { Remove-Item -Recurse -Force $evals }
+            New-Item -ItemType File -Path (Join-Path $destination '.dotnet-efcore-mcp-skill-install') | Out-Null
             Write-Host "installed $destination"
         }
     }

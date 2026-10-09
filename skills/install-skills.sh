@@ -54,8 +54,9 @@ fi
 
 if [ -n "$skill" ]; then
   filtered=()
+  skill_lower=$(printf '%s' "$skill" | tr '[:upper:]' '[:lower:]')
   for dir in "${available[@]}"; do
-    [ "$(basename "$dir")" = "$skill" ] && filtered+=("$dir")
+    [ "$(basename "$dir" | tr '[:upper:]' '[:lower:]')" = "$skill_lower" ] && filtered+=("$dir")
   done
   if [ ${#filtered[@]} -eq 0 ]; then
     names=""
@@ -84,10 +85,18 @@ for root in "${roots[@]}"; do
     name="$(basename "$skill_dir")"
     destination="$root/$name"
 
-    # rm -rf on a symlink removes the link, not the target. Use an explicit if:
-    # `[ a ] || [ b ] && rm` parses as `([ a ] || [ b ]) && rm`, which returns
-    # non-zero when nothing exists and would abort the script under `set -e`.
+    # Only replace installs created by this script; preserve unrelated skills.
     if [ -e "$destination" ] || [ -L "$destination" ]; then
+      if [ -L "$destination" ]; then
+        managed_target="$(cd "$destination" && pwd -P)"
+        [ "$managed_target" = "$(cd "$skill_dir" && pwd -P)" ] || {
+          echo "refusing to replace unmanaged destination: $destination" >&2
+          exit 1
+        }
+      elif [ ! -f "$destination/.dotnet-efcore-mcp-skill-install" ]; then
+        echo "refusing to replace unmanaged destination: $destination" >&2
+        exit 1
+      fi
       rm -rf "$destination"
     fi
 
@@ -103,6 +112,7 @@ for root in "${roots[@]}"; do
       cp -R "$skill_dir" "$destination"
       # Eval scaffolding is for skill development, not for users of the skill.
       rm -rf "$destination/evals"
+      : > "$destination/.dotnet-efcore-mcp-skill-install"
       echo "installed $destination"
     fi
   done
