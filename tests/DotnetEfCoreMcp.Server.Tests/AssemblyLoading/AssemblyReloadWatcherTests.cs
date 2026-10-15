@@ -102,7 +102,14 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
         var reloadCount = 0;
         loader.AssemblyLoaded += _ => Interlocked.Increment(ref reloadCount);
 
-        using var watcher = new AssemblyReloadWatcher(loader, new AssemblyLoaderOptions(), NullLogger<AssemblyReloadWatcher>.Instance);
+        // The burst below spans ~200 ms of sleeps, which the production 400 ms window normally
+        // absorbs. "Normally" is the problem: Task.Delay only guarantees a lower bound, so one
+        // scheduling hiccup on a loaded machine pushes a write past the window and the burst
+        // coalesces into two reloads instead of one. Widening the window for the test keeps the
+        // assertion about coalescing rather than about the host's timer accuracy.
+        var debounce = TimeSpan.FromSeconds(5);
+        using var watcher = new AssemblyReloadWatcher(
+            loader, new AssemblyLoaderOptions(), NullLogger<AssemblyReloadWatcher>.Instance, debounce);
         await watcher.StartAsync(CancellationToken.None);
 
         // Reset the counter after the initial subscribe so we only count reloads triggered by the
@@ -114,12 +121,13 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
             await Task.Delay(50);
         }
 
-        var reloadedOnce = await WaitForConditionAsync(() => Volatile.Read(ref reloadCount) >= 1, timeout: TimeSpan.FromSeconds(10));
+        var reloadedOnce = await WaitForConditionAsync(
+            () => Volatile.Read(ref reloadCount) >= 1, timeout: debounce + TimeSpan.FromSeconds(15));
         Assert.True(reloadedOnce, "Expected at least one automatic reload after the rapid write burst.");
 
         // Give any further (unwanted) debounced reloads a chance to fire before asserting there was
         // only a single one for the whole burst.
-        await Task.Delay(1000);
+        await Task.Delay(debounce + TimeSpan.FromSeconds(1));
         Assert.Equal(1, Volatile.Read(ref reloadCount));
 
         await watcher.StopAsync(CancellationToken.None);

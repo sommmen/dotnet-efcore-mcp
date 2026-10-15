@@ -13,7 +13,7 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// <see cref="AssemblyTargetOptions.AutoReloadEnabled"/>.
 ///
 /// MSBuild typically writes a DLL (and its PDB) more than once in quick succession during a single
-/// build, so file-change events are debounced for <see cref="DebounceDelay"/> before a reload is
+/// build, so file-change events are debounced for <see cref="DefaultDebounceDelay"/> before a reload is
 /// attempted. The DLL can still be locked when the debounce window elapses (a build still in
 /// progress), so a failed attempt is retried a bounded number of times with a short delay before
 /// giving up and logging a warning - this reuses <see cref="AssemblyLoaderService.Load(string, string?)"/>'s
@@ -21,13 +21,14 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// etc.) leaves the previously loaded assembly serving requests; it is never treated as fatal.</summary>
 public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
 {
-    private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan DefaultDebounceDelay = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(300);
     private const int MaxReloadAttempts = 5;
 
     private readonly AssemblyLoaderService _assemblyLoader;
     private readonly AssemblyLoaderOptions _options;
     private readonly ILogger<AssemblyReloadWatcher> _logger;
+    private readonly TimeSpan _debounceDelay;
     private readonly object _gate = new();
 
     // Keyed by target name, since each named target now needs its own independently watched file,
@@ -37,10 +38,31 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
     private bool _stopped;
 
     public AssemblyReloadWatcher(AssemblyLoaderService assemblyLoader, AssemblyLoaderOptions options, ILogger<AssemblyReloadWatcher> logger)
+        : this(assemblyLoader, options, logger, debounceDelay: null)
+    {
+    }
+
+    /// <summary>
+    /// Overload taking an explicit debounce window.
+    /// </summary>
+    /// <param name="debounceDelay">
+    /// Overrides <see cref="DefaultDebounceDelay"/>. Tests that assert on coalescing behavior widen
+    /// this: the default 400 ms is tuned for MSBuild, but a test driving writes through a real
+    /// <see cref="FileSystemWatcher"/> only coalesces them if every write lands inside one window,
+    /// and on a loaded CI machine a scheduling hiccup between writes splits the burst into two
+    /// reloads. Making the window explicit removes that wall-clock race instead of papering over it
+    /// with longer sleeps, which slow the suite without closing the gap.
+    /// </param>
+    internal AssemblyReloadWatcher(
+        AssemblyLoaderService assemblyLoader,
+        AssemblyLoaderOptions options,
+        ILogger<AssemblyReloadWatcher> logger,
+        TimeSpan? debounceDelay)
     {
         _assemblyLoader = assemblyLoader;
         _options = options;
         _logger = logger;
+        _debounceDelay = debounceDelay ?? DefaultDebounceDelay;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -202,7 +224,7 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
             // timer on every event and only actually reload once no further events arrive for
             // DebounceDelay.
             state.DebounceTimer ??= new Timer(_ => OnDebounceElapsed(targetName), state: null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            state.DebounceTimer.Change(DebounceDelay, Timeout.InfiniteTimeSpan);
+            state.DebounceTimer.Change(_debounceDelay, Timeout.InfiniteTimeSpan);
         }
     }
 
