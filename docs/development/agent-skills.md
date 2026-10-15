@@ -3,7 +3,8 @@
 [← Back to Development Guide](../../DEVELOPMENT.md)
 
 Skills: [`skills/`](../../skills) ·
-User-facing setup: [README "Install agent skills"](../../README.md#install-agent-skills)
+User-facing setup: [README "Agent skills"](../../README.md#agent-skills) ·
+Installation from the tool itself: [Agent onboarding](./agent-onboarding.md)
 
 ## What a skill is
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using DotnetEfCoreMcp.Server.Onboarding;
 
 namespace DotnetEfCoreMcp.Server.Hooks;
 
@@ -68,9 +69,13 @@ public sealed class HookInstaller
     }
 
     /// <summary>Installs hooks for a client into <paramref name="repositoryRoot"/>.</summary>
-    public HookInstallResult Install(HookClient client, string repositoryRoot, bool force = false)
+    public HookInstallResult Install(HookClient client, string repositoryRoot, bool force = false) =>
+        Install(client, repositoryRoot, InstallScope.Workspace, force);
+
+    /// <summary>Installs hooks for a client at the given scope.</summary>
+    public HookInstallResult Install(HookClient client, string repositoryRoot, InstallScope scope, bool force = false)
     {
-        var path = GetConfigPath(client, repositoryRoot);
+        var path = GetConfigPath(client, repositoryRoot, scope);
         var existing = ReadJsonObject(path);
 
         if (existing is null)
@@ -82,7 +87,7 @@ public sealed class HookInstaller
         var alreadyManaged = HasManagedHook(existing, client);
         if (alreadyManaged && !force)
         {
-            var refreshed = ApplyHooks(CloneWithoutManagedHooks(existing, client), client);
+            var refreshed = ApplyHooks(CloneWithoutManagedHooks(existing, client), client, scope);
             if (JsonNode.DeepEquals(refreshed, existing))
             {
                 return new HookInstallResult(path, Changed: false,
@@ -90,7 +95,7 @@ public sealed class HookInstaller
             }
         }
 
-        var updated = ApplyHooks(CloneWithoutManagedHooks(existing, client), client);
+        var updated = ApplyHooks(CloneWithoutManagedHooks(existing, client), client, scope);
         WriteJson(path, updated);
 
         return new HookInstallResult(path, Changed: true,
@@ -98,9 +103,13 @@ public sealed class HookInstaller
     }
 
     /// <summary>Removes this installer's hooks for a client, leaving unrelated hooks intact.</summary>
-    public HookInstallResult Uninstall(HookClient client, string repositoryRoot)
+    public HookInstallResult Uninstall(HookClient client, string repositoryRoot) =>
+        Uninstall(client, repositoryRoot, InstallScope.Workspace);
+
+    /// <summary>Removes this installer's hooks for a client at the given scope.</summary>
+    public HookInstallResult Uninstall(HookClient client, string repositoryRoot, InstallScope scope)
     {
-        var path = GetConfigPath(client, repositoryRoot);
+        var path = GetConfigPath(client, repositoryRoot, scope);
 
         if (!File.Exists(path))
         {
@@ -134,9 +143,13 @@ public sealed class HookInstaller
     }
 
     /// <summary>Reports whether a client currently has this installer's hooks.</summary>
-    public HookInstallResult Status(HookClient client, string repositoryRoot)
+    public HookInstallResult Status(HookClient client, string repositoryRoot) =>
+        Status(client, repositoryRoot, InstallScope.Workspace);
+
+    /// <summary>Reports whether a client currently has this installer's hooks at the given scope.</summary>
+    public HookInstallResult Status(HookClient client, string repositoryRoot, InstallScope scope)
     {
-        var path = GetConfigPath(client, repositoryRoot);
+        var path = GetConfigPath(client, repositoryRoot, scope);
 
         if (!File.Exists(path))
         {
@@ -154,17 +167,68 @@ public sealed class HookInstaller
     }
 
     /// <summary>Resolves the repo-local config file a client reads.</summary>
-    public static string GetConfigPath(HookClient client, string repositoryRoot) => client switch
+    public static string GetConfigPath(HookClient client, string repositoryRoot) =>
+        GetConfigPath(client, repositoryRoot, InstallScope.Workspace);
+
+    /// <summary>Resolves the config file a client reads at the given scope.</summary>
+    /// <param name="client">The agent CLI to resolve for.</param>
+    /// <param name="repositoryRoot">Repository root, used only by <see cref="InstallScope.Workspace"/>.</param>
+    /// <param name="scope">Whether to resolve the repo-local or per-user file.</param>
+    /// <remarks>
+    /// Every client reads a per-user location in addition to its repo-local one, and all three use
+    /// the same relative layout in both places except Copilot: its repo-local hooks live under
+    /// <c>.github/hooks/</c> while its user-level hooks live under <c>~/.copilot/hooks/</c>.
+    /// </remarks>
+    public static string GetConfigPath(HookClient client, string repositoryRoot, InstallScope scope) =>
+        scope switch
+        {
+            InstallScope.Workspace => client switch
+            {
+                HookClient.Claude => Path.Combine(repositoryRoot, ".claude", "settings.json"),
+
+                // A dedicated file under .github/hooks avoids merge conflicts with unrelated Copilot hooks.
+                HookClient.Copilot => Path.Combine(repositoryRoot, ".github", "hooks", "dotnet-efcore-mcp.json"),
+                HookClient.Codex => Path.Combine(repositoryRoot, ".codex", "hooks.json"),
+                _ => throw new ArgumentOutOfRangeException(nameof(client), client, "Unsupported hook client."),
+            },
+
+            InstallScope.User => client switch
+            {
+                HookClient.Claude => Path.Combine(UserDirectory.Resolve(), ".claude", "settings.json"),
+
+                // Copilot scans every *.json in its user hooks directory, so the same dedicated
+                // file name keeps our hooks separable from the user's own.
+                HookClient.Copilot => Path.Combine(ResolveCopilotHome(), "hooks", "dotnet-efcore-mcp.json"),
+                HookClient.Codex => Path.Combine(UserDirectory.Resolve(), ".codex", "hooks.json"),
+                _ => throw new ArgumentOutOfRangeException(nameof(client), client, "Unsupported hook client."),
+            },
+
+            _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, "Unsupported install scope."),
+        };
+
+    /// <summary>
+    /// Copilot CLI relocates its entire config tree when <c>COPILOT_HOME</c> is set, so a
+    /// user-level install has to honor it or it writes to a directory the CLI never reads.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="UserDirectory.OverrideVariable"/> wins over <c>COPILOT_HOME</c>, because it is
+    /// the sandbox/test redirect: a developer machine that has <c>COPILOT_HOME</c> pointing at their
+    /// real profile would otherwise let a test write into it.
+    /// </remarks>
+    private static string ResolveCopilotHome()
     {
-        HookClient.Claude => Path.Combine(repositoryRoot, ".claude", "settings.json"),
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(UserDirectory.OverrideVariable)))
+        {
+            return Path.Combine(UserDirectory.Resolve(), ".copilot");
+        }
 
-        // A dedicated file under .github/hooks avoids merge conflicts with unrelated Copilot hooks.
-        HookClient.Copilot => Path.Combine(repositoryRoot, ".github", "hooks", "dotnet-efcore-mcp.json"),
-        HookClient.Codex => Path.Combine(repositoryRoot, ".codex", "hooks.json"),
-        _ => throw new ArgumentOutOfRangeException(nameof(client), client, "Unsupported hook client."),
-    };
+        var configured = Environment.GetEnvironmentVariable("COPILOT_HOME");
+        return string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(UserDirectory.Resolve(), ".copilot")
+            : Path.GetFullPath(configured);
+    }
 
-    private JsonObject ApplyHooks(JsonObject root, HookClient client)
+    private JsonObject ApplyHooks(JsonObject root, HookClient client, InstallScope scope)
     {
         if (client is HookClient.Copilot)
         {
@@ -179,8 +243,13 @@ public sealed class HookInstaller
             root["hooks"] = hooks;
         }
 
-        AddEntry(hooks, client, "PostToolUse", "remind", matcher: PostToolUseMatcher);
-        AddEntry(hooks, client, "SessionEnd", "cleanup", matcher: null);
+        // SessionStart carries the discoverability half of the job: PostToolUse can only nudge an
+        // agent that already started down the wrong path, whereas this tells it up front that the
+        // server exists and what it is for. This is why Serena's equivalent hook set includes an
+        // "activate" hook rather than relying on reminders alone.
+        AddEntry(hooks, client, "SessionStart", "activate", matcher: null, scope);
+        AddEntry(hooks, client, "PostToolUse", "remind", matcher: PostToolUseMatcher, scope);
+        AddEntry(hooks, client, "SessionEnd", "cleanup", matcher: null, scope);
 
         return root;
     }
@@ -200,7 +269,8 @@ public sealed class HookInstaller
         "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell|Read|View|"
         + "write|edit|multiedit|create|bash|powershell|read|view|apply_patch";
 
-    private void AddEntry(JsonObject hooks, HookClient client, string eventName, string verb, string? matcher)
+    private void AddEntry(JsonObject hooks, HookClient client, string eventName, string verb, string? matcher,
+        InstallScope scope)
     {
         // Only fields the clients document are emitted. A custom marker property would be a
         // tidier way to recognize our own hooks, but Copilot CLI drops hook items that fail
@@ -216,12 +286,12 @@ public sealed class HookInstaller
         {
             // exec/args runs the executable directly, so Windows paths and quoting never hit a shell.
             handler["exec"] = _toolCommand;
-            handler["args"] = new JsonArray([.. BuildArguments(verb, client).Select(a => (JsonNode)JsonValue.Create(a))]);
+            handler["args"] = new JsonArray([.. BuildArguments(verb, client, scope).Select(a => (JsonNode)JsonValue.Create(a))]);
             handler["timeoutSec"] = HookTimeoutSeconds;
         }
         else
         {
-            handler["command"] = BuildCommandLine(verb, client);
+            handler["command"] = BuildCommandLine(verb, client, scope);
             handler["timeout"] = HookTimeoutSeconds;
         }
 
@@ -247,13 +317,16 @@ public sealed class HookInstaller
         GetOrCreateArray(hooks, eventName).Add(group);
     }
 
-    private string[] BuildArguments(string verb, HookClient client) =>
-        [.. _toolArguments, "hooks", verb, "--client", ClientName(client)];
+    private string[] BuildArguments(string verb, HookClient client, InstallScope scope) =>
+        // The scope is passed through so the hook knows at runtime whether it is repo-local (the
+        // user opted this repository in) or user-wide (it fires in every repository, including ones
+        // with no EF Core in them, so it has to check before announcing anything).
+        [.. _toolArguments, "hooks", verb, "--client", ClientName(client), "--scope", ScopeName(scope)];
 
-    private string BuildCommandLine(string verb, HookClient client)
+    private string BuildCommandLine(string verb, HookClient client, InstallScope scope)
     {
         var parts = new List<string> { _toolCommand };
-        parts.AddRange(BuildArguments(verb, client));
+        parts.AddRange(BuildArguments(verb, client, scope));
 
         return string.Join(' ', parts.Select(part => part.Contains(' ', StringComparison.Ordinal) ? $"\"{part}\"" : part));
     }
@@ -443,5 +516,12 @@ public sealed class HookInstaller
         HookClient.Copilot => "copilot",
         HookClient.Codex => "codex",
         _ => throw new ArgumentOutOfRangeException(nameof(client), client, "Unsupported hook client."),
+    };
+
+    internal static string ScopeName(InstallScope scope) => scope switch
+    {
+        InstallScope.Workspace => "workspace",
+        InstallScope.User => "user",
+        _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, "Unsupported install scope."),
     };
 }

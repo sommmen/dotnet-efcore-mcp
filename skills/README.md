@@ -12,6 +12,20 @@ your client reads.
 
 ## Install
 
+**Without a clone of this repo**, the server installs its own skills — they are packed into the
+NuGet tool, so this works straight after `dnx`/`dotnet tool install`:
+
+```powershell
+dnx DotnetEfCoreMcp.Server --yes --prerelease -- onboard install --what skills
+```
+
+Add `--scope user` to install into your home directory instead of the current repository. See the
+[README](../README.md#onboarding-hooks-and-skills) for the full `onboard` surface, which also sets
+up the agent hooks.
+
+The scripts below do the same thing from a clone, and additionally support `-Link`/`--link` for
+skill development:
+
 ```powershell
 # Windows / PowerShell
 ./skills/install-skills.ps1

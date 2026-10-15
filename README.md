@@ -128,72 +128,112 @@ troubleshooting.
 Preview builds are published from every push to `main`; stable releases are published from
 tagged GitHub Releases (see [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)).
 
-### Install agent hooks
+### Onboarding: hooks and skills
 
-AI agents reliably write LINQ that compiles and looks correct but fails at runtime because EF
-Core cannot translate it to SQL. The server already asks agents to validate queries through its
-`ServerInstructions`, but those are only read when the client actually loads the MCP server —
-with dynamic tool loading that often happens late, or never, and long sessions forget them.
+Two things make this server easy to miss. First, the agent only reads the server's
+`ServerInstructions` when the client actually loads the MCP server — with dynamic tool loading
+that often happens late, or never, and long sessions forget them anyway. Second, the optional
+integrations below are not discoverable from inside a session at all unless something mentions
+them.
 
-`hooks install` writes repo-local hooks that re-deliver that reminder at the moment it matters:
-right after the agent writes a LINQ query.
+`onboard` is the single entry point for both:
 
 ```powershell
-dnx DotnetEfCoreMcp.Server --yes --prerelease -- hooks install
+dnx DotnetEfCoreMcp.Server --yes --prerelease -- onboard status    # read-only; shows what exists
+dnx DotnetEfCoreMcp.Server --yes --prerelease -- onboard install
 ```
 
 (`--prerelease` is required while releases are preview-only, same as the `dotnet tool install`
 command above. The hooks that get written pin the exact version that installed them, so they do
 not need the flag.)
 
-This writes one config file per agent CLI, which you can commit so the whole team gets them:
+Everything is opt-in, `status` is the default and only reads, and nothing already on disk that
+this tool did not write is ever replaced.
 
-| Client | File |
+| Component | What it does |
 |---|---|
-| Claude Code | `.claude/settings.json` |
-| GitHub Copilot CLI | `.github/hooks/dotnet-efcore-mcp.json` |
-| Codex CLI | `.codex/hooks.json` |
+| **Hooks** | At session start, tell the agent this server exists and what it is for. After it writes a LINQ query, remind it to validate with `preview_query_sql`/`run_query`. |
+| **Skills** | Workflows the agent loads on demand — notably [`dotnet-efcore-mcp-feedback`](./skills/dotnet-efcore-mcp-feedback), for filing a usable issue about this server without leaking your code. |
 
-Use `--client claude`, `--client copilot`, or `--client codex` (comma-separated, default `all`)
-to install for a subset, `--path <dir>` to target another repository, and `hooks status` or
-`hooks uninstall` to inspect or remove them. Existing settings and unrelated hooks in those files
-are preserved.
+#### Workspace or user-wide
 
-Once installed, the agent gets a short reminder after it writes an EF Core LINQ query, pointing
-it at `preview_query_sql`, `run_query`, and `get_entity_schema`. The reminder is rate-limited
-(once per 10 minutes per session) and resets as soon as the agent actually uses the server, so it
-nudges without nagging. A secondary reminder suggests schema discovery when the agent reads
-several entity source files by hand.
+`--scope workspace` (the default) writes into the repository so you can commit it and the whole
+team gets it on clone. `--scope user` writes into your home directory once and applies to every
+repository you open.
+
+| | `--scope workspace` (default) | `--scope user` |
+|---|---|---|
+| Claude Code | `.claude/settings.json` | `~/.claude/settings.json` |
+| GitHub Copilot CLI | `.github/hooks/dotnet-efcore-mcp.json` | `~/.copilot/hooks/dotnet-efcore-mcp.json` |
+| Codex CLI | `.codex/hooks.json` | `~/.codex/hooks.json` |
+| Skills | `.github/skills/` | `~/.agents/skills/` |
+
+Workspace is the default because it is the reviewable choice: the config lands where a human can
+read it in a diff, and it cannot silently change behavior in unrelated projects.
+
+A user-wide session-start hook fires in *every* session on the machine, so it stays silent unless
+the workspace actually references EF Core — EF Core guidance in a front-end repo is just noise.
+A workspace hook always speaks, since installing it into that repository was already the opt-in.
+
+#### Options
+
+```powershell
+# Just the skills, user-wide
+dnx DotnetEfCoreMcp.Server --yes --prerelease -- onboard install --scope user --what skills
+
+# Just the hooks, only for Codex, in another repository
+dnx DotnetEfCoreMcp.Server --yes --prerelease -- onboard install --what hooks --client codex --path ../my-app
+
+# Remove whatever this tool installed, leaving unrelated config intact
+dnx DotnetEfCoreMcp.Server --yes --prerelease -- onboard uninstall
+```
+
+`--what hooks|skills|all`, `--client claude|copilot|codex|all` (comma-separated),
+`--skill <name>`, `--path <dir>`, and `--force` are all accepted. Existing settings and unrelated
+hooks in those files are preserved, and `hooks install`/`hooks status` remain available if you
+only care about hooks.
+
+#### From inside a session
+
+The server also exposes an `onboard` MCP tool, so the agent can report what is set up and point at
+the command to install the rest, without anyone hunting through this README.
+
+Reporting status is always available and read-only. **Installing over MCP is off by default** and
+requires opting in server-side:
+
+```json
+{ "Onboarding": { "AllowInstall": true } }
+```
+
+That gate exists because an installed hook adds a command the agent's CLI executes on every
+subsequent tool call — a broader grant than it first appears, and the same reason
+`RawSqlExecution` and `EntityMutations` are opt-in. A tool description asking the agent to confirm
+with the user is a prompt, not an enforcement boundary. With the gate off, the agent still reports
+what's missing and hands you the exact command, so you stay the one who runs it.
+
+Once hooks are installed, the agent gets a short reminder after it writes an EF Core LINQ query,
+pointing it at `preview_query_sql`, `run_query`, and `get_entity_schema`. The reminder is
+rate-limited (once per 10 minutes per session) and resets as soon as the agent actually uses the
+server, so it nudges without nagging. A secondary reminder suggests schema discovery when the
+agent reads several entity source files by hand.
 
 > **Note:** Claude Code and Codex CLI ask you to review and approve repo-local hooks the first
 > time they run, so a committed hook cannot execute without consent. Hooks run `dnx`, which
-> requires the .NET SDK on `PATH`.
+> requires the .NET SDK on `PATH`. Restart your agent CLI (or reload the window) after installing
+> so it rescans hooks and skills.
 
 For the detection heuristics and per-client hook contracts, see
-[Agent hooks](docs/development/agent-hooks.md).
+[Agent hooks](docs/development/agent-hooks.md). For the onboarding surface as a whole, see
+[Agent onboarding](docs/development/agent-onboarding.md).
 
-### Install agent skills
+### Agent skills
 
-This repo ships agent skills under [`skills/`](./skills). A skill teaches your agent a
+The skills `onboard` installs live under [`skills/`](./skills). A skill teaches your agent a
 workflow it would otherwise have to reinvent each time.
 
 | Skill | What it does |
 |---|---|
 | [`dotnet-efcore-mcp-feedback`](./skills/dotnet-efcore-mcp-feedback) | Turns a frustrating encounter with this server into a self-contained GitHub issue — scrubbed of your private code and connection strings, with a reproduction the maintainer can run against this repo's own `tests/Fixtures/SampleApp`. |
-
-```powershell
-./skills/install-skills.ps1              # Windows
-```
-
-```bash
-./skills/install-skills.sh               # macOS / Linux
-```
-
-This copies them into `~/.agents/skills` by default; use `-Target claude` for
-`~/.claude/skills`, or `-Target repo -Path <dir>` to install them into another
-repository's `.github/skills` so the whole team gets them on clone. Restart your agent
-CLI afterwards so it rescans. See [`skills/README.md`](./skills/README.md) for the full
-options, including installing without a clone.
 
 Reporting a problem with this server is unusually awkward, which is why the feedback
 skill exists: the evidence lives inside someone's private codebase alongside a real
@@ -201,6 +241,20 @@ skill exists: the evidence lives inside someone's private codebase alongside a r
 rather than a copy-paste. The skill does that translation — strip the secrets,
 generalize the model shape, rebuild the failure against the sample fixture — so the
 issue is reproducible by someone who will never see your repo.
+
+`onboard install` works from a plain `dnx`/`dotnet tool install` with no clone, because the skill
+folders are packed into the tool. If you *do* have a clone and are editing a skill, the scripts
+in [`skills/`](./skills) install it as a symlink so your edits are picked up without reinstalling:
+
+```powershell
+./skills/install-skills.ps1 -Link        # Windows
+```
+
+```bash
+./skills/install-skills.sh --link        # macOS / Linux
+```
+
+See [`skills/README.md`](./skills/README.md) for those options.
 
 ### Build & test
 

@@ -1,4 +1,5 @@
 using System.Reflection;
+using DotnetEfCoreMcp.Server.Onboarding;
 
 namespace DotnetEfCoreMcp.Server.Hooks;
 
@@ -42,6 +43,7 @@ public static class HooksCommand
             // Invoked by the hooks themselves. These must never fail the agent's tool call, so they
             // always return 0 and fall back to an empty response.
             "remind" => RunRemind(args, output, input),
+            "activate" => RunActivate(args, output, input),
             "cleanup" => RunCleanup(output, input),
             "--help" or "-h" or "help" => WriteUsageAndSucceed(output),
             _ => WriteUnknown(subCommand, error),
@@ -66,6 +68,22 @@ public static class HooksCommand
         return 0;
     }
 
+    private static int RunActivate(string[] args, TextWriter output, TextReader input)
+    {
+        try
+        {
+            var client = ParseClient(args) ?? HookClient.Claude;
+            output.Write(new SessionActivation().Evaluate(input.ReadToEnd(), client, ResolveScope(args)));
+        }
+        catch (Exception)
+        {
+            // Session start must never be the thing that breaks a session.
+            output.Write("{}");
+        }
+
+        return 0;
+    }
+
     private static int RunCleanup(TextWriter output, TextReader input)
     {
         try
@@ -84,16 +102,18 @@ public static class HooksCommand
     {
         var root = ResolveRepositoryRoot(args);
         var force = HasFlag(args, "--force");
+        var scope = ResolveScope(args);
         var installer = CreateInstaller(args);
 
         foreach (var client in ResolveClients(args))
         {
-            var result = installer.Install(client, root, force);
+            var result = installer.Install(client, root, scope, force);
             output.WriteLine($"[{HookInstaller.ClientName(client)}] {result.Message}");
         }
 
         output.WriteLine();
-        output.WriteLine("Hooks remind the agent to validate LINQ with dotnet-efcore-mcp after it writes a query.");
+        output.WriteLine("Hooks announce dotnet-efcore-mcp at session start and remind the agent to validate LINQ");
+        output.WriteLine("with it after writing a query.");
         output.WriteLine("Claude Code and Codex CLI ask for approval before running repo-local hooks the first time.");
 
         return 0;
@@ -102,11 +122,12 @@ public static class HooksCommand
     private static int RunUninstall(string[] args, TextWriter output)
     {
         var root = ResolveRepositoryRoot(args);
+        var scope = ResolveScope(args);
         var installer = CreateInstaller(args);
 
         foreach (var client in ResolveClients(args))
         {
-            var result = installer.Uninstall(client, root);
+            var result = installer.Uninstall(client, root, scope);
             output.WriteLine($"[{HookInstaller.ClientName(client)}] {result.Message}");
         }
 
@@ -118,10 +139,21 @@ public static class HooksCommand
         var root = ResolveRepositoryRoot(args);
         var installer = CreateInstaller(args);
 
+        // Status reports both scopes unless one was asked for, because "not installed" in the
+        // workspace while a user-level install is active is the single most confusing state to be
+        // in, and the fix for it depends on knowing which file is live.
+        var scopes = GetOption(args, "--scope") is null
+            ? (InstallScope[])[InstallScope.Workspace, InstallScope.User]
+            : [ResolveScope(args)];
+
         foreach (var client in ResolveClients(args))
         {
-            var result = installer.Status(client, root);
-            output.WriteLine($"[{HookInstaller.ClientName(client)}] {result.Message}: {result.FilePath}");
+            foreach (var scope in scopes)
+            {
+                var result = installer.Status(client, root, scope);
+                output.WriteLine(
+                    $"[{HookInstaller.ClientName(client)}/{HookInstaller.ScopeName(scope)}] {result.Message}: {result.FilePath}");
+            }
         }
 
         return 0;
@@ -132,6 +164,21 @@ public static class HooksCommand
         var version = GetOption(args, "--package-version") ?? GetPackageVersion();
         return new HookInstaller(version);
     }
+
+    /// <summary>
+    /// Resolves the requested install scope, defaulting to the repo-local one.
+    /// </summary>
+    /// <remarks>
+    /// Workspace is the default because it is the reviewable choice: the config lands in the
+    /// repository where a human can read it in a diff, and it cannot silently change behavior in
+    /// unrelated projects the way a user-level install can.
+    /// </remarks>
+    internal static InstallScope ResolveScope(string[] args) =>
+        GetOption(args, "--scope")?.Trim().ToLowerInvariant() switch
+        {
+            "user" or "global" or "home" => InstallScope.User,
+            _ => InstallScope.Workspace,
+        };
 
     /// <summary>
     /// Pins installed hooks to the running tool's version so a session cannot silently pick up a
@@ -268,24 +315,32 @@ public static class HooksCommand
             """
             Usage: dotnet-efcore-mcp hooks <command> [options]
 
-            Installs agent hooks that remind the agent to validate EF Core LINQ with this MCP
-            server after it writes a query, and to use schema discovery instead of reading
-            entity source by hand.
+            Installs agent hooks that announce this MCP server at session start, remind the agent
+            to validate EF Core LINQ with it after writing a query, and to use schema discovery
+            instead of reading entity source by hand.
+
+            To install hooks and skills together, use `onboard install` instead.
 
             Commands:
-              install      Write repo-local hook configuration.
+              install      Write hook configuration.
               uninstall    Remove previously installed hook configuration.
-              status       Report whether hooks are installed.
+              status       Report whether hooks are installed (both scopes unless --scope given).
 
             Options:
               --client <name>   claude, copilot, codex, or all (default: all). Comma-separated.
+              --scope <name>    workspace (default) or user.
               --path <dir>      Repository root to write into (default: current directory).
               --force           Overwrite an existing dotnet-efcore-mcp hook block.
 
-            Files written:
+            Files written (workspace scope):
               claude    .claude/settings.json
               copilot   .github/hooks/dotnet-efcore-mcp.json
               codex     .codex/hooks.json
+
+            Files written (user scope):
+              claude    ~/.claude/settings.json
+              copilot   ~/.copilot/hooks/dotnet-efcore-mcp.json
+              codex     ~/.codex/hooks.json
 
             Example:
               dnx DotnetEfCoreMcp.Server --yes --prerelease -- hooks install --client all
