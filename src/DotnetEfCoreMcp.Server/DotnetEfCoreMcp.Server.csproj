@@ -110,4 +110,27 @@
     </ItemGroup>
   </Target>
 
+  <!--
+    Bundle the agent skills from skills/ into a "skills" folder next to the server's binaries, so
+    `onboard install` can install them after a `dnx`/`dotnet tool install` with no clone of this
+    repository. See Onboarding/SkillCatalog.cs for the runtime resolution (which falls back to
+    walking up to the repo's own skills/ folder during local development, so there is no need to
+    copy these on every inner-loop build).
+
+    evals/ is excluded: it is skill-development scaffolding, not something a user of the skill needs.
+  -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludeSkillsInPackage</TargetsForTfmSpecificContentInPackage>
+    <SkillsSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\skills'))</SkillsSourceDir>
+  </PropertyGroup>
+
+  <Target Name="IncludeSkillsInPackage" Condition="Exists('$(SkillsSourceDir)')">
+    <ItemGroup>
+      <_SkillFile Include="$(SkillsSourceDir)\**\*.*" Exclude="$(SkillsSourceDir)\**\evals\**\*.*;$(SkillsSourceDir)\*.*" />
+      <TfmSpecificPackageFile Include="@(_SkillFile)">
+        <PackagePath>tools/$(TargetFramework)/any/skills/%(RecursiveDir)%(Filename)%(Extension)</PackagePath>
+      </TfmSpecificPackageFile>
+    </ItemGroup>
+  </Target>
+
 </Project>

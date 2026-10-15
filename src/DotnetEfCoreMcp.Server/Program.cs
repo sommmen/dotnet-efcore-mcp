@@ -4,6 +4,7 @@ using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Hooks;
 using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
+using DotnetEfCoreMcp.Server.Onboarding;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Telemetry;
@@ -16,13 +17,18 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
-// CLI verbs are handled before the host is built: `hooks` runs as a one-shot command (including the
-// short-lived processes the installed agent hooks invoke on every tool call) rather than starting
-// the stdio MCP server. Launching with no arguments, or with only configuration arguments, still
-// starts the server exactly as before.
+// CLI verbs are handled before the host is built: `hooks` and `onboard` run as one-shot commands
+// (including the short-lived processes the installed agent hooks invoke on every tool call) rather
+// than starting the stdio MCP server. Launching with no arguments, or with only configuration
+// arguments, still starts the server exactly as before.
 if (args.Length > 0 && args[0].Equals(HooksCommand.VerbName, StringComparison.OrdinalIgnoreCase))
 {
     return HooksCommand.Run(args, Console.Out, Console.Error, Console.In);
+}
+
+if (args.Length > 0 && args[0].Equals(OnboardCommand.VerbName, StringComparison.OrdinalIgnoreCase))
+{
+    return OnboardCommand.Run(args, Console.Out, Console.Error);
 }
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -74,6 +80,9 @@ builder.Services.AddHostedService(services => services.GetRequiredService<QueryH
 builder.Services.AddSingleton<PooledOutOfProcessRoslynQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("RawSqlExecution").Get<RawSqlExecutionOptions>() ?? new RawSqlExecutionOptions());
 builder.Services.AddSingleton<SqlQueryExecutor>();
+// Reporting onboarding status over MCP is always allowed (it only reads); installing is opt-in,
+// because an installed hook adds a command the agent's CLI runs on every later tool call.
+builder.Services.AddSingleton(builder.Configuration.GetSection("Onboarding").Get<OnboardingOptions>() ?? new OnboardingOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Migrations").Get<MigrationsOptions>() ?? new MigrationsOptions());
 builder.Services.AddSingleton<MigrationInspector>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("EntityMutations").Get<EntityMutationsOptions>() ?? new EntityMutationsOptions());
@@ -158,6 +167,13 @@ builder.Services
             target application's EF Core model, instead of guessing at entity shapes or writing
             one-off inspection code. When adding or changing LINQ queries, always validate them
             using dotnet-efcore-mcp at the end of the session.
+
+            This server also ships optional agent integrations that are off until installed:
+            lifecycle hooks that re-deliver the instruction above at the moment a LINQ query is
+            written, and a feedback skill for filing a usable issue about this server without
+            leaking private code. Call the read-only `onboard` tool to see what is available and
+            what is already set up, and mention it if the user is hitting rough edges with this
+            server. Never install anything without the user asking for it.
             """;
     })
     .WithStdioServerTransport()

@@ -3,8 +3,10 @@ using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
+using DotnetEfCoreMcp.Server.Hooks;
 using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
+using DotnetEfCoreMcp.Server.Onboarding;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Telemetry;
@@ -39,8 +41,11 @@ public sealed class EfCoreMcpTools(
     ILogger<EfCoreMcpTools> logger,
     EntityMutationsOptions entityMutationsOptions,
     EntityMutationExecutor entityMutationExecutor,
-    IMcpMetrics metrics)
+    IMcpMetrics metrics,
+    OnboardingOptions? onboardingOptions = null)
 {
+    private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
+
     internal EfCoreMcpTools(
         AssemblyLoaderService assemblyLoader,
         AssemblyDiscoveryService assemblyDiscovery,
@@ -57,7 +62,8 @@ public sealed class EfCoreMcpTools(
         ToolDiagnosticsOptions toolDiagnosticsOptions,
         ILogger<EfCoreMcpTools> logger,
         EntityMutationsOptions entityMutationsOptions,
-        EntityMutationExecutor entityMutationExecutor)
+        EntityMutationExecutor entityMutationExecutor,
+        OnboardingOptions? onboardingOptions = null)
         : this(
             assemblyLoader,
             assemblyDiscovery,
@@ -79,7 +85,8 @@ public sealed class EfCoreMcpTools(
             entityMutationExecutor,
             // No IMcpMetrics is supplied by this test-only constructor overload, so telemetry is a
             // no-op here (mirrors production behavior when telemetry is disabled).
-            NullMcpMetrics.Instance)
+            NullMcpMetrics.Instance,
+            onboardingOptions)
     {
     }
 
@@ -818,6 +825,141 @@ public sealed class EfCoreMcpTools(
         {
             throw new McpException(ex.Message);
         }
+    }
+
+    [McpServerTool(Name = "onboard"), Description(
+        "Reports and optionally installs the optional agent integrations that ship with this MCP server: " +
+        "lifecycle hooks (announce this server at session start, remind you to validate EF Core LINQ with it " +
+        "after writing a query) and agent skills (notably a feedback skill that turns a bad experience with " +
+        "this server into a self-contained GitHub issue with no private code in it). Call this with apply=false " +
+        "to see what is available and what is already installed - that is read-only and safe. Installing via " +
+        "apply=true additionally requires the server-side Onboarding:AllowInstall setting; when it is off, " +
+        "report the suggested command and let the user run it themselves. Only use apply=true after the user " +
+        "has explicitly asked for the setup, because it writes configuration files into their repository or " +
+        "home directory.")]
+    public string Onboard(
+        [Description("Absolute path to the workspace or repository to inspect or install into. Omit to use the server's working directory.")] string? workspacePath = null,
+        [Description("When false (default), only report status. When true, install the selected components.")] bool apply = false,
+        [Description("Install destination: 'workspace' (default; repo-local files you can commit for your team) or 'user' (home directory; applies to every repository).")] string scope = "workspace",
+        [Description("What to install: 'hooks', 'skills', or 'all' (default). Ignored when apply is false.")] string what = "all",
+        [Description("When true, replace an existing dotnet-efcore-mcp install instead of leaving it as-is.")] bool force = false)
+        => Execute("onboard", () => OnboardCore(workspacePath, apply, scope, what, force));
+
+    private string OnboardCore(string? workspacePath, bool apply, string scope, string what, bool force)
+    {
+        var root = string.IsNullOrWhiteSpace(workspacePath)
+            ? Directory.GetCurrentDirectory()
+            : workspacePath;
+
+        if (!Directory.Exists(root))
+        {
+            throw new McpException($"Workspace path '{root}' does not exist.");
+        }
+
+        root = Path.GetFullPath(root);
+
+        var resolvedScope = scope.Trim().ToLowerInvariant() switch
+        {
+            "workspace" or "repo" or "" => InstallScope.Workspace,
+            "user" or "global" or "home" => InstallScope.User,
+            _ => throw new McpException($"Unsupported scope '{scope}'. Use 'workspace' or 'user'."),
+        };
+
+        var components = what.Trim().ToLowerInvariant() switch
+        {
+            "all" or "" => (hooks: true, skills: true),
+            "hooks" or "hook" => (hooks: true, skills: false),
+            "skills" or "skill" => (hooks: false, skills: true),
+            _ => throw new McpException($"Unsupported value '{what}'. Use 'hooks', 'skills', or 'all'."),
+        };
+
+        // Installing writes files that the agent's CLI then executes on every tool call, so it is
+        // gated server-side like every other tool here that writes outside the process. The tool
+        // description also asks the agent to confirm with the user, but a description is a prompt,
+        // not a boundary.
+        if (apply && !onboardingOptions.AllowInstall)
+        {
+            throw new McpException(
+                "Installing onboarding files over MCP is disabled by default as a safety guard: an installed "
+                + "hook adds a command the agent CLI runs on every subsequent tool call. To enable it, set "
+                + "Onboarding:AllowInstall to true in the server's configuration and restart the MCP server "
+                + "process. Otherwise ask the user to run this themselves: "
+                + OnboardingStatus.InstallCommandHint
+                + ". Calling this tool with apply=false to report status always works.");
+        }
+
+        var hookInstaller = new HookInstaller(HooksCommand.GetPackageVersion());
+        var skillInstaller = new SkillInstaller();
+        var applied = new List<object>();
+
+        if (apply)
+        {
+            if (components.hooks)
+            {
+                foreach (var client in (HookClient[])[HookClient.Claude, HookClient.Copilot, HookClient.Codex])
+                {
+                    var result = hookInstaller.Install(client, root, resolvedScope, force);
+                    applied.Add(new
+                    {
+                        component = "hooks",
+                        target = HookInstaller.ClientName(client),
+                        path = result.FilePath,
+                        changed = result.Changed,
+                        message = result.Message,
+                    });
+                }
+            }
+
+            if (components.skills)
+            {
+                foreach (var result in skillInstaller.Install(resolvedScope, root, skillName: null, force))
+                {
+                    applied.Add(new
+                    {
+                        component = "skills",
+                        target = result.SkillName,
+                        path = result.Path,
+                        changed = result.Changed,
+                        message = result.Message,
+                    });
+                }
+            }
+        }
+
+        // Status is read after any install so the response reflects the resulting state rather than
+        // the state the call started from.
+        var status = new OnboardingInspector(hookInstaller, skillInstaller).Inspect(root);
+
+        return resultFormatter.Format(new
+        {
+            workspace = status.Workspace,
+            scope = HookInstaller.ScopeName(resolvedScope),
+            applied = apply ? applied : null,
+            hooks = status.Hooks.Select(hook => new
+            {
+                client = HookInstaller.ClientName(hook.Client),
+                workspaceInstalled = hook.WorkspaceInstalled,
+                workspacePath = hook.WorkspacePath,
+                userInstalled = hook.UserInstalled,
+                userPath = hook.UserPath,
+            }),
+            skillsAvailable = status.SkillsAvailable,
+            skills = status.Skills.Select(skill => new
+            {
+                name = skill.SkillName,
+                workspaceInstalled = skill.WorkspaceInstalled,
+                workspacePath = skill.WorkspacePath,
+                userInstalled = skill.UserInstalled,
+                userPath = skill.UserPath,
+            }),
+            fullyOnboarded = status.FullyOnboarded,
+            nextStep = status.FullyOnboarded
+                ? "Everything available is installed."
+                : apply
+                    ? "Restart the agent CLI (or reload the window) so it rescans hooks and skills."
+                    : "Ask the user before installing; then call this tool again with apply=true, or run "
+                      + OnboardingStatus.InstallCommandHint + ".",
+        });
     }
 
     [McpServerTool(Name = "list_loaded_assemblies"), Description(

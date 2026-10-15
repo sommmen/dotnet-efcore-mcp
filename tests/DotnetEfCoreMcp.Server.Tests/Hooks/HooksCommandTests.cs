@@ -1,11 +1,14 @@
 using System.Text.Json;
 using DotnetEfCoreMcp.Server.Hooks;
+using DotnetEfCoreMcp.Server.Onboarding;
+using DotnetEfCoreMcp.Server.Tests.TestSupport;
 
 namespace DotnetEfCoreMcp.Server.Tests.Hooks;
 
 /// <summary>
 /// Covers the <c>hooks</c> CLI verb's argument handling and its fail-open output contract.
 /// </summary>
+[Collection(OnboardingEnvironmentCollection.Name)]
 public class HooksCommandTests : IDisposable
 {
     private readonly string _root =
@@ -14,6 +17,9 @@ public class HooksCommandTests : IDisposable
     private readonly string? _previousStateDirectory =
         Environment.GetEnvironmentVariable("DOTNETEFCOREMCP_HOOKDATADIR");
 
+    private readonly string? _previousHome =
+        Environment.GetEnvironmentVariable(UserDirectory.OverrideVariable);
+
     public HooksCommandTests()
     {
         Directory.CreateDirectory(_root);
@@ -21,6 +27,11 @@ public class HooksCommandTests : IDisposable
         // Keep reminder state inside the test's own directory rather than the real user profile.
         Environment.SetEnvironmentVariable(
             "DOTNETEFCOREMCP_HOOKDATADIR", Path.Combine(_root, "state"));
+
+        // Likewise for user-scoped paths: a test must neither read nor write the real home
+        // directory, or its result depends on whatever the developer has installed.
+        Environment.SetEnvironmentVariable(
+            UserDirectory.OverrideVariable, Path.Combine(_root, "home"));
     }
 
     [Fact]
@@ -116,15 +127,54 @@ public class HooksCommandTests : IDisposable
     }
 
     [Fact]
-    public void Run_StatusReportsEachClient()
+    public void Run_StatusReportsEachClientAtBothScopes()
     {
+        // Without --scope, status reports workspace *and* user: "not installed here" while a
+        // user-level install is quietly active is the most confusing state to debug, and the fix
+        // depends on knowing which file is live.
         var exitCode = Run(["hooks", "status", "--path", _root], out var output);
 
         Assert.Equal(0, exitCode);
         foreach (var client in (string[])["claude", "copilot", "codex"])
         {
-            Assert.Contains($"[{client}] not installed", output, StringComparison.Ordinal);
+            Assert.Contains($"[{client}/workspace] not installed", output, StringComparison.Ordinal);
+            Assert.Contains($"[{client}/user]", output, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void Run_StatusReportsOnlyTheRequestedScope()
+    {
+        var exitCode = Run(["hooks", "status", "--path", _root, "--scope", "workspace"], out var output);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("[claude/workspace] not installed", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("/user]", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_ActivateEmitsSessionStartContext()
+    {
+        var workspace = Path.Combine(_root, "app");
+        Directory.CreateDirectory(workspace);
+
+        var payload = JsonSerializer.Serialize(new { session_id = "s1", cwd = workspace });
+        var exitCode = Run(["hooks", "activate", "--client", "claude", "--scope", "workspace"], out var output, payload);
+
+        Assert.Equal(0, exitCode);
+        using var document = JsonDocument.Parse(output);
+        Assert.Equal("SessionStart",
+            document.RootElement.GetProperty("hookSpecificOutput").GetProperty("hookEventName").GetString());
+    }
+
+    [Fact]
+    public void Run_ActivateNeverFailsTheSession()
+    {
+        // A session-start hook that throws would break the session it is supposed to help.
+        var exitCode = Run(["hooks", "activate"], out var output, "}{ not json");
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(JsonValueKind.Object, JsonDocument.Parse(output).RootElement.ValueKind);
     }
 
     [Fact]
@@ -185,6 +235,7 @@ public class HooksCommandTests : IDisposable
         GC.SuppressFinalize(this);
 
         Environment.SetEnvironmentVariable("DOTNETEFCOREMCP_HOOKDATADIR", _previousStateDirectory);
+        Environment.SetEnvironmentVariable(UserDirectory.OverrideVariable, _previousHome);
 
         try
         {

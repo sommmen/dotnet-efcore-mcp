@@ -5,8 +5,10 @@
 Code: [`src/DotnetEfCoreMcp.Server/Hooks`](../../src/DotnetEfCoreMcp.Server/Hooks) ·
 Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Hooks`](../../tests/DotnetEfCoreMcp.Server.Tests/Hooks)
 
-See also the [README "Install agent hooks"](../../README.md#install-agent-hooks) section for
-user-facing setup instructions.
+See also the [README "Onboarding: hooks and skills"](../../README.md#onboarding-hooks-and-skills)
+section for user-facing setup instructions, and
+[Agent onboarding](./agent-onboarding.md) for the `onboard` verb that installs these alongside the
+skills, the workspace/user scope split, and the `SessionStart` activation hook.
 
 ## Why hooks exist
 
@@ -63,6 +65,20 @@ Reference documentation: [Claude Code hooks](https://code.claude.com/docs/en/hoo
   Nerdbank.GitVersioning's package suffix (`0.1.32-preview.g842ad5eb9d`) verbatim and an
   approximate version would not resolve. When that metadata is absent (a local build), the command
   is written unpinned with `--prerelease`, which is required while releases are preview-only.
+
+## Installed events
+
+`install` writes three entries per client, each invoking a `hooks` sub-command:
+
+| Event | Verb | Purpose |
+|---|---|---|
+| `SessionStart` | `activate` | Announce the server and its tools before the agent has a reason to look for them. See [Agent onboarding](./agent-onboarding.md). |
+| `PostToolUse` | `remind` | Re-deliver the LINQ-validation guidance right after the agent writes a query. |
+| `SessionEnd` | `cleanup` | Drop the on-disk reminder state for the session. |
+
+`SessionStart` is the discoverability half and `PostToolUse` the correction half: a reminder can
+only redirect an agent that already started writing LINQ by hand, by which point it has usually
+read half the entity source. Both are needed — Serena ships the same pairing for the same reason.
 
 ## Detection heuristics
 
