@@ -29,28 +29,29 @@ public class VersionCommandTests : IDisposable
             new UpdateCheckCache(Path.Combine(_root, "update-check.json"), TimeProvider.System),
             new UpdateCheckGate(enabledByConfiguration: true, Read),
             new InstallMethodDetector(
-                @"C:\Users\dev\.dotnet\tools\.store\dotnetefcoremcp.server\0.1.32-preview",
+                Path.Combine(
+                    "Users", "dev", ".dotnet", "tools", ".store", "dotnetefcoremcp.server", "0.1.32-preview"),
                 Path.Combine(_root, "cwd"),
                 Read),
             installedVersion);
     }
 
-    private static string Capture(Func<TextWriter, TextWriter, Task<int>> run)
+    private static async Task<string> Capture(Func<TextWriter, TextWriter, Task<int>> run)
     {
         var output = new StringWriter();
         var error = new StringWriter();
 
-        var exitCode = run(output, error).GetAwaiter().GetResult();
+        var exitCode = await run(output, error);
 
         Assert.Equal(0, exitCode);
         return output.ToString();
     }
 
     [Fact]
-    public void Reports_the_running_version_without_touching_the_network()
+    public async Task Reports_the_running_version_without_touching_the_network()
     {
         // No --check-updates, so a null checker is safe: nothing may dereference it.
-        var output = Capture((@out, err) =>
+        var output = await Capture((@out, err) =>
             VersionCommand.RunAsync(["version"], @out, err, checker: null));
 
         Assert.Contains("dotnet-efcore-mcp", output);
@@ -58,9 +59,9 @@ public class VersionCommandTests : IDisposable
     }
 
     [Fact]
-    public void Reports_an_available_update()
+    public async Task Reports_an_available_update()
     {
-        var output = Capture((@out, err) => VersionCommand.RunAsync(
+        var output = await Capture((@out, err) => VersionCommand.RunAsync(
             ["version", "--check-updates"], @out, err, Checker(["0.1.32-preview", "0.1.39-preview"])));
 
         Assert.Contains("0.1.39-preview", output);
@@ -68,27 +69,27 @@ public class VersionCommandTests : IDisposable
     }
 
     [Fact]
-    public void Reports_being_up_to_date()
+    public async Task Reports_being_up_to_date()
     {
-        var output = Capture((@out, err) => VersionCommand.RunAsync(
+        var output = await Capture((@out, err) => VersionCommand.RunAsync(
             ["version", "--check-updates"], @out, err, Checker(["0.1.32-preview"])));
 
         Assert.Contains("up to date", output);
     }
 
     [Fact]
-    public void Reports_an_unreachable_feed_without_failing()
+    public async Task Reports_an_unreachable_feed_without_failing()
     {
-        var output = Capture((@out, err) => VersionCommand.RunAsync(
+        var output = await Capture((@out, err) => VersionCommand.RunAsync(
             ["version", "--check-updates"], @out, err, Checker([])));
 
         Assert.Contains("not checked", output);
     }
 
     [Fact]
-    public void Prints_usage_on_help()
+    public async Task Prints_usage_on_help()
     {
-        var output = Capture((@out, err) =>
+        var output = await Capture((@out, err) =>
             VersionCommand.RunAsync(["version", "--help"], @out, err, checker: null));
 
         Assert.Contains("Usage: dotnet-efcore-mcp version", output);

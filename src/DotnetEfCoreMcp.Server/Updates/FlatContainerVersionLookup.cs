@@ -25,7 +25,7 @@ public sealed partial class FlatContainerVersionLookup : INuGetVersionLookup
     public const string DefaultBaseAddress = "https://api.nuget.org/v3-flatcontainer/";
 
     private readonly HttpClient _httpClient;
-    private readonly Uri _baseAddress;
+    private readonly Uri? _baseAddress;
 
     /// <summary>
     /// Creates a lookup against a feed's flat container.
@@ -40,9 +40,8 @@ public sealed partial class FlatContainerVersionLookup : INuGetVersionLookup
         ArgumentNullException.ThrowIfNull(httpClient);
 
         _httpClient = httpClient;
-        _baseAddress = new Uri(
-            string.IsNullOrWhiteSpace(baseAddress) ? DefaultBaseAddress : EnsureTrailingSlash(baseAddress),
-            UriKind.Absolute);
+        var address = string.IsNullOrWhiteSpace(baseAddress) ? DefaultBaseAddress : EnsureTrailingSlash(baseAddress);
+        _baseAddress = Uri.TryCreate(address, UriKind.Absolute, out var parsedAddress) ? parsedAddress : null;
     }
 
     /// <inheritdoc />
@@ -51,6 +50,11 @@ public sealed partial class FlatContainerVersionLookup : INuGetVersionLookup
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packageId);
+
+        if (_baseAddress is null)
+        {
+            return [];
+        }
 
         // The flat container addresses packages by lowercase id.
         var requestUri = new Uri(_baseAddress, $"{packageId.ToLowerInvariant()}/index.json");

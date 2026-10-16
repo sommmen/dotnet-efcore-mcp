@@ -24,7 +24,7 @@ public sealed class UpdateNotificationService(
     UpdateChecker checker,
     ILogger<UpdateNotificationService> logger) : BackgroundService
 {
-    private UpdateCheckResult? _result;
+    private volatile UpdateCheckResult? _result;
 
     /// <summary>
     /// The outcome of the check, or <see langword="null"/> while it is still running.

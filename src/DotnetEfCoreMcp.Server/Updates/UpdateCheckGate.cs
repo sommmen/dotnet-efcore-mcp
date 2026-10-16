@@ -99,7 +99,8 @@ public sealed class UpdateCheckGate
             return false;
         }
 
-        if (_environment(DotnetTelemetryOptOutVariable) is "1" or "true" or "TRUE")
+        var telemetryOptOut = _environment(DotnetTelemetryOptOutVariable);
+        if (telemetryOptOut == "1" || string.Equals(telemetryOptOut, "true", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }

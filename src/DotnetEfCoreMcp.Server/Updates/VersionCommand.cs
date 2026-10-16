@@ -90,7 +90,10 @@ public static class VersionCommand
 
         output.WriteLine();
 
-        var result = await (checker ?? CreateChecker()).CheckAsync().ConfigureAwait(false);
+        using var httpClient = checker is null
+            ? new HttpClient { Timeout = TimeSpan.FromSeconds(3) }
+            : null;
+        var result = await (checker ?? CreateChecker(httpClient!)).CheckAsync().ConfigureAwait(false);
 
         if (result.UpdateAvailable)
         {
@@ -116,10 +119,8 @@ public static class VersionCommand
     /// <remarks>
     /// Constructed here rather than taken from DI because CLI verbs run before the host exists.
     /// </remarks>
-    private static UpdateChecker CreateChecker()
+    private static UpdateChecker CreateChecker(HttpClient httpClient)
     {
-        var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-
         return new UpdateChecker(
             new FlatContainerVersionLookup(httpClient),
             new UpdateCheckCache(),
@@ -130,7 +131,7 @@ public static class VersionCommand
     private static bool HasFlag(string[] args, string flag) =>
         args.Any(argument => argument.Equals(flag, StringComparison.OrdinalIgnoreCase));
 
-    private static string Describe(InstallMethod method) => method switch
+    internal static string Describe(InstallMethod method) => method switch
     {
         InstallMethod.GlobalTool => "dotnet tool install --global",
         InstallMethod.LocalTool => "dotnet tool install --local (manifest)",

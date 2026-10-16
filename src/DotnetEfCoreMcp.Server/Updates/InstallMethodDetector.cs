@@ -98,8 +98,12 @@ public sealed class InstallMethodDetector
         if (ContainsSegment(segments, ".store"))
         {
             // A tool manifest naming this package means the install is manifest-scoped. Checking
-            // the manifest rather than the path is deliberate: both install kinds share the same
-            // `.store` layout, so the manifest is the only thing that distinguishes them.
+            // the manifest rather than the path is deliberate and must not be "simplified" into
+            // returning GlobalTool here: `dotnet tool install --local` unpacks into the *same*
+            // per-user `.store` directory as a global install (verified by installing into a
+            // manifest and observing the version appear under ~/.dotnet/tools/.store), so the
+            // path alone cannot tell the two apart and the manifest is the only distinguishing
+            // evidence available.
             return HasLocalToolManifest() ? InstallMethod.LocalTool : InstallMethod.GlobalTool;
         }
 
