@@ -15,6 +15,11 @@ namespace DotnetEfCoreMcp.Server.Tests.Querying;
 /// therefore carry its own deterministic primary-key ordering.</summary>
 public sealed class ImplicitRowCapOrderingTests : IDisposable
 {
+    /// <summary>An age threshold no other test in the assembly filters on, so the SQL it produces is
+    /// identifiable among the commands captured from EF Core's process-global diagnostic listener.
+    /// All three seeded customers are older than this, so it does not narrow the result.</summary>
+    private const int UniqueAgeThreshold = 7;
+
     private readonly SqliteTestDatabase _db = new();
     private readonly LoadedAssemblyHandle _handle;
     private readonly Type _throwingContextType;
@@ -56,11 +61,16 @@ public sealed class ImplicitRowCapOrderingTests : IDisposable
         var commands = new List<string>();
         using var listener = new SqlCommandDiagnosticListener(commands);
 
+        // EF Core's DiagnosticListener is process-global, so this captures commands from every test
+        // running concurrently, not just this one. The predicate below is matched against a literal
+        // unique to this query so a concurrent test's own Customers query can never satisfy it.
         await CreateExecutor().ExecuteAsync(
             _handle, _throwingContextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
-            new QueryRequest { Query = "Customers.Where(c => c.Age > 10)" }, CancellationToken.None);
+            new QueryRequest { Query = $"Customers.Where(c => c.Age > {UniqueAgeThreshold})" }, CancellationToken.None);
 
-        var command = Assert.Single(commands, text => text.Contains("FROM \"Customers\"", StringComparison.OrdinalIgnoreCase));
+        var command = Assert.Single(commands, text =>
+            text.Contains("FROM \"Customers\"", StringComparison.OrdinalIgnoreCase)
+            && text.Contains($"> {UniqueAgeThreshold}", StringComparison.Ordinal));
         Assert.Matches(@"(?is)ORDER\s+BY\s+.*?\bId\b", command);
         Assert.Contains("LIMIT", command, StringComparison.OrdinalIgnoreCase);
     }
