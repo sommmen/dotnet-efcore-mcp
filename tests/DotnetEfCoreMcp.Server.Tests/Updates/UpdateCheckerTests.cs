@@ -52,7 +52,7 @@ public class UpdateCheckerTests : IDisposable
     [Fact]
     public async Task Reports_an_available_update_with_its_upgrade_command()
     {
-        var result = await Create(new StubLookup(["0.1.32-preview", "0.1.39-preview"])).CheckAsync();
+        var result = await Create(new StubLookup(["0.1.32-preview", "0.1.39-preview"])).CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.True(result.Checked);
         Assert.True(result.UpdateAvailable);
@@ -64,7 +64,7 @@ public class UpdateCheckerTests : IDisposable
     [Fact]
     public async Task Reports_no_update_when_already_current()
     {
-        var result = await Create(new StubLookup(["0.1.20-preview", "0.1.32-preview"])).CheckAsync();
+        var result = await Create(new StubLookup(["0.1.20-preview", "0.1.32-preview"])).CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.True(result.Checked);
         Assert.False(result.UpdateAvailable);
@@ -74,7 +74,7 @@ public class UpdateCheckerTests : IDisposable
     [Fact]
     public async Task Stays_silent_when_the_feed_is_unreachable()
     {
-        var result = await Create(new StubLookup(versions: [])).CheckAsync();
+        var result = await Create(new StubLookup(versions: [])).CheckAsync(TestContext.Current.CancellationToken);
 
         // Indistinguishable from "already current" to a caller, which is correct: in neither case
         // is there anything useful to say.
@@ -85,7 +85,7 @@ public class UpdateCheckerTests : IDisposable
     [Fact]
     public async Task Stays_silent_when_the_lookup_throws()
     {
-        var result = await Create(new StubLookup(null, new InvalidOperationException("boom"))).CheckAsync();
+        var result = await Create(new StubLookup(null, new InvalidOperationException("boom"))).CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.False(result.Checked);
         Assert.Null(result.Notice);
@@ -102,7 +102,7 @@ public class UpdateCheckerTests : IDisposable
                 {
                     [UpdateCheckGate.DisableVariable] = "1",
                 })
-            .CheckAsync();
+            .CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, lookup.CallCount);
         Assert.False(result.Checked);
@@ -113,7 +113,7 @@ public class UpdateCheckerTests : IDisposable
     {
         var lookup = new StubLookup(["0.1.39-preview"]);
 
-        var result = await Create(lookup, baseDirectory: @"C:\Repos\app\bin\Debug\net10.0").CheckAsync();
+        var result = await Create(lookup, baseDirectory: @"C:\Repos\app\bin\Debug\net10.0").CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, lookup.CallCount);
         Assert.Equal(InstallMethod.Unknown, result.InstallMethod);
@@ -128,7 +128,7 @@ public class UpdateCheckerTests : IDisposable
         var result = await Create(
                 lookup,
                 baseDirectory: @"C:\Users\dev\.nuget\packages\dotnetefcoremcp.server\0.1.32-preview")
-            .CheckAsync();
+            .CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, lookup.CallCount);
         Assert.Equal(InstallMethod.Dnx, result.InstallMethod);
@@ -140,8 +140,8 @@ public class UpdateCheckerTests : IDisposable
         var lookup = new StubLookup(["0.1.39-preview"]);
         var checker = Create(lookup);
 
-        var first = await checker.CheckAsync();
-        var second = await checker.CheckAsync();
+        var first = await checker.CheckAsync(TestContext.Current.CancellationToken);
+        var second = await checker.CheckAsync(TestContext.Current.CancellationToken);
 
         // One request, two answers. This is what keeps per-session server launches off the network.
         Assert.Equal(1, lookup.CallCount);
@@ -155,8 +155,8 @@ public class UpdateCheckerTests : IDisposable
         var failing = new StubLookup(versions: []);
         var checker = Create(failing);
 
-        await checker.CheckAsync();
-        await checker.CheckAsync();
+        await checker.CheckAsync(TestContext.Current.CancellationToken);
+        await checker.CheckAsync(TestContext.Current.CancellationToken);
 
         // Caching a failure would suppress checks for a full day because the network blipped.
         Assert.Equal(2, failing.CallCount);
@@ -167,7 +167,7 @@ public class UpdateCheckerTests : IDisposable
     {
         var lookup = new StubLookup(["1.0.0"]);
 
-        var result = await Create(lookup, installedVersion: null).CheckAsync();
+        var result = await Create(lookup, installedVersion: null).CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, lookup.CallCount);
         Assert.False(result.Checked);
@@ -178,7 +178,7 @@ public class UpdateCheckerTests : IDisposable
     public async Task Never_offers_a_preview_to_a_stable_install()
     {
         var result = await Create(new StubLookup(["1.0.0", "1.1.0-preview"]), installedVersion: "1.0.0")
-            .CheckAsync();
+            .CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.True(result.Checked);
         Assert.False(result.UpdateAvailable);
