@@ -8,13 +8,20 @@ public static class FixturePaths
 
     public static string QueryHostDllPath => GetQueryHostDllPath();
 
+    /// <summary>The server's own build output, used by tests that must start the real stdio MCP
+    /// server process rather than call into it in-process.</summary>
+    public static string ServerDllPath => GetSourceProjectDllPath("DotnetEfCoreMcp.Server", "DotnetEfCoreMcp.Server.dll");
+
     private static string GetQueryHostDllPath()
+        => GetSourceProjectDllPath("DotnetEfCoreMcp.QueryHost", "DotnetEfCoreMcp.QueryHost.dll");
+
+    private static string GetSourceProjectDllPath(string projectName, string assemblyFileName)
     {
         foreach (var config in new[] { "Debug", "Release" })
         {
             var candidate = Path.GetFullPath(Path.Combine(
                 AppContext.BaseDirectory, "..", "..", "..", "..", "..",
-                "src", "DotnetEfCoreMcp.QueryHost", "bin", config, "net10.0", "DotnetEfCoreMcp.QueryHost.dll"));
+                "src", projectName, "bin", config, "net10.0", assemblyFileName));
             if (File.Exists(candidate))
             {
                 return candidate;
@@ -22,8 +29,8 @@ public static class FixturePaths
         }
 
         throw new FileNotFoundException(
-            "DotnetEfCoreMcp.QueryHost.dll not found under src/DotnetEfCoreMcp.QueryHost/bin/{Debug,Release}/net10.0. " +
-            "Build the solution before running out-of-process query host tests.");
+            $"{assemblyFileName} not found under src/{projectName}/bin/{{Debug,Release}}/net10.0. " +
+            "Build the solution before running tests that start that process.");
     }
 
     public static string NoContextAppDllPath => GetFixtureDllPath("NoContextApp", "NoContextApp.dll");

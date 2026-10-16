@@ -15,6 +15,16 @@
     hosting pattern via `Microsoft.Extensions.Hosting`:
     `AddMcpServer().WithStdioServerTransport().WithTools<EfCoreMcpTools>()` in
     `src/DotnetEfCoreMcp.Server/Program.cs`.
+  - Implementation note: `WithStdioServerTransport()` wires up the single-session hosted service
+    that runs the server, but the `ITransport` it registers is then replaced with
+    [`FlushOnDisconnectStdioTransport`](../../src/DotnetEfCoreMcp.Server/Tools/FlushOnDisconnectStdioTransport.cs).
+    The SDK's stock stream transport marks itself disconnected as soon as stdin reports
+    end-of-stream and silently drops every message sent afterwards, so a client that writes a
+    request and immediately closes stdin (a scripted or short-lived session) would never receive
+    its response — the session produces no output at all. Closing stdin only means the client will
+    send nothing further, not that it has stopped reading, so the override keeps writing to stdout
+    regardless of connection state. Covered by `FlushOnDisconnectStdioTransportTests` and end to
+    end by `McpServerShutdownTests`.
 - [x] Add a `.editorconfig` / analyzer baseline consistent with the rest of the codebase
   - 4-space indent, file-scoped namespaces, nullable-aware analyzer severities (see
     root `.editorconfig`).
