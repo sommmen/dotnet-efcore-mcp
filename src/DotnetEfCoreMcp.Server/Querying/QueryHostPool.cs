@@ -26,6 +26,7 @@ public sealed class QueryHostPool(
     private CancellationTokenSource? _maintenanceCts;
     private Task? _maintenanceTask;
     private bool _stopping;
+    private int _disposed;
     private int _fallbackExecutions;
     private int _totalPendingCreates;
 
@@ -36,7 +37,14 @@ public sealed class QueryHostPool(
         return Task.CompletedTask;
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    /// <summary>Stops the pool. Safe to call after disposal: the gate is only waited on while it is
+    /// still alive, because the pool is registered both as a singleton and as a hosted service, so
+    /// the host and the container between them can stop and dispose it in several orders and more
+    /// than once. Throwing here faults host shutdown and loses buffered stdio output.</summary>
+    public Task StopAsync(CancellationToken cancellationToken)
+        => Interlocked.CompareExchange(ref _disposed, 0, 0) != 0 ? Task.CompletedTask : StopCoreAsync(cancellationToken);
+
+    private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         List<PersistentQueryHostWorker> workers;
 
@@ -75,7 +83,10 @@ public sealed class QueryHostPool(
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync(CancellationToken.None).ConfigureAwait(false);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        await StopCoreAsync(CancellationToken.None).ConfigureAwait(false);
         _maintenanceCts?.Dispose();
         _gate.Dispose();
     }

@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Protocol;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -178,6 +179,18 @@ builder.Services
     })
     .WithStdioServerTransport()
     .WithTools<EfCoreMcpTools>();
+
+// WithStdioServerTransport() above wires up the single-session hosted service that actually runs
+// the server; this replaces only the ITransport it resolves. The SDK's stock stream transport
+// disconnects the moment stdin reports end-of-stream and then silently drops every message sent
+// afterwards, so a client that writes a request and immediately closes stdin - a scripted or
+// short-lived session - never receives the response it is waiting for. See
+// FlushOnDisconnectStdioTransport.
+builder.Services.AddSingleton<ITransport>(services => new FlushOnDisconnectStdioTransport(
+    Console.OpenStandardInput(),
+    Console.OpenStandardOutput(),
+    "DotnetEfCoreMcp.Server",
+    services.GetService<ILoggerFactory>()));
 
 var host = builder.Build();
 

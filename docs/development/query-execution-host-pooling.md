@@ -257,7 +257,13 @@ Concretely:
   minutes unused), whichever comes first. A retired worker is not replaced until the next
   checkout miss, keeping steady-state process count low.
 - **Shutdown**: on MCP server shutdown, send `shutdown` to all pooled workers with a short grace
-  period, then kill any still-running.
+  period, then kill any still-running. Stopping and disposing the pool must be **idempotent and
+  order-independent**: the pool is registered both as a singleton and as a hosted service, so the
+  host stops it and the container then disposes it (possibly more than once). An exception thrown
+  from either path faults host shutdown, which tears the process down before the stdio transport's
+  buffered stdout is flushed and silently loses *every* response written during the session — far
+  more damaging than the shutdown failure itself. `StopAsync` therefore no-ops once disposed rather
+  than waiting on an already-disposed gate. Covered by `QueryHostPoolLifetimeTests`.
 
 ### 4.4 Rollout
 
