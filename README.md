@@ -128,6 +128,44 @@ troubleshooting.
 Preview builds are published from every push to `main`; stable releases are published from
 tagged GitHub Releases (see [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)).
 
+### Updating
+
+Whether you need to do anything depends on how you installed the server:
+
+| Installed via | Stays current? | To update |
+|---|---|---|
+| `npx -y dotnet-efcore-mcp` | Yes | Nothing — the wrapper updates the .NET tool on every launch. |
+| `dnx DotnetEfCoreMcp.Server` | Yes | Nothing — `dnx` fetches the newest matching version per run. |
+| `dotnet tool install --global` | **No** | `dotnet tool update --global DotnetEfCoreMcp.Server --prerelease` |
+| `dotnet tool install --local` | No, by design | `dotnet tool update --local DotnetEfCoreMcp.Server --prerelease` |
+
+To see what you are running and whether anything newer exists:
+
+```powershell
+dotnet-efcore-mcp version --check-updates
+```
+
+Because preview builds ship frequently, a global install can fall behind without any sign of it.
+The server therefore checks nuget.org once a day for a newer version and reports the result
+through the read-only `onboard` tool, so your agent can tell you. **It only ever tells you — it
+never installs or updates anything by itself.** No notice is shown for install methods that
+already update themselves, or when the install method cannot be determined.
+
+To turn the check off, use any of:
+
+| | |
+|---|---|
+| `DOTNETEFCOREMCP_NO_UPDATE_CHECK=1` | Environment variable; any value disables it. |
+| `UpdateCheck:Enabled=false` | Server configuration. |
+| `DOTNET_CLI_TELEMETRY_OPTOUT=1` | Honored as an opt-out here too. |
+| Running in CI | Detected automatically; set `CI=false` to override. |
+
+The check is a plain unauthenticated `GET` to nuget.org for this package's published version list.
+It sends no identifying information, runs in the background so it cannot delay startup, times out
+after three seconds, and stays silent on any failure. It queries nuget.org directly and does **not**
+honor `NuGet.Config`, so on a private mirror either point it elsewhere with `UpdateCheck:Source` or
+disable it.
+
 ### Onboarding: hooks and skills
 
 Two things make this server easy to miss. First, the agent only reads the server's

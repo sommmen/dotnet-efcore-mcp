@@ -9,6 +9,7 @@ using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Telemetry;
 using DotnetEfCoreMcp.Server.Tools;
+using DotnetEfCoreMcp.Server.Updates;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -30,6 +31,11 @@ if (args.Length > 0 && args[0].Equals(HooksCommand.VerbName, StringComparison.Or
 if (args.Length > 0 && args[0].Equals(OnboardCommand.VerbName, StringComparison.OrdinalIgnoreCase))
 {
     return OnboardCommand.Run(args, Console.Out, Console.Error);
+}
+
+if (args.Length > 0 && args[0].Equals(VersionCommand.VerbName, StringComparison.OrdinalIgnoreCase))
+{
+    return await VersionCommand.RunAsync(args, Console.Out, Console.Error);
 }
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -86,6 +92,23 @@ builder.Services.AddSingleton<SqlQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("Onboarding").Get<OnboardingOptions>() ?? new OnboardingOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Migrations").Get<MigrationsOptions>() ?? new MigrationsOptions());
 builder.Services.AddSingleton<MigrationInspector>();
+
+// Update check: notify only, never self-update. Registered as a hosted service so the lookup runs
+// in the background after startup rather than on the initialize path - a slow or unreachable feed
+// must never delay the MCP handshake.
+var updateCheckOptions = builder.Configuration.GetSection("UpdateCheck").Get<UpdateCheckOptions>() ?? new UpdateCheckOptions();
+builder.Services.AddSingleton(updateCheckOptions);
+builder.Services.AddSingleton<INuGetVersionLookup>(_ => new FlatContainerVersionLookup(
+    // A short timeout on the client itself, in addition to UpdateChecker's overall budget: this is
+    // a cosmetic lookup, and HashiCorp's framing applies - not critical enough to block on.
+    new HttpClient { Timeout = TimeSpan.FromSeconds(3) },
+    updateCheckOptions.Source));
+builder.Services.AddSingleton<UpdateCheckCache>();
+builder.Services.AddSingleton(_ => new UpdateCheckGate(updateCheckOptions.Enabled));
+builder.Services.AddSingleton<InstallMethodDetector>();
+builder.Services.AddSingleton<UpdateChecker>();
+builder.Services.AddSingleton<UpdateNotificationService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<UpdateNotificationService>());
 builder.Services.AddSingleton(builder.Configuration.GetSection("EntityMutations").Get<EntityMutationsOptions>() ?? new EntityMutationsOptions());
 builder.Services.AddSingleton<EntityMutationExecutor>();
 // Diagnostic metadata is an explicit development-only opt-in. ToolDiagnosticsOptions additionally
@@ -175,6 +198,10 @@ builder.Services
             leaking private code. Call the read-only `onboard` tool to see what is available and
             what is already set up, and mention it if the user is hitting rough edges with this
             server. Never install anything without the user asking for it.
+
+            The `onboard` tool also reports this server's version and whether a newer one has been
+            published. If it reports an update, pass the notice along to the user; do not run the
+            upgrade yourself.
             """;
     })
     .WithStdioServerTransport()

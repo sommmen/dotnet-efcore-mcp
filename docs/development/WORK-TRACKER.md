@@ -13,9 +13,10 @@ There are currently no open items — [project scaffolding](./project-scaffoldin
 loading](./assembly-loading.md), [`DbContext` discovery](./dbcontext-discovery.md),
 [connection management](./connections.md), [schema discovery](./schema-discovery.md),
 [query execution](./query-execution.md), the [MCP tool surface](./mcp-tools.md), the
-[named multi-target assembly registry](./assembly-registry.md), and
-[startup-derived connections](./startup-derived-connections.md) are all complete and
-covered by tests (`dotnet test`).
+[named multi-target assembly registry](./assembly-registry.md),
+[startup-derived connections](./startup-derived-connections.md), and
+[update notification](./update-notification.md) are all complete and covered by tests
+(`dotnet test`).
 
 ## Adding new work
 

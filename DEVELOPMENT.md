@@ -25,6 +25,7 @@ Each module has its own implementation checklist, design decisions, and notes:
 | [Agent onboarding](./docs/development/agent-onboarding.md) | `onboard` CLI verb and MCP tool making the hooks and skills discoverable, plus workspace vs user-wide install scope. |
 | [Agent hooks](./docs/development/agent-hooks.md) | `hooks` CLI verb installing Claude Code/Copilot CLI/Codex hooks that announce this server at session start and remind the agent to validate LINQ with it. |
 | [Agent skills](./docs/development/agent-skills.md) | Skills shipped under [`skills/`](./skills), their install script, and how to develop/evaluate them. |
+| [Update notification](./docs/development/update-notification.md) | #98: notify-only update check and the `version` CLI verb, telling global-tool users when a newer version is published without ever self-updating. |
 | [Assembly loading](./docs/development/assembly-loading.md) | Loading a target project's compiled output into an isolated, collectible `AssemblyLoadContext`. |
 | [Multi-target assembly registry](./docs/development/assembly-registry.md) | P2 #15: named registry for holding several loaded target assemblies at once. |
 | [`DbContext` discovery](./docs/development/dbcontext-discovery.md) | Finding and constructing `DbContext` types in a loaded assembly. |
