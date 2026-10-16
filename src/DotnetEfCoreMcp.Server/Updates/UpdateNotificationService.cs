@@ -66,7 +66,7 @@ public sealed class UpdateNotificationService(
             // UpdateChecker already swallows ordinary failures, so reaching here means something
             // unanticipated. It still must not escape: an unobserved exception from a background
             // service can take the host down, and no update check is worth that.
-            logger.LogDebug(exception, "Update check failed.");
+            logger.LogWarning(exception, "Update check failed.");
         }
     }
 }

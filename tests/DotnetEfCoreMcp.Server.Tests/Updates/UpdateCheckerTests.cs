@@ -11,7 +11,8 @@ namespace DotnetEfCoreMcp.Server.Tests.Updates;
 /// </remarks>
 public class UpdateCheckerTests : IDisposable
 {
-    private const string GlobalToolPath = @"C:\Users\dev\.dotnet\tools\.store\dotnetefcoremcp.server\0.1.32-preview";
+    private static readonly string GlobalToolPath = Path.Combine(
+        "Users", "dev", ".dotnet", "tools", ".store", "dotnetefcoremcp.server", "0.1.32-preview");
 
     private readonly string _root =
         Path.Combine(Path.GetTempPath(), "efcore-update-checker", Guid.NewGuid().ToString("n"));
@@ -35,7 +36,7 @@ public class UpdateCheckerTests : IDisposable
     private UpdateChecker Create(
         INuGetVersionLookup lookup,
         string? installedVersion = "0.1.32-preview",
-        string baseDirectory = GlobalToolPath,
+        string? baseDirectory = null,
         IDictionary<string, string?>? environment = null)
     {
         var variables = environment ?? new Dictionary<string, string?>();
@@ -45,7 +46,7 @@ public class UpdateCheckerTests : IDisposable
             lookup,
             new UpdateCheckCache(Path.Combine(_root, "update-check.json"), TimeProvider.System),
             new UpdateCheckGate(enabledByConfiguration: true, Read),
-            new InstallMethodDetector(baseDirectory, Path.Combine(_root, "cwd"), Read),
+            new InstallMethodDetector(baseDirectory ?? GlobalToolPath, Path.Combine(_root, "cwd"), Read),
             installedVersion);
     }
 
@@ -127,7 +128,8 @@ public class UpdateCheckerTests : IDisposable
         // dnx refetches on every run, so there is nothing to tell the user.
         var result = await Create(
                 lookup,
-                baseDirectory: @"C:\Users\dev\.nuget\packages\dotnetefcoremcp.server\0.1.32-preview")
+                baseDirectory: Path.Combine(
+                    "Users", "dev", ".nuget", "packages", "dotnetefcoremcp.server", "0.1.32-preview"))
             .CheckAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, lookup.CallCount);

@@ -93,6 +93,11 @@ public sealed class UpdateChecker
     /// </returns>
     public async Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken = default)
     {
+        if (!_gate.IsAllowed(_installedVersion, InstallMethod.GlobalTool))
+        {
+            return UpdateCheckResult.NotChecked(_installedVersion, InstallMethod.Unknown);
+        }
+
         var method = _detector.Detect();
 
         if (!_gate.IsAllowed(_installedVersion, method))

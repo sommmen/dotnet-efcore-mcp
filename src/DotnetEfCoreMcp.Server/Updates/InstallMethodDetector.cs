@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace DotnetEfCoreMcp.Server.Updates;
 
 /// <summary>
@@ -183,15 +185,18 @@ public sealed class InstallMethodDetector
     {
         try
         {
-            // A substring match is enough and is intentionally more forgiving than parsing: the
-            // question is only "does this manifest concern our package", and a malformed or
-            // unexpected manifest shape should fall back to the global reading rather than throw.
-            return File.ReadAllText(manifestPath)
-                .Contains(PackageIdOnDisk, StringComparison.OrdinalIgnoreCase);
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+
+            return document.RootElement.TryGetProperty("tools", out var tools)
+                   && tools.ValueKind == JsonValueKind.Object
+                   && tools.EnumerateObject().Any(tool =>
+                       string.Equals(tool.Name, PackageIdOnDisk, StringComparison.OrdinalIgnoreCase));
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException
+                                              or UnauthorizedAccessException
+                                              or JsonException)
         {
-            // Detection is advisory; an unreadable manifest must never break startup.
+            // Detection is advisory; an unreadable or malformed manifest must never break startup.
             return false;
         }
     }

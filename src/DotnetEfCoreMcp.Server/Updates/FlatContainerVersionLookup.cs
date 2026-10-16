@@ -57,7 +57,7 @@ public sealed partial class FlatContainerVersionLookup : INuGetVersionLookup
         }
 
         // The flat container addresses packages by lowercase id.
-        var requestUri = new Uri(_baseAddress, $"{packageId.ToLowerInvariant()}/index.json");
+        var requestUri = new Uri(_baseAddress, $"{Uri.EscapeDataString(packageId.ToLowerInvariant())}/index.json");
 
         try
         {

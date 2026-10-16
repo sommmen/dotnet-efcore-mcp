@@ -20,6 +20,13 @@ namespace DotnetEfCoreMcp.Server.Tests.Updates;
 /// directly rather than trusted to code review.
 /// </para>
 /// </remarks>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ConsoleOutputCollection
+{
+    public const string Name = "Console output";
+}
+
+[Collection(ConsoleOutputCollection.Name)]
 public class UpdateNotificationStdoutTests : IDisposable
 {
     private readonly string _root =
@@ -40,7 +47,8 @@ public class UpdateNotificationStdoutTests : IDisposable
             new UpdateCheckCache(Path.Combine(_root, "update-check.json"), TimeProvider.System),
             new UpdateCheckGate(enabledByConfiguration: true, Read),
             new InstallMethodDetector(
-                @"C:\Users\dev\.dotnet\tools\.store\dotnetefcoremcp.server\0.1.32-preview",
+                Path.Combine(
+                    "Users", "dev", ".dotnet", "tools", ".store", "dotnetefcoremcp.server", "0.1.32-preview"),
                 Path.Combine(_root, "cwd"),
                 Read),
             "0.1.32-preview");
@@ -108,10 +116,14 @@ public class UpdateNotificationStdoutTests : IDisposable
         await service.StopAsync(CancellationToken.None);
 
         // The notice travels inside a tool result, so it has to round-trip through JSON intact.
-        var json = JsonSerializer.Serialize(new { notice = service.Result?.Notice });
+        var result = service.Result;
+        Assert.NotNull(result);
+        Assert.True(result.UpdateAvailable);
+        Assert.NotNull(result.Notice);
+        var json = JsonSerializer.Serialize(new { notice = result.Notice });
 
         Assert.Equal(
-            service.Result?.Notice,
+            result.Notice,
             JsonDocument.Parse(json).RootElement.GetProperty("notice").GetString());
     }
 

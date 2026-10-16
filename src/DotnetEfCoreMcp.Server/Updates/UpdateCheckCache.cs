@@ -129,16 +129,17 @@ public sealed class UpdateCheckCache
             LatestVersion = latestVersion,
         };
 
+        string? temporaryPath = null;
+
         try
         {
-            var directory = Path.GetDirectoryName(_filePath);
+            var fullPath = Path.GetFullPath(_filePath);
+            var directory = Path.GetDirectoryName(fullPath)!;
+            Directory.CreateDirectory(directory);
 
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            File.WriteAllText(_filePath, JsonSerializer.Serialize(entry, SerializerOptions));
+            temporaryPath = Path.Combine(directory, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(entry, SerializerOptions));
+            File.Move(temporaryPath, fullPath, overwrite: true);
         }
         catch (Exception exception) when (exception is IOException
                                               or UnauthorizedAccessException
@@ -147,6 +148,20 @@ public sealed class UpdateCheckCache
         {
             // A read-only or sandboxed home directory means the check simply runs again next time.
             // That is a performance cost, not a correctness problem, and never worth an error.
+        }
+        finally
+        {
+            if (temporaryPath is not null)
+            {
+                try
+                {
+                    File.Delete(temporaryPath);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    // The temporary file is harmless and will be ignored by future reads.
+                }
+            }
         }
     }
 }
