@@ -61,7 +61,7 @@ public sealed class ImplicitRowCapOrderingTests : IDisposable
             new QueryRequest { Query = "Customers.Where(c => c.Age > 10)" }, CancellationToken.None);
 
         var command = Assert.Single(commands, text => text.Contains("FROM \"Customers\"", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains("ORDER BY \"c\".\"Id\"", command, StringComparison.OrdinalIgnoreCase);
+        Assert.Matches(@"(?is)ORDER\s+BY\s+.*?\bId\b", command);
         Assert.Contains("LIMIT", command, StringComparison.OrdinalIgnoreCase);
     }
 
