@@ -274,12 +274,13 @@ reasons.
 `Auto` should select in-process only for `Compatible`; both `Incompatible` and `Unknown` should
 select out-of-process.
 
-### Phase 3: turn the PoC into a production query host
+### Phase 3: turn the PoC into a production query host (done)
 
 Promote the PoC's child process into a dedicated query-host project. Keep it free of a compile-time
 reference to the arbitrary target application's types. Launch it using the target app's
-runtimeconfig/deps graph, as demonstrated in
-`poc/OutOfProcessQueryHost/`.
+runtimeconfig/deps graph. This phase shipped as
+[`src/DotnetEfCoreMcp.QueryHost`](../../src/DotnetEfCoreMcp.QueryHost); the original
+throwaway PoC it was promoted from has since been removed from the repository.
 
 Use a versioned IPC protocol containing:
 
