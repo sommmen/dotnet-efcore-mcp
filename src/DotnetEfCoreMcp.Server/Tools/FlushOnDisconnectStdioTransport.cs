@@ -78,6 +78,5 @@ internal sealed class FlushOnDisconnectStdioTransport : StreamServerTransport
         _sendLock.Release();
 
         await base.DisposeAsync().ConfigureAwait(false);
-        _sendLock.Dispose();
     }
 }
