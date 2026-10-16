@@ -10,6 +10,7 @@ using DotnetEfCoreMcp.Server.Onboarding;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Schema;
 using DotnetEfCoreMcp.Server.Telemetry;
+using DotnetEfCoreMcp.Server.Updates;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
@@ -42,7 +43,8 @@ public sealed class EfCoreMcpTools(
     EntityMutationsOptions entityMutationsOptions,
     EntityMutationExecutor entityMutationExecutor,
     IMcpMetrics metrics,
-    OnboardingOptions? onboardingOptions = null)
+    OnboardingOptions? onboardingOptions = null,
+    UpdateNotificationService? updateNotifications = null)
 {
     private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
 
@@ -959,8 +961,49 @@ public sealed class EfCoreMcpTools(
                     ? "Restart the agent CLI (or reload the window) so it rescans hooks and skills."
                     : "Ask the user before installing; then call this tool again with apply=true, or run "
                       + OnboardingStatus.InstallCommandHint + ".",
+            version = DescribeVersion(),
         });
     }
+
+    /// <summary>
+    /// Describes the running version and any available update.
+    /// </summary>
+    /// <remarks>
+    /// Reported here, on a read-only tool the agent calls deliberately, rather than appended to
+    /// every tool result. Query and schema results are machine-consumed and often large; adding an
+    /// update notice to them would inflate context on every call and invite the model to treat
+    /// server maintenance as part of the user's task.
+    /// </remarks>
+    private object DescribeVersion()
+    {
+        var result = updateNotifications?.Result;
+
+        return new
+        {
+            current = PackageVersionProvider.GetPackageVersion(),
+            installedVia = result is null ? null : InstallMethodName(result.InstallMethod),
+
+            // Null latest means either "not checked yet" or "nothing newer"; checked distinguishes
+            // them so the agent does not report an unfinished check as an up-to-date result.
+            checkedForUpdates = result?.Checked ?? false,
+            latest = result?.LatestVersion,
+            updateAvailable = result?.UpdateAvailable ?? false,
+            upgradeCommand = result?.UpgradeCommand,
+
+            // Phrased for the agent to relay, not to act on. Upgrading is the user's decision, and
+            // this server never installs anything on their behalf.
+            notice = result?.Notice,
+        };
+    }
+
+    private static string InstallMethodName(InstallMethod method) => method switch
+    {
+        InstallMethod.GlobalTool => "dotnet-tool-global",
+        InstallMethod.LocalTool => "dotnet-tool-local",
+        InstallMethod.Dnx => "dnx",
+        InstallMethod.Npm => "npm",
+        _ => "unknown",
+    };
 
     [McpServerTool(Name = "list_loaded_assemblies"), Description(
         "Lists every target assembly currently registered on the server, including each target's logical name, " +

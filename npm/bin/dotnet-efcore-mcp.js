@@ -121,6 +121,12 @@ function launch() {
     env: {
       ...process.env,
       PATH: `${toolsDir()}${path.delimiter}${process.env.PATH || ""}`,
+
+      // Tell the server it was launched through this wrapper. It cannot work this out for
+      // itself - an npm launch sits in the same global tools directory as a plain
+      // `dotnet tool install --global`, so without this it would look like one and would
+      // tell the user to run an update this wrapper already performed above.
+      DOTNETEFCOREMCP_INSTALL_METHOD: "npm",
     },
   });
 

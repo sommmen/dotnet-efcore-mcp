@@ -47,6 +47,8 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
+    <!-- Update check: NuGet's version type, for correct prerelease ordering. -->
+    <PackageReference Include="NuGet.Versioning" />
 
     <!-- EF Core packages: used both to build DbContextOptionsBuilder<T> for the loaded target
          assembly's DbContext types, and to walk IModel for schema discovery. -->

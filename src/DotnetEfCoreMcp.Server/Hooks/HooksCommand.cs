@@ -1,5 +1,5 @@
-using System.Reflection;
 using DotnetEfCoreMcp.Server.Onboarding;
+using DotnetEfCoreMcp.Server.Updates;
 
 namespace DotnetEfCoreMcp.Server.Hooks;
 
@@ -188,33 +188,7 @@ public static class HooksCommand
     /// The NuGet package version, or <see langword="null"/> to leave the command unpinned (which
     /// happens when running from a build without the packaging metadata, such as a local F5).
     /// </returns>
-    internal static string? GetPackageVersion()
-    {
-        var assembly = typeof(HooksCommand).Assembly;
-
-        // The build embeds the real $(PackageVersion); prefer it, because the informational version
-        // does not reproduce Nerdbank.GitVersioning's package-version suffix verbatim.
-        var packageVersion = assembly
-            .GetCustomAttributes<AssemblyMetadataAttribute>()
-            .FirstOrDefault(attribute => attribute.Key == "NuGetPackageVersion")?.Value;
-
-        if (!string.IsNullOrWhiteSpace(packageVersion))
-        {
-            return packageVersion;
-        }
-
-        var informational = assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-
-        if (string.IsNullOrWhiteSpace(informational))
-        {
-            return null;
-        }
-
-        // Strip the "+<commit>" build metadata, which is not part of a NuGet package version.
-        var plus = informational.IndexOf('+', StringComparison.Ordinal);
-        return plus >= 0 ? informational[..plus] : informational;
-    }
+    internal static string? GetPackageVersion() => PackageVersionProvider.GetPackageVersion();
 
     private static IReadOnlyList<HookClient> ResolveClients(string[] args)
     {
