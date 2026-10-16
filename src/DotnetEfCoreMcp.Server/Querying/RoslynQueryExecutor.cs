@@ -234,7 +234,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
                     sequence, context, contextType, request.Pagination, executionOptions, effectiveTake, request.RootEntityName, linked.Token).ConfigureAwait(false);
             }
 
-            var (values, hasMoreRows) = await QueryExecutor.MaterializeWithContinuationAsync(sequence, effectiveTake, linked.Token).ConfigureAwait(false);
+            var (values, hasMoreRows) = await QueryExecutor.MaterializeWithContinuationAsync(sequence, effectiveTake, context, linked.Token).ConfigureAwait(false);
             return new QueryResult(request.RootEntityName ?? "C#", values.Count, effectiveTake, hasMoreRows, false, null, includePlan is null
                 ? values.Select(QueryExecutor.ProjectValue).ToList()
                 : values.Select(rowValue => IncludeQueryProcessor.Project(rowValue!, includePlan)).ToList());

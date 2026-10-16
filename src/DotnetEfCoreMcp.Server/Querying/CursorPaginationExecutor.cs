@@ -53,7 +53,7 @@ internal static class CursorPaginationExecutor
             }
 
             var (values, hasMoreRows) = await QueryExecutor.MaterializeWithContinuationAsync(
-                ordered, effectiveTake, cancellationToken).ConfigureAwait(false);
+                ordered, effectiveTake, context, cancellationToken).ConfigureAwait(false);
             var nextCursor = hasMoreRows && values.Count > 0
                 ? EncodeCursor(contextType, entityType, orderingShape, ReadValues(orderings, values[^1]!), options.CursorSigningKey)
                 : null;
