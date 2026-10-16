@@ -174,8 +174,17 @@ and applies an automatic take cap, so fragments like
 `Orders.Where(o => o.Number == "123NL")` work without an explicit
 `.ToList()`/`.ToListAsync()`/`.FirstOrDefault()`. Adding a terminal element operator or explicit
 `Take(n)` still narrows the result. By contrast, already-materialized results or client-side
-`IEnumerable` pipelines are returned as scalars, not paged row sets. **Deterministic result ordering
-requires an explicit `OrderBy` — the server applies no automatic ordering.**
+`IEnumerable` pipelines are returned as scalars, not paged row sets.
+
+Because that automatic cap is itself a row-limiting operator, the server pairs it with a
+deterministic ordering when the query has none (`ImplicitRowCapOrdering`): ascending by the mapped
+entity's primary-key properties, pushed beneath any trailing `Select` projections, falling back to
+the scalar element value when a projection or `Distinct` has erased the key. A query that already
+orders its own rows keeps that ordering untouched, and a query with no orderable element is left
+exactly as it was. Without this, the cap paged arbitrarily and outright failed against a target
+context that escalates EF Core's `RowLimitingOperationWithoutOrderByWarning` to an error (issue
+#97). **Note this ordering exists to make the server's own cap deterministic; prefer an explicit
+`OrderBy` to express the ordering a query actually needs.**
 
 Execution defaults to `QueryTrackingBehavior.NoTracking`, subject to the selected connection's
 command timeout and server cancellation. An explicit `.AsTracking()` can opt back into tracking.

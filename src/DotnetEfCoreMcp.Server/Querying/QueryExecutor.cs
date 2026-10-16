@@ -123,9 +123,14 @@ public static class QueryExecutor
     /// <c>Take(min(N, effectiveTake + 1))</c>, which equals <c>Take(N)</c> whenever
     /// <c>N &lt;= effectiveTake</c> and would silently prevent the sentinel row from ever being requested.
     /// Takes nested in set-operation branches are preserved because they affect that branch's result
-    /// semantics.</summary>
+    /// semantics.
+    /// <para>The injected <c>Take</c> is a server-added safety measure rather than user intent, so it
+    /// carries its own deterministic primary-key ordering when the query has none
+    /// (<see cref="ImplicitRowCapOrdering"/>): without it the cap is a row-limiting operator with no
+    /// <c>OrderBy</c>, which pages arbitrarily and outright fails against a target context that
+    /// escalates EF Core's <c>RowLimitingOperationWithoutOrderByWarning</c> to an error (issue #97).</para></summary>
     internal static async Task<(List<object?> Values, bool HasMoreRows)> MaterializeWithContinuationAsync(
-        IQueryable sequence, int effectiveTake, CancellationToken cancellationToken)
+        IQueryable sequence, int effectiveTake, DbContext context, CancellationToken cancellationToken)
     {
         if (effectiveTake == 0) return ([], false);
 
@@ -137,6 +142,7 @@ public static class QueryExecutor
         }
 
         var withoutExistingTake = TakeRemover.RemovePagePipelineTakes(sequence.Expression);
+        withoutExistingTake = ImplicitRowCapOrdering.Apply(withoutExistingTake, context.Model);
         var page = sequence.Provider.CreateQuery(Expression.Call(
             typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], withoutExistingTake,
             Expression.Constant(effectiveTake + 1)));
