@@ -18,7 +18,7 @@ Most existing EF Core + MCP integrations require the tools to be baked into the 
 - Discovers its model dynamically via reflection instead of design-time source generation.
 - Exposes safe, generalized schema discovery and querying to an MCP client.
 
-This project aims to fill that gap. See [DEVELOPMENT.md](./DEVELOPMENT.md) for the current feature status and module guides.
+This project fills that gap. See [DEVELOPMENT.md](./DEVELOPMENT.md) for the module guides and the [status](#status) below for what ships today.
 
 ## How it works
 
@@ -41,12 +41,25 @@ Target application's database
 
 ## Status
 
-MVP implemented: assembly loading, `DbContext` discovery, server-side connection registry,
-schema discovery, safe Dynamic-LINQ query execution, and the MCP stdio tool surface are all
-in place and tested (`dotnet test`). Structured logging is also in place; the optional
-metrics/telemetry hooks are the only remaining open item — see
-[DEVELOPMENT.md](./DEVELOPMENT.md) for the module-by-module breakdown and the [work
-tracker](./docs/development/WORK-TRACKER.md) for outstanding work.
+**Feature complete and in production use.** Every planned module has landed and is covered by
+tests (`dotnet test`), and the server is being used day to day against real applications:
+
+| Area | What's in place |
+|---|---|
+| Assembly loading | Isolated, collectible `AssemblyLoadContext`; automatic reload on rebuild; optional allowed-root restriction; named multi-target registry (`load_assembly targetName`, `list_loaded_assemblies`, `select_target`). |
+| `DbContext` discovery | Reflection-based discovery and construction, including split/multiple contexts and ASP.NET Core Identity contexts. |
+| Connections | Server-side registry with provider allowlisting, mandatory per-connection `AccessPolicy`, redacted metadata, production guard rails, and opt-in startup-derived connections from the target app's own design-time factory. |
+| Schema discovery | Paged/cursored `get_schema`, plus `list_entities`, `get_entity_schema`, and `search_schema` for cheap targeted lookups. |
+| Query execution | Roslyn-compiled LINQ over the real model, read-only by default, in-process / out-of-process / pooled host modes, bounded result shaping and row caps, and `preview_query_sql` for SQL inspection without execution. |
+| Migrations | Always-on read-only `list_migrations` and gated `generate_migration_script` (preview only, never executed). |
+| Mutations | Gated single-entity `insert_entity` / `update_entity` / `delete_entity`, off by default and never available for production or read-only connections. |
+| Raw SQL | Gated `run_sql_query`, off by default and never available for production or read-only connections. |
+| Observability | Structured logging plus optional OpenTelemetry metrics and tracing (export disabled by default). |
+| Distribution | Published to NuGet.org as a .NET tool / `dnx`-runnable MCP server, with an update-notification check and an `onboard` verb that installs agent hooks and skills. |
+
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for the module-by-module breakdown. The [work
+tracker](./docs/development/WORK-TRACKER.md) has no open items; new gaps and feature requests
+are tracked as [GitHub issues](https://github.com/sommmen/dotnet-efcore-mcp/issues).
 
 ## Prior art / inspiration
 
@@ -105,8 +118,7 @@ dnx DotnetEfCoreMcp.Server --prerelease --yes
 
 ### Install via npm
 
-A thin npm wrapper (in [`npm/`](./npm)) is published as
-[`dotnet-efcore-mcp`](https://www.npmjs.com/package/dotnet-efcore-mcp) so MCP clients/skill
+A thin npm wrapper (in [`npm/`](./npm)) is packaged as `dotnet-efcore-mcp` so MCP clients/skill
 managers that expect an `npx`-launchable server (e.g.
 [vercel-labs/skills](https://github.com/vercel-labs/skills)) can install it without a user
 running `dotnet tool install` by hand:
@@ -120,13 +132,15 @@ on later runs updates) the matching `DotnetEfCoreMcp.Server` .NET tool version f
 then execs straight into it. See [`npm/README.md`](./npm/README.md) for full details and
 troubleshooting.
 
-> **Note:** npm publishing is currently dormant in CI pending an `NPM_TOKEN` secret (or npm
-> Trusted Publishing configuration) — see
-> [`.github/workflows/publish.yml`](./.github/workflows/publish.yml). Until then, the package
-> can still be published manually from `npm/` for testing.
+> **Note:** the npm package is not published to the public registry yet. CI packs and stamps it
+> on every release, but the publish step stays skipped until an `NPM_TOKEN` secret (or npm
+> Trusted Publishing) is configured — see
+> [`.github/workflows/publish.yml`](./.github/workflows/publish.yml). Until then, use the .NET
+> tool or `dnx` install above, or publish the wrapper manually from `npm/` for testing.
 
-Preview builds are published from every push to `main`; stable releases are published from
-tagged GitHub Releases (see [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)).
+Preview builds are published to NuGet.org from every push to `main`; stable releases are
+published from tagged GitHub Releases (see
+[`.github/workflows/publish.yml`](./.github/workflows/publish.yml)).
 
 ### Updating
 
@@ -545,12 +559,12 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | Tool | Parameters | Returns |
 |---|---|---|
 | `list_assembly_candidates` | `workspacePath: string`, `pathFilter?: string`, `includeAllBuilds?: bool` | `workspacePath` and DbContext-first, preference-ordered `candidates` (assembly path, project, configuration, target framework, write time, preferred flag). By default, one preferred candidate per project is returned with `otherBuildsOfThisProject`; set `includeAllBuilds` to list every configuration/TFM output. |
-| `load_assembly` | `assemblyPath: string` | Loaded assembly path/time and discovered `DbContext` names, full names, and construction kinds |
-| `list_contexts` | *(none)* | Current assembly path, stale flag, and discovered contexts |
-| `get_schema` | `contextName?: string`, `connectionName?: string`, `page?: int`, `pageSize?: int`, `cursor?: string` | A bounded entity page with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), keys, relationships, navigations, and inheritance metadata. Follow `nextCursor` for page-size-independent continuation. |
-| `list_entities` | `contextName?: string`, `connectionName?: string` | Lightweight policy-filtered list of entity CLR names and relational table names for discovery before requesting a full schema. |
-| `get_entity_schema` | `entityName: string`, `contextName?: string`, `connectionName?: string` | Complete policy-filtered definition for one exact entity (same shape as `get_schema`'s `entities`). Builds and caches the resolved context's schema on demand. |
-| `search_schema` | `contextName?: string`, `query: string`, `maxResults?: int`, `connectionName?: string` | Compact, case-insensitive substring matches (`entityName`, `entityNameMatched`, `matchingProperties`, `matchingRelationships`) across entity/property/relationship names, plus `totalMatchCount` and `truncated`. | `maxResults` defaults to 10 and is capped at 25. Same lazy cache-build behavior as `get_entity_schema`. |
+| `load_assembly` | `assemblyPath: string`, `targetName?: string` | Loaded assembly path/time and discovered `DbContext` names, full names, and construction kinds. Pass `targetName` to register an additional named target instead of replacing the default one. |
+| `list_contexts` | `targetName?: string` | Current assembly path, stale flag, and discovered contexts |
+| `get_schema` | `contextName?: string`, `connectionName?: string`, `page?: int`, `pageSize?: int`, `cursor?: string`, `targetName?: string` | A bounded entity page with properties (CLR type, nullability, PK/FK/concurrency-token flags, column name/type), keys, relationships, navigations, and inheritance metadata. Follow `nextCursor` for page-size-independent continuation. |
+| `list_entities` | `contextName?: string`, `connectionName?: string`, `targetName?: string` | Lightweight policy-filtered list of entity CLR names and relational table names for discovery before requesting a full schema. |
+| `get_entity_schema` | `entityName: string`, `contextName?: string`, `connectionName?: string`, `targetName?: string` | Complete policy-filtered definition for one exact entity (same shape as `get_schema`'s `entities`). Builds and caches the resolved context's schema on demand. |
+| `search_schema` | `contextName?: string`, `query: string`, `maxResults?: int`, `connectionName?: string`, `targetName?: string` | Compact, case-insensitive substring matches (`entityName`, `entityNameMatched`, `matchingProperties`, `matchingRelationships`) across entity/property/relationship names, plus `totalMatchCount` and `truncated`. `maxResults` defaults to 10 and is capped at 25. Same lazy cache-build behavior as `get_entity_schema`. |
 | `run_query` | `contextName: string`, `query: string`, `connectionName?: string`, `targetName?: string`, `include?: string[]`, `pagination?: { mode: "cursor", cursor?: string }` | Root DbSet name, scalar-or-sequence result, effective sequence page size, safely projected rows, a `hasMoreRows` continuation flag, and (in cursor mode) a `nextCursor`. `include` accepts dot-separated navigation paths (e.g. `["Orders.OrderLines"]`), validated against the EF Core model before execution (unknown/scalar segments, cycles, repeated navigations, and duplicate paths are rejected, subject to `MaxIncludeDepth`/`MaxIncludeCount`); when supplied, each collection level is deterministically ordered and capped server-side at `MaxIncludedCollectionItems` before materialization, and only the requested branches are projected. |
 | `preview_query_sql` | `contextName: string`, `query: string`, `connectionName?: string`, `targetName?: string`, `include?: string[]` | The provider-generated SQL for a `run_query`-style expression, obtained from the compiled, unexecuted `IQueryable` via `ToQueryString()`. Uses the same execution-mode routing as `run_query`, so it works in every `QueryExecution:Mode` (including the default `Auto`); `ApplicationFactory` connections require an isolated mode (`OutOfProcess`, `Pooled`, or `Auto`). When successful, the `ToQueryString()` call itself never opens a database connection, runs a command, or reads/writes rows — however, a caller-supplied expression may force enumeration or execute side effects before that point. Rejects scalar/element results, already-materialized results, and non-translatable operators (e.g. `Zip`) with a message directing the caller to `run_query` instead. `include` is validated identically to `run_query` and reflected in the previewed SQL (including any split-query plan applied for nested collection includes). |
 | `run_sql_query` | `contextName: string`, `sql: string`, `connectionName?: string`, `parameters?: object[]` | Rows, row count, affected rows, maximum rows, and more-rows flag; disabled by default and restricted to development `ReadWrite` connections |
@@ -558,6 +572,13 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `insert_entity` | `contextName: string`, `entity: string`, `values: object`, `connectionName?: string` | Inserted scalar values and actual affected rows; disabled by default and restricted to development `ReadWrite` connections |
 | `update_entity` | `contextName: string`, `entity: string`, `key: object`, `values: object`, `concurrency?: object`, `connectionName?: string` | Updated scalar values and actual affected rows, or a stable not-found-or-concurrency-conflict result |
 | `delete_entity` | `contextName: string`, `entity: string`, `key: object`, `concurrency?: object`, `connectionName?: string` | Actual affected rows, or a stable not-found-or-concurrency-conflict result |
+| `list_migrations` | `contextName: string`, `connectionName?: string`, `migrationsAssembly?: string` | Known, applied, and pending migrations plus `databaseExists` and `appliedStateAvailable`. Always available (read-only, no DDL/DML) except for production connections |
+| `generate_migration_script` | `contextName: string`, `connectionName?: string`, `fromMigration?: string`, `toMigration?: string`, `idempotent?: bool`, `migrationsAssembly?: string` | The SQL EF Core's `IMigrator.GenerateScript` would produce between two migration IDs — never executed. Disabled by default |
+| `list_connections` | *(none)* | Registered connections with provider, access mode, environment, source, production flag, and which is active. Connection strings are never exposed |
+| `swap_connection` | `connectionName: string`, `allowProduction?: bool` | The new active connection. Production connections require `allowProduction: true` |
+| `list_loaded_assemblies` | *(none)* | Every registered target assembly (logical name, source path, load timestamp, default flag) |
+| `select_target` | `targetName: string` | The new default target used when `targetName` is omitted elsewhere. Does not unload any other target |
+| `onboard` | `workspacePath?: string`, `apply?: bool`, `scope?: string`, `what?: string`, `force?: bool` | What hooks/skills exist and what is installed (read-only by default), plus any pending update notice. `apply: true` also requires the server-side `Onboarding:AllowInstall` setting |
 
 `query` is Roslyn-compiled C# rooted at an exact, public `DbSet<T>` property on the selected
 context, such as `Customers.Where(c => c.Age > 18).Select(c => new { c.Id, c.Name })`.
@@ -645,4 +666,10 @@ Because this server can execute arbitrary queries against a real database on beh
 
 ## Contributing
 
-This is an early-stage personal/experimental project. Issues and PRs are welcome once the initial scaffolding lands.
+Issues and PRs are welcome. Start with [DEVELOPMENT.md](./DEVELOPMENT.md) for the module layout
+and build/test instructions, and use the Conventional Commit style described in
+[AGENTS.md](./AGENTS.md).
+
+If something about this server itself is broken or awkward, the
+[`dotnet-efcore-mcp-feedback`](./skills/dotnet-efcore-mcp-feedback) skill can turn the encounter
+into a reproducible issue without exposing your code or connection strings.
