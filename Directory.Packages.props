@@ -21,7 +21,7 @@
     <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
-    <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
+    <PackageVersion Include="ModelContextProtocol" Version="2.3.0" />
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- Update check only: NuGet's own version type, because prerelease ordering (0.2.0-preview
          sorts below 0.2.0) is exactly what System.Version gets wrong. -->
