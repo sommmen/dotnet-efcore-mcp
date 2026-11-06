@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NewerEfCoreApp</RootNamespace>
+
+    <!-- Every other fixture inherits the server's own EF Core version through Central Package
+         Management, so host and target always agree and the version-unification path in
+         TargetAssemblyLoadContext.Load is never exercised. This fixture deliberately opts out of
+         CPM and pins EF Core one patch ABOVE the server's pinned version, which is the ordinary
+         situation for a real target project that updated EF Core before the MCP server did. -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Keep these ahead of the version in the repo root Directory.Packages.props. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.14" />
+  </ItemGroup>
+
+</Project>

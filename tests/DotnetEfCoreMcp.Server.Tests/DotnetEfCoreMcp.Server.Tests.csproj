@@ -51,6 +51,7 @@
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\BrokenDependencyApp\BrokenDependencyApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\PackageDependencyApp\PackageDependencyApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\IdentityApp\IdentityApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\NewerEfCoreApp\NewerEfCoreApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\SplitContextApp\SplitContextApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\SplitMigrationsApp\SplitMigrationsApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
   </Target>
