@@ -57,9 +57,16 @@ internal sealed class CompiledQueryLoadContext : AssemblyLoadContext
             // and entity types comparable. Returning null here instead would forward the target's
             // version-bearing reference, and the binder refuses to satisfy that with an older copy.
             // See SharedAssemblyResolver.
-            if (SharedAssemblyResolver.TryResolveFromDefaultContext(assemblyName, out var shared, out _))
+            try
             {
-                return shared;
+                if (SharedAssemblyResolver.TryResolveFromDefaultContext(assemblyName, out var shared, out _))
+                {
+                    return shared;
+                }
+            }
+            catch (ArgumentNullException exception) when (exception.ParamName == "value")
+            {
+                // A missing default-context assembly is resolved from the target context below.
             }
 
             // No copy in the server at all - fall through to the target's own already-loaded
