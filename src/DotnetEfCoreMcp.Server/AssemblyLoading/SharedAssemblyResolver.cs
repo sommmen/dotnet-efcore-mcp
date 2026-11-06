@@ -128,10 +128,7 @@ internal static class SharedAssemblyResolver
             // cannot fail over a version gap the way forwarding the target's own reference does.
             return AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName(simpleName));
         }
-        catch (Exception exception) when (exception
-            is FileNotFoundException
-            or FileLoadException
-            or BadImageFormatException)
+        catch (FileNotFoundException)
         {
             // The server genuinely has no copy - e.g. an ASP.NET Core shared-framework assembly
             // that this console host does not reference. Callers fall back to the target's own
