@@ -128,11 +128,18 @@ internal static class SharedAssemblyResolver
             // cannot fail over a version gap the way forwarding the target's own reference does.
             return AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName(simpleName));
         }
-        catch (FileNotFoundException)
+        // All three mean the same thing to a caller: the server cannot supply this assembly, so
+        // fall back to the target's own copy rather than letting the whole type graph fail to
+        // load. FileNotFoundException is the common case (an ASP.NET Core shared-framework
+        // assembly this console host does not reference); FileLoadException covers a copy found
+        // but unloadable, and BadImageFormatException a corrupt or wrong-architecture one. Those
+        // two are rare, but narrowing to FileNotFoundException alone would turn an already-
+        // degraded install into a hard failure of every dependent type.
+        catch (Exception exception) when (exception
+            is FileNotFoundException
+            or FileLoadException
+            or BadImageFormatException)
         {
-            // The server genuinely has no copy - e.g. an ASP.NET Core shared-framework assembly
-            // that this console host does not reference. Callers fall back to the target's own
-            // copy rather than letting the whole type graph fail to load.
             return null;
         }
     }
