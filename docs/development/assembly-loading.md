@@ -52,6 +52,19 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`](../../tests/Dotnet
     such as `MissingFieldException` for `RelationalEventId.CommandExecuting`. When adding a shared
     assembly, also share every assembly that defines a type exposed by its public
     fields, parameters, or return values.
+  - **Version-agnostic sharing:** both contexts resolve those names through
+    `SharedAssemblyResolver`, which binds to the default context's copy by *simple name* rather
+    than returning `null` to delegate there. Delegating forwards the target's own version-bearing
+    reference, and the CLR binder satisfies a reference only with an equal-or-**higher** version —
+    so a target one EF Core patch ahead of the server (the normal state for any target that
+    updated first) failed the bind, dropped every type whose base chain reached `DbContext` from
+    `Assembly.GetTypes()`, and made discovery report "no DbContext found" for an assembly that
+    plainly had some (#115). Simple-name resolution ignores the version entirely, which is exactly
+    the unification the shared list asks for; the gap is still reported as a
+    `DependencyDiagnostics` warning naming both versions so a later `MissingMethodException` is
+    attributable. When the server ships no copy at all (e.g. an ASP.NET Core shared-framework
+    assembly this console host does not reference), resolution falls back to the target's own copy,
+    which costs type identity for that one assembly but keeps the rest of the type graph loadable.
   - Because that "reachable from a shared assembly's public API" rule is easy to violate silently
     (a new provider or an EF Core upgrade can add a public member that reaches an assembly not yet
     listed), `SharedFrameworkAssemblyClosureTests` walks the full public API closure of every

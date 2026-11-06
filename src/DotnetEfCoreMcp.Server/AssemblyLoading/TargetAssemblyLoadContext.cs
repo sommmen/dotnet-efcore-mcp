@@ -32,6 +32,11 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     // location) so that case can fail fast instead of silently substituting the wrong assembly.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _loadedAssemblyPathsByName = new(StringComparer.OrdinalIgnoreCase);
 
+    // Shared-assembly version gaps noticed while resolving this target's references, keyed by
+    // simple name so the same gap reported for several references is only surfaced once. Written
+    // from Load(), which the runtime can re-enter on multiple threads.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _sharedAssemblyVersionWarnings = new(StringComparer.OrdinalIgnoreCase);
+
     public TargetAssemblyLoadContext(string mainAssemblyPath, string name)
         : base(name, isCollectible: true)
     {
@@ -40,10 +45,12 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     }
 
     /// <summary>Non-fatal problems found while preparing dependency resolution for this target
-    /// (e.g. a required shared framework that is not installed). Surfaced as load warnings so a
+    /// (e.g. a required shared framework that is not installed, or a shared assembly the target
+    /// references at a newer version than the server ships). Surfaced as load warnings so a
     /// partially resolvable target explains itself instead of failing opaquely at type-load
     /// time.</summary>
-    public IReadOnlyList<string> DependencyDiagnostics => _probe.Diagnostics;
+    public IReadOnlyList<string> DependencyDiagnostics =>
+        [.. _probe.Diagnostics, .. _sharedAssemblyVersionWarnings.Values];
 
     /// <summary>File-system paths of every assembly actually loaded into this context so far (the
     /// main target assembly plus any non-shared dependency resolved for it), in no particular
@@ -137,9 +144,26 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     {
         if (assemblyName.Name is not null && SharedFrameworkAssemblyNames.Value.Contains(assemblyName.Name))
         {
-            // Returning null here delegates resolution to the default load context, where the
-            // server's own PackageReference-restored copy is already loaded.
-            return null;
+            // Resolved by *simple name* rather than by returning null. Returning null delegates to
+            // the default context but forwards the target's own reference, including the version it
+            // was compiled against - and the CLR binder will not satisfy that with an older copy,
+            // so a target one EF Core patch ahead of the server fails the bind and loses every
+            // DbContext-derived type. See SharedAssemblyResolver for the full story.
+            if (SharedAssemblyResolver.TryResolveFromDefaultContext(assemblyName, out var shared, out var warning))
+            {
+                if (warning is not null)
+                {
+                    _sharedAssemblyVersionWarnings.TryAdd(assemblyName.Name, warning);
+                }
+
+                return shared;
+            }
+
+            // The server has no copy at all (e.g. an ASP.NET Core shared-framework assembly this
+            // console host does not reference). Falling through to the probe below loads the
+            // target's own copy, which costs type identity for that one assembly but keeps the rest
+            // of the type graph loadable - strictly better than failing every dependent type.
+            return ResolveFromTarget(assemblyName);
         }
 
         // Only assemblies that can be located for this specific target (its own code, and any
@@ -154,6 +178,15 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         // installed shared frameworks. Returning null from here lets anything neither can find
         // (System.*, Microsoft.Extensions.*, our own server assembly) fall back to the default
         // context, which is the correct home for genuinely shared framework types.
+        return ResolveFromTarget(assemblyName);
+    }
+
+    /// <summary>Resolves an assembly against this specific target - its <c>.deps.json</c> first,
+    /// then the NuGet-cache/shared-framework probe - and loads it into this isolated context.
+    /// Returns <c>null</c> when neither can locate it, which lets the runtime fall back to the
+    /// default context.</summary>
+    private Assembly? ResolveFromTarget(AssemblyName assemblyName)
+    {
         var assemblyPath = _resolver.ResolveAssemblyToPath(assemblyName) ?? _probe.ResolveAssembly(assemblyName);
         return assemblyPath is not null ? LoadAssemblyFromStream(assemblyPath) : null;
     }

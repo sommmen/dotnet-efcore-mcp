@@ -12,6 +12,13 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// as a <see cref="System.IO.FileLoadException"/> or <see cref="MissingMethodException"/> at
 /// construction time rather than being detected up front.
 ///
+/// Note that "compatible major version" is a looser requirement than the CLR binder's own, which
+/// is satisfied only by an equal-or-<em>higher</em> full version. A target one EF Core patch ahead
+/// of the server is ordinary and must keep working, so resolution for these names goes through
+/// <see cref="SharedAssemblyResolver"/>, which binds by simple name and therefore ignores the
+/// version the target was compiled against. See that type for why merely returning <c>null</c> to
+/// delegate to the default context is not sufficient.
+///
 /// This list must include not only the EF Core / provider assemblies themselves but also any
 /// assembly whose types appear as public members (fields, parameters, return types) on those
 /// shared types, even transitively. Missing one of those is a much subtler bug than missing an

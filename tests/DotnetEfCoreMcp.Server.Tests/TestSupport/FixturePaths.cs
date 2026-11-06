@@ -41,6 +41,13 @@ public static class FixturePaths
 
     public static string IdentityAppDllPath => GetFixtureDllPath("IdentityApp", "IdentityApp.dll");
 
+    /// <summary>A fixture that pins EF Core one patch ABOVE the version the server itself
+    /// references, which is the ordinary situation for a target project that updated EF Core
+    /// before the MCP server did. Every other fixture inherits the server's version through
+    /// Central Package Management, so only this one exercises the version-unification path in
+    /// <c>TargetAssemblyLoadContext.Load</c>.</summary>
+    public static string NewerEfCoreAppDllPath => GetFixtureDllPath("NewerEfCoreApp", "NewerEfCoreApp.dll");
+
     /// <summary>The DbContext-only half of the split-assembly fixture pair: contains
     /// <c>SplitContextApp.SplitDbContext</c> but no migrations.</summary>
     public static string SplitContextAppDllPath => GetFixtureDllPath("SplitContextApp", "SplitContextApp.dll");

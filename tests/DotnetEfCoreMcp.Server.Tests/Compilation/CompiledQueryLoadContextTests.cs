@@ -52,7 +52,7 @@ public sealed class CompiledQueryLoadContextTests
     }
 
     [Fact]
-    public void Load_SharedFrameworkAssemblyName_ReturnsNullToDelegateToDefaultContext()
+    public void Load_SharedFrameworkAssemblyName_ReturnsTheDefaultContextsCopy()
     {
         var target = LoadSampleApp();
         var loadContext = CreateContext(target);
@@ -61,7 +61,32 @@ public sealed class CompiledQueryLoadContextTests
 
         var resolved = InvokeLoad(loadContext, new AssemblyName("Microsoft.EntityFrameworkCore"));
 
-        Assert.Null(resolved);
+        // The default context's copy is returned explicitly rather than returning null to delegate
+        // to it. Both share the same single copy, but returning null forwards the *caller's*
+        // version-bearing reference, which the binder refuses to satisfy with an older assembly -
+        // that is the bug behind a target one EF Core patch ahead of the server losing every
+        // DbContext-derived type.
+        Assert.NotNull(resolved);
+        Assert.Same(typeof(Microsoft.EntityFrameworkCore.DbContext).Assembly, resolved);
+
+        target.Unload();
+    }
+
+    [Fact]
+    public void Load_SharedFrameworkAssemblyNameAtNewerVersion_StillReturnsTheDefaultContextsCopy()
+    {
+        var target = LoadSampleApp();
+        var loadContext = CreateContext(target);
+
+        var serverVersion = typeof(Microsoft.EntityFrameworkCore.DbContext).Assembly.GetName().Version!;
+        var newerThanServer = new AssemblyName("Microsoft.EntityFrameworkCore")
+        {
+            Version = new Version(serverVersion.Major, serverVersion.Minor, serverVersion.Build, serverVersion.Revision + 2),
+        };
+
+        var resolved = InvokeLoad(loadContext, newerThanServer);
+
+        Assert.Same(typeof(Microsoft.EntityFrameworkCore.DbContext).Assembly, resolved);
 
         target.Unload();
     }
