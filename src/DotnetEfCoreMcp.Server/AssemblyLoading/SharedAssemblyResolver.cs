@@ -19,21 +19,19 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// disappears from <c>Assembly.GetTypes()</c> and discovery reports "no DbContext found" for an
 /// assembly that plainly has one.</para>
 ///
-/// <para>Resolving by <em>simple name</em> instead sidesteps the version check entirely and
-/// returns the server's copy regardless of which patch the target asked for, which is exactly the
-/// unification the shared list is asking for. A patch/minor gap within the same major version is
-/// binary-compatible by EF Core's own versioning policy, so the shared copy is a safe stand-in;
-/// the gap is still reported as a load warning so a genuine incompatibility is attributable
-/// instead of mysterious.</para></summary>
+/// <para>Resolving by <em>simple name</em> sidesteps patch and minor-version checks, returning
+/// the server's copy when the target requests the same major version. A patch/minor gap within the
+/// same major version is binary-compatible by EF Core's own versioning policy, so the shared copy
+/// is a safe stand-in; the gap is still reported as a load warning so a genuine incompatibility is
+/// attributable instead of mysterious. Major-version gaps are not unified.</para></summary>
 internal static class SharedAssemblyResolver
 {
     // Resolution happens on the assembly-loading hot path - once per reference per load context,
     // and a query's compiled assembly gets its own context per request - so the lookup is memoized
     // by simple name. Caching is safe because the default context never unloads an assembly, so a
-    // simple name that resolved once resolves to the same instance forever. A null entry (a name
-    // the server does not ship) is cached too, since that is the expensive case: it costs a failed
-    // bind attempt every time.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Assembly?> Cache =
+    // simple name that resolved once resolves to the same instance forever. Misses are not cached,
+    // because ConcurrentDictionary cannot store null values.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Assembly> Cache =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Attempts to resolve <paramref name="requestedName"/> from the default load context
@@ -59,30 +57,38 @@ internal static class SharedAssemblyResolver
             return false;
         }
 
-        var resolved = Cache.GetOrAdd(
-            simpleName,
-            static name => FindAlreadyLoaded(name) ?? TryLoadBySimpleName(name));
-        if (resolved is null)
+        if (!Cache.TryGetValue(simpleName, out var resolved))
         {
-            return false;
+            resolved = FindAlreadyLoaded(simpleName) ?? TryLoadBySimpleName(simpleName);
+            if (resolved is null)
+            {
+                return false;
+            }
+
+            resolved = Cache.GetOrAdd(simpleName, resolved);
+        }
+
+        var resolvedVersion = resolved.GetName().Version;
+        if (requestedName.Version is { } requestedVersion && resolvedVersion is not null)
+        {
+            if (requestedVersion.Major != resolvedVersion.Major)
+            {
+                return false;
+            }
+
+            if (resolvedVersion < requestedVersion)
+            {
+                versionGapWarning =
+                    $"The target was compiled against '{simpleName}' {requestedVersion} but this MCP server ships " +
+                    $"{resolvedVersion}. The server's copy is being shared anyway, because a single copy is what keeps " +
+                    "DbContext and entity types comparable across the load-context boundary. This is normally harmless " +
+                    "within one major version; if a query or model fails with a MissingMethodException or " +
+                    "TypeLoadException naming this assembly, the version gap is the likely cause - upgrade the MCP " +
+                    "server, or pin the target to the server's version.";
+            }
         }
 
         assembly = resolved;
-
-        var resolvedVersion = resolved.GetName().Version;
-        if (requestedName.Version is { } requestedVersion
-            && resolvedVersion is not null
-            && resolvedVersion < requestedVersion)
-        {
-            versionGapWarning =
-                $"The target was compiled against '{simpleName}' {requestedVersion} but this MCP server ships " +
-                $"{resolvedVersion}. The server's copy is being shared anyway, because a single copy is what keeps " +
-                "DbContext and entity types comparable across the load-context boundary. This is normally harmless " +
-                "within one major version; if a query or model fails with a MissingMethodException or " +
-                "TypeLoadException naming this assembly, the version gap is the likely cause - upgrade the MCP " +
-                "server, or pin the target to the server's version.";
-        }
-
         return true;
     }
 
