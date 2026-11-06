@@ -23,15 +23,24 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// the server's copy when the target requests the same major version. A patch/minor gap within the
 /// same major version is binary-compatible by EF Core's own versioning policy, so the shared copy
 /// is a safe stand-in; the gap is still reported as a load warning so a genuine incompatibility is
-/// attributable instead of mysterious. Major-version gaps are not unified.</para></summary>
+/// attributable instead of mysterious.</para>
+///
+/// <para>A <em>major</em>-version gap is where that reasoning stops: EF Core guarantees binary
+/// compatibility only within a major version, so neither copy can safely stand in for the other.
+/// That case throws <see cref="AssemblyLoadFailedException"/> naming both versions and the remedy.
+/// Declining <em>silently</em> would be worse than throwing - the caller would fall back to the
+/// target's own copy, splitting <c>DbContext</c>'s type identity and reproducing the very "no
+/// DbContext found" symptom this type exists to fix.</para></summary>
 internal static class SharedAssemblyResolver
 {
     // Resolution happens on the assembly-loading hot path - once per reference per load context,
     // and a query's compiled assembly gets its own context per request - so the lookup is memoized
     // by simple name. Caching is safe because the default context never unloads an assembly, so a
-    // simple name that resolved once resolves to the same instance forever. Misses are not cached,
-    // because ConcurrentDictionary cannot store null values.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Assembly> Cache =
+    // simple name that resolved once resolves to the same instance forever. A null entry (a name
+    // the server does not ship) is cached too, since that is the expensive case: it costs a failed
+    // bind attempt every time. ConcurrentDictionary rejects null *keys*, not null values, so a
+    // reference-typed value can legitimately be null.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Assembly?> Cache =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Attempts to resolve <paramref name="requestedName"/> from the default load context
@@ -43,7 +52,12 @@ internal static class SharedAssemblyResolver
     /// <em>older</em> than the version the target requested, otherwise <c>null</c>. The assembly is
     /// still returned in that case - sharing a slightly older copy is what keeps type identity
     /// intact, and is far better than failing the bind outright.</param>
-    /// <returns><c>true</c> when the default context can supply the assembly.</returns>
+    /// <returns><c>true</c> when the default context can supply the assembly; <c>false</c> when the
+    /// server ships no copy of that name at all, which lets callers fall back to the target's own
+    /// copy.</returns>
+    /// <exception cref="AssemblyLoadFailedException">The server's copy differs from the requested
+    /// one by major version, which is outside the compatibility this unification can honestly
+    /// provide.</exception>
     public static bool TryResolveFromDefaultContext(
         AssemblyName requestedName,
         out Assembly? assembly,
@@ -57,23 +71,33 @@ internal static class SharedAssemblyResolver
             return false;
         }
 
-        if (!Cache.TryGetValue(simpleName, out var resolved))
+        var resolved = Cache.GetOrAdd(
+            simpleName,
+            static name => FindAlreadyLoaded(name) ?? TryLoadBySimpleName(name));
+        if (resolved is null)
         {
-            resolved = FindAlreadyLoaded(simpleName) ?? TryLoadBySimpleName(simpleName);
-            if (resolved is null)
-            {
-                return false;
-            }
-
-            resolved = Cache.GetOrAdd(simpleName, resolved);
+            return false;
         }
 
         var resolvedVersion = resolved.GetName().Version;
         if (requestedName.Version is { } requestedVersion && resolvedVersion is not null)
         {
+            // A major-version gap is outside what simple-name unification can honestly paper over:
+            // EF Core only guarantees binary compatibility within a major, so sharing across one
+            // would trade a clear failure for a later MissingMethodException/TypeLoadException from
+            // deep inside EF Core. Declining *silently* would be worse still - the caller would
+            // load the target's own copy, splitting DbContext's type identity and reproducing the
+            // very "no DbContext found" symptom this type exists to fix (#115). So fail loudly,
+            // naming both versions and the remedy.
             if (requestedVersion.Major != resolvedVersion.Major)
             {
-                return false;
+                throw new AssemblyLoadFailedException(
+                    $"The target was compiled against '{simpleName}' {requestedVersion}, but this MCP server ships " +
+                    $"{resolvedVersion} - a different major version. These assemblies must share a single copy for " +
+                    "DbContext and entity types to be comparable across the load-context boundary, and EF Core only " +
+                    "guarantees binary compatibility within one major version, so neither copy can safely stand in " +
+                    "for the other. Use a server build that targets the same major version as the target project, or " +
+                    "align the target with this server's.");
             }
 
             if (resolvedVersion < requestedVersion)
