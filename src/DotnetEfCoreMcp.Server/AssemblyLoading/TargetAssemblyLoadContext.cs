@@ -181,6 +181,34 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         return ResolveFromTarget(assemblyName);
     }
 
+    /// <summary>Locates <paramref name="simpleName"/> within this target's own dependency closure
+    /// without loading it, so a caller can build a <c>MetadataReference</c> against the exact copy
+    /// the target was built against. Resolution is by simple name only, deliberately ignoring
+    /// version, mirroring <see cref="SharedAssemblyResolver"/>.
+    ///
+    /// <para>Needed because <see cref="LoadedAssemblyPaths"/> excludes
+    /// <see cref="SharedFrameworkAssemblyNames"/> entries - those are satisfied at runtime by the
+    /// default context's single copy - yet the Roslyn query compiler still needs a path for them,
+    /// and the server's copy is not always a usable <em>reference</em>: Roslyn applies the CLR
+    /// binder's exact-or-higher version rule, so a target one EF Core patch ahead of the server
+    /// cannot be compiled against the server's older reference at all (#118).</para></summary>
+    /// <returns>The file path, or <c>null</c> when this target's closure does not describe
+    /// it.</returns>
+    public string? TryResolveReferencePath(string simpleName)
+    {
+        AssemblyName assemblyName;
+        try
+        {
+            assemblyName = new AssemblyName(simpleName);
+        }
+        catch (Exception ex) when (ex is ArgumentException or FileLoadException)
+        {
+            return null;
+        }
+
+        return _resolver.ResolveAssemblyToPath(assemblyName) ?? _probe.ResolveAssembly(assemblyName);
+    }
+
     /// <summary>Resolves an assembly against this specific target - its <c>.deps.json</c> first,
     /// then the NuGet-cache/shared-framework probe - and loads it into this isolated context.
     /// Returns <c>null</c> when neither can locate it, which lets the runtime fall back to the

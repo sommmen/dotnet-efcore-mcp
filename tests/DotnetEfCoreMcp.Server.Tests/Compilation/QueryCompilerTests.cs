@@ -77,6 +77,28 @@ public sealed class QueryCompilerTests
     }
 
     [Fact]
+    public async Task CompileAsync_SameErrorReportedMoreThanOnce_ReportsItOnce()
+    {
+        // Roslyn emits one diagnostic per occurrence, so a single underlying mistake can be
+        // reported many times over - a reference-level binding failure produces one copy per
+        // reference that transitively reaches the offending assembly, which concatenated into a
+        // ~4 KB single-line error that buried the one fact that mattered in nine duplicates (#118).
+        // Two calls to the same unknown member on one line reproduce that duplication in miniature.
+        var (contextType, handle) = LoadSampleAppDbContext();
+        var source = UserQuerySourceGenerator.Generate(
+            contextType, "Orders.ThisMemberDoesNotExist().Concat(Orders.ThisMemberDoesNotExist())", "compiledupe1");
+        var compiler = new QueryCompiler(new QueryCompilationOptions());
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(
+            () => compiler.CompileAsync(source, handle, CancellationToken.None));
+
+        // Counts this diagnostic specifically rather than every "Line 1:" in the message, which
+        // would also count unrelated diagnostics the compilation happens to produce.
+        var occurrences = ex.Message.Split("does not contain a definition for 'ThisMemberDoesNotExist'").Length - 1;
+        Assert.True(occurrences == 1, ex.Message);
+    }
+
+    [Fact]
     public async Task CompileAsync_NonPositiveTimeout_ThrowsInvalidOperationException()
     {
         var (contextType, handle) = LoadSampleAppDbContext();
