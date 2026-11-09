@@ -144,11 +144,31 @@ Compilation inputs:
   - The loaded target assembly (`LoadedAssemblyHandle.Assembly`) and, transitively, whatever it
     needs — reuse `TargetAssemblyLoadContext`'s already-resolved dependency set instead of
     re-resolving from scratch (see [AssemblyLoadContext reuse](#assemblyloadcontext-reuse)).
-  - Our own EF Core package assemblies (`Microsoft.EntityFrameworkCore`, `.Relational`,
-    whichever provider matches the active connection) — these must be the **same identity**
-    copies the target assembly resolves against, which `TargetAssemblyLoadContext`'s existing
-    "shared assembly" allowlist already guarantees (see the class's doc comment on why
-    `DbContext` type identity must match).
+  - The EF Core package assemblies (`Microsoft.EntityFrameworkCore`, `.Relational`, whichever
+    provider matches the active connection) and the rest of `SharedFrameworkAssemblyNames`. These
+    cannot come from `LoadedAssemblyPaths`, which deliberately excludes them (they are satisfied at
+    runtime by the default context's single copy), yet a target `DbContext`'s own base class and
+    inherited member surface reach them regardless — so omitting them fails *every* query against
+    such a context, not just the ones naming a shared type.
+
+    For each such name the server itself has loaded, `QueryCompiler.ResolveSharedAssemblyReferencePaths`
+    references whichever of the **server's copy** and the **target's own copy** (located via
+    `LoadedAssemblyHandle.TryResolveReferencePath`) carries the **higher** assembly version. Roslyn
+    applies the CLR binder's exact-or-higher rule to every reference, so referencing a lower-versioned
+    copy of something the target was built against is rejected outright with CS1705 ("uses … which
+    has a higher version than referenced assembly") — which is why a target one EF Core patch ahead
+    of the server could not compile a single query before [#118](https://github.com/sommmen/dotnet-efcore-mcp/issues/118),
+    even though discovery already worked. Only names the server has loaded are considered: resolving
+    a shared name purely from the target's closure would widen the reference set and can leave a
+    provider surface half-referenced, which reports spurious "defined in an assembly that is not
+    referenced" diagnostics alongside the real error.
+
+    Compiling against a different copy than the one loaded at runtime is safe for the same reason
+    sharing is: `CompiledQueryLoadContext` resolves these names by simple name through
+    `SharedAssemblyResolver`, so the emitted code binds to the **same identity** single shared copy
+    whatever version it was compiled against (see `TargetAssemblyLoadContext`'s doc comment on why
+    `DbContext` type identity must match), and that resolver already surfaces a patch/minor gap as a
+    load warning and refuses a major-version gap outright.
   - A small, explicit BCL allowlist (`QueryCompiler.BuiltInReferenceAssemblyNames`):
     `System.Private.CoreLib`, `System.Runtime`, `System.Linq`, `System.Linq.Queryable`,
     `System.Linq.Expressions`, `System.Collections`, `System.ObjectModel`,

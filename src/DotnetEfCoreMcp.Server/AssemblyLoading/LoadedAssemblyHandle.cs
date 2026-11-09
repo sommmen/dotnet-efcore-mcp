@@ -60,6 +60,13 @@ public sealed class LoadedAssemblyHandle
     /// this exact target - see <c>docs/development/roslyn-user-query.md</c>.</summary>
     public IReadOnlyCollection<string> LoadedAssemblyPaths => _context.LoadedAssemblyPaths;
 
+    /// <summary>Locates a <see cref="SharedFrameworkAssemblyNames"/> entry within this target's own
+    /// dependency closure without loading it, so the Roslyn query compiler can reference the exact
+    /// copy the target was built against rather than the server's - which Roslyn rejects outright
+    /// when the target's is newer. See
+    /// <see cref="TargetAssemblyLoadContext.TryResolveReferencePath"/>.</summary>
+    internal string? TryResolveReferencePath(string simpleName) => _context.TryResolveReferencePath(simpleName);
+
     /// <summary>The target's own <see cref="AssemblyLoadContext"/>, exposed internally so the
     /// Roslyn query compiler's per-request <c>CompiledQueryLoadContext</c> can fall back to it when
     /// resolving assemblies the compiled query assembly references but that are not in the shared
