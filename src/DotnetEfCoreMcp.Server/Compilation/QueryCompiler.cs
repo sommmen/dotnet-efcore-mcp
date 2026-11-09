@@ -48,9 +48,14 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         var emit = compilation.Emit(pe, pdb, cancellationToken: cancellationToken);
         if (!emit.Success)
         {
+            // Distinct because Roslyn reports a diagnostic per occurrence, and one underlying
+            // problem can occur at many: a reference-level binding failure is emitted once per
+            // reference that transitively reaches the offending assembly, which concatenated into a
+            // multi-kilobyte single-line error repeating the same sentence ten times (#118).
             var messages = emit.Diagnostics
                 .Where(d => d.Severity == DiagnosticSeverity.Error)
                 .Select(d => FormatDiagnostic(d, source))
+                .Distinct(StringComparer.Ordinal)
                 .Take(10)
                 .ToArray();
             throw new QueryExecutionException($"The C# query could not be compiled: {string.Join(" ", messages)}");
@@ -215,25 +220,8 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         paths.Add(target.AssemblyPath);
         foreach (var path in target.LoadedAssemblyPaths) paths.Add(path);
         AddAssemblyPath(typeof(QueryExecutionException).Assembly, paths);
-        AddAssemblyPath(typeof(Microsoft.EntityFrameworkCore.DbContext).Assembly, paths);
 
-        // A target DbContext's own base class or public surface can reach types from any assembly
-        // in SharedFrameworkAssemblyNames (e.g. IdentityDbContext<...> pulls in
-        // Microsoft.AspNetCore.Identity.EntityFrameworkCore) even when the target project's own
-        // build output does not carry a copy of it as a non-shared dependency (LoadedAssemblyPaths
-        // only tracks assemblies TargetAssemblyLoadContext itself loaded from disk - shared
-        // assemblies are deliberately excluded, see TargetAssemblyLoadContext.LoadedAssemblyPaths).
-        // Without this, compiling a UserQuery subclass of such a context fails with "is defined in
-        // an assembly that is not referenced" for every single query, not just ones referencing the
-        // shared type directly - the type appears in the DbContext's own inherited member surface.
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            var name = assembly.GetName().Name;
-            if (name is not null && SharedFrameworkAssemblyNames.Value.Contains(name))
-            {
-                AddAssemblyPath(assembly, paths);
-            }
-        }
+        foreach (var path in ResolveSharedAssemblyReferencePaths(target)) paths.Add(path);
 
         foreach (var name in options.AdditionalReferenceAssemblyNames)
         {
@@ -245,6 +233,90 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         }
 
         return paths.Where(File.Exists).Select(path => MetadataReference.CreateFromFile(path));
+    }
+
+    /// <summary>Chooses one <c>MetadataReference</c> path per
+    /// <see cref="SharedFrameworkAssemblyNames"/> entry the compilation can reach, preferring
+    /// whichever available copy carries the HIGHEST assembly version.
+    ///
+    /// <para>These names have to be referenced explicitly because
+    /// <c>LoadedAssemblyHandle.LoadedAssemblyPaths</c> deliberately excludes them - they are
+    /// satisfied at runtime by the default context's single copy (see
+    /// <c>TargetAssemblyLoadContext.LoadedAssemblyPaths</c>). Yet a target DbContext's own base
+    /// class or public surface reaches them regardless (e.g. <c>IdentityDbContext&lt;...&gt;</c>
+    /// pulls in Microsoft.AspNetCore.Identity.EntityFrameworkCore), so omitting them fails every
+    /// query against such a context with "is defined in an assembly that is not referenced", not
+    /// just the ones naming a shared type directly.</para>
+    ///
+    /// <para>Taking the server's own copy unconditionally - which is what this did before #118 -
+    /// breaks as soon as the two sides disagree on version. Roslyn applies the CLR binder's
+    /// exact-or-higher rule to every reference, so compiling the target against a LOWER-versioned
+    /// copy of something it was built on is rejected outright (CS1705 "uses ... which has a higher
+    /// version than referenced assembly"), repeated once per reference that transitively reaches
+    /// it. A target one EF Core patch ahead of the server is the ordinary state of affairs for any
+    /// project whose dependency updates land before the server's pin moves, so every query against
+    /// it failed to compile even though #116 had already made discovery work. Picking the highest
+    /// version satisfies that rule in both directions: against a newer target it is the target's
+    /// copy, and against an older one it stays the server's (whose own assemblies are themselves
+    /// references here and were built against it).</para>
+    ///
+    /// <para>Compiling against a different copy than the one loaded at runtime is safe for the same
+    /// reason sharing is: <c>CompiledQueryLoadContext</c> resolves these names by simple name via
+    /// <see cref="SharedAssemblyResolver"/>, so the emitted code binds to the single shared
+    /// instance whatever version it was compiled against, and the resolver already surfaces the gap
+    /// as a load warning (and refuses a major-version gap outright).</para></summary>
+    private static IEnumerable<string> ResolveSharedAssemblyReferencePaths(LoadedAssemblyHandle target)
+    {
+        var serverCopies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Touched explicitly rather than relying on GetAssemblies(), so EF Core is a reference even
+        // on the (unlikely) path where nothing has forced the server's own copy to load yet.
+        AddServerCopy(typeof(Microsoft.EntityFrameworkCore.DbContext).Assembly);
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            AddServerCopy(assembly);
+        }
+
+        // Only names the server itself has loaded are referenced. Referencing a shared name the
+        // server does not have - resolved purely from the target's closure - would widen the
+        // reference set, and a partially-referenced provider surface is worse than an absent one:
+        // referencing Npgsql.EntityFrameworkCore.PostgreSQL without Npgsql makes its extension
+        // methods visible but unbindable, so every query reports "the type 'NpgsqlTsVector' is
+        // defined in an assembly that is not referenced" alongside its real error.
+        foreach (var (simpleName, serverPath) in serverCopies)
+        {
+            yield return HigherVersionedPath(serverPath, target.TryResolveReferencePath(simpleName)) ?? serverPath;
+        }
+
+        void AddServerCopy(Assembly assembly)
+        {
+            if (assembly.GetName().Name is { } name
+                && SharedFrameworkAssemblyNames.Value.Contains(name)
+                && !string.IsNullOrWhiteSpace(assembly.Location))
+            {
+                serverCopies[name] = assembly.Location;
+            }
+        }
+    }
+
+    private static string? HigherVersionedPath(string? left, string? right)
+    {
+        if (left is null || !File.Exists(left)) return right is not null && File.Exists(right) ? right : null;
+        if (right is null || !File.Exists(right)) return left;
+        if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase)) return left;
+
+        return ReadVersion(right) > ReadVersion(left) ? right : left;
+    }
+
+    private static Version ReadVersion(string assemblyPath)
+    {
+        try
+        {
+            return AssemblyName.GetAssemblyName(assemblyPath).Version ?? new Version(0, 0);
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or FileLoadException or IOException or UnauthorizedAccessException)
+        {
+            return new Version(0, 0);
+        }
     }
 
     private static void AddAssemblyPath(Assembly assembly, ISet<string> paths)
