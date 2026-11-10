@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Primitives;
 
@@ -225,12 +226,7 @@ public sealed class ConnectionRegistry : IDisposable
             // Ask every reload-capable provider to re-read its own source first; otherwise a
             // user-secrets/JSON provider keeps serving the values it parsed at startup and the
             // reload would be a no-op.
-            if (_configuration is IConfigurationRoot root)
-            {
-                root.Reload();
-            }
-
-            ApplyLoad();
+            ApplyLoad(ReloadConfigurationRoot());
             _stale = false;
 
             var currentNames = _configurationError is null ? _entries.Keys.ToArray() : [];
@@ -282,33 +278,50 @@ public sealed class ConnectionRegistry : IDisposable
             return;
         }
 
-        if (_configuration is IConfigurationRoot root)
+        ApplyLoad(ReloadConfigurationRoot());
+        _stale = false;
+    }
+
+    private ConnectionRegistryConfigurationException? ReloadConfigurationRoot()
+    {
+        if (_configuration is not IConfigurationRoot root)
         {
-            root.Reload();
+            return null;
         }
 
-        ApplyLoad();
-        _stale = false;
+        try
+        {
+            root.Reload();
+            return null;
+        }
+        catch (Exception)
+        {
+            return new ConnectionRegistryConfigurationException(
+                "Unable to reload the connections configuration. Correct the configuration source and retry.");
+        }
     }
 
     /// <summary>Parses the current configuration into <see cref="_entries"/>, preserving the active
     /// connection selection when that connection still exists. Must be called under
     /// <see cref="_gate"/>.</summary>
-    private void ApplyLoad()
+    private void ApplyLoad(ConnectionRegistryConfigurationException? reloadError = null)
     {
         var previousActive = _activeName;
         var previousEntries = _entries;
 
         try
         {
+            if (reloadError is not null)
+            {
+                throw reloadError;
+            }
+
             _entries = Load(_configuration, previousEntries);
             _configurationError = null;
         }
         catch (ConnectionRegistryConfigurationException ex)
         {
-            _entries = new Dictionary<string, ConnectionRegistryEntry>(StringComparer.Ordinal);
             _configurationError = ex;
-            _activeName = null;
             _sourceSignature = ComputeSourceSignature();
             _lastLoadedAtUtc = DateTimeOffset.UtcNow;
             return;
@@ -352,9 +365,8 @@ public sealed class ConnectionRegistry : IDisposable
         return repointed ? before.ConfigurationRevision + 1 : before.ConfigurationRevision;
     }
 
-    /// <summary>A cheap fingerprint of every file-backed configuration source: path plus length plus
-    /// last-write time. Only file metadata is read - never the file contents - so this stays
-    /// inexpensive enough to run on every registry access.</summary>
+    /// <summary>Returns a fingerprint of every file-backed configuration source. Content hashes
+    /// detect same-length rewrites that file timestamps can miss on coarse-resolution filesystems.</summary>
     private string ComputeSourceSignature()
     {
         if (_configuration is not IConfigurationRoot root)
@@ -623,3 +635,4 @@ public sealed record ConnectionReloadResult(
     DateTimeOffset LoadedAtUtc,
     ConnectionRegistryConfigurationException? ConfigurationError,
     IReadOnlyList<ConnectionInfo> Connections);
+
