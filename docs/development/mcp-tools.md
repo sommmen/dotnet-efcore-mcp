@@ -12,6 +12,7 @@ per-tool parameter/response reference; this page tracks the surface's design dec
 - [x] `run_query` — execute a read-only LINQPad-style query expression against a selected context
 - [x] `preview_query_sql` — return the provider-generated SQL for a `run_query`-style query without executing it
 - [x] `test_connection` — run a bounded, redacted connection-health diagnostic for a given context/connection
+- [x] `reload_connections` — force the connection registry to re-read its configuration source (#121)
 - [x] `insert_entity` — insert a metadata-validated entity through a non-production `ReadWrite` connection
 - [x] `update_entity` — update a metadata-validated entity through a non-production `ReadWrite` connection
 - [x] `delete_entity` — delete a metadata-validated entity through a non-production `ReadWrite` connection
@@ -144,6 +145,32 @@ propagation. Connection-layer tests
 cover the `healthy`/`failed`/`timedOut` classifications and cancellation in isolation, without a real
 slow provider, via an internal probe-delegate overload. See
 [Connection management](./connections.md) for the registry-level design.
+
+## #121 — `reload_connections`
+
+`reload_connections` takes no parameters. It forces `ConnectionRegistry.Reload()` and returns the
+active connection, `registryLoadedAtUtc`, `addedConnections`, `removedConnections`, and the refreshed
+redacted connection list (identical shape to `list_connections`; connection strings are never
+exposed). It opens no database connection, runs no query, and never accepts a raw connection string.
+
+This tool is a **last resort**, not the primary refresh mechanism. Staleness is handled
+automatically: the registry re-reads whenever its file-backed configuration source changes, which
+covers the user-secrets and JSON cases the server actually ships with (see
+[connections.md](./connections.md) for the two `AddUserSecrets` rooting traps that had to be closed
+for that to hold on a fresh install). `reload_connections` exists for sources automatic detection
+cannot observe at all, and as the explicit recovery action an agent can take instead of asking for an
+MCP client restart it cannot perform. `list_connections`, the unknown-connection error, and the
+no-active-connection error all name it for that reason: the original bug was that a stale registry
+made a configured connection look like one that never existed. A reload that produces malformed
+configuration surfaces the same actionable `ConnectionRegistryConfigurationException` message as a
+malformed configuration at startup.
+
+Tests:
+[`EfCoreMcpToolsReloadConnectionsTests`](../../tests/DotnetEfCoreMcp.Server.Tests/Tools/EfCoreMcpToolsReloadConnectionsTests.cs)
+(tool surface, including that a connection added after startup stops being rejected as unknown) and
+[`ConnectionRegistryRefreshTests`](../../tests/DotnetEfCoreMcp.Server.Tests/Connections/ConnectionRegistryRefreshTests.cs)
+(registry-level automatic refresh, added/removed reporting, active-connection preservation, and
+malformed-configuration recovery).
 
 ## P0 #6 — schema slicing/search
 

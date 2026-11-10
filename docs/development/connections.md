@@ -67,6 +67,51 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
     connection name (mirroring the `contextName` disambiguation behavior for multiple
     `DbContext`s) instead of silently using whichever connection happens to be active - this
     prevents a stale/unrelated "active" connection from being used unnoticed.
+- [x] Keep the registry current instead of serving a startup snapshot (#121)
+  - The parsed registry is a cache over `IConfiguration`, not a one-shot startup read. Every
+    accessor (`ConnectionNames`, `Get`/`TryGet`, `ActiveConnection*`, `SetActive`,
+    `ListConnections`) first calls `EnsureCurrent`, which re-reads when either a provider
+    reload token fired or the cheap fingerprint of every file-backed source (path + length +
+    last-write time; file *metadata* only, never contents) changed since the last load. This
+    matters because `Program.cs` adds user-secrets and environment variables *without*
+    `reloadOnChange`, so an external `dotnet user-secrets set` neither refreshes the provider
+    nor raises a token — the fingerprint is what notices it.
+  - Two startup traps had to be closed for that automatic path to actually work on the
+    user-secrets store, rather than only on a file that already existed:
+    - `AddUserSecrets` resolves the secrets file's directory eagerly and, when that directory
+      is missing, silently roots its `PhysicalFileProvider` at the *application base
+      directory* instead. The provider is then permanently unable to see the real
+      `secrets.json` — creating it later changes nothing, and not even an explicit
+      `IConfigurationRoot.Reload()` recovers. That is precisely the fresh-install case, so
+      `Program.cs` calls `UserSecretsStore.EnsureDirectoryExists` *before* `AddUserSecrets`.
+    - The registry constructor forces a refresh instead of trusting the provider's in-memory
+      data, because the configuration may have been built before a source file existed. The
+      provider would still hold no data while the file is already on disk; recording that
+      file's signature against that stale data would make `EnsureCurrent` conclude everything
+      is current and serve an empty registry indefinitely.
+  - `reload_connections` is therefore a genuine **last resort**, not the primary mechanism: the
+    automatic path is expected to handle the user-secrets and JSON cases. It exists for sources
+    the fingerprint cannot observe at all (in-memory/custom providers, an environment variable
+    changed in-process) and as the action an agent can take when it suspects staleness anyway.
+    It calls `IConfigurationRoot.Reload()`, re-parses, and returns the added/removed
+    connection names alongside the refreshed redacted list.
+  - A `swap_connection` selection survives a refresh whenever that connection still exists;
+    only a selection that disappeared falls back to the startup rule (first non-production
+    connection). A selection *reclassified* as production is dropped as well — the
+    `allowProduction: true` acknowledgment was given for a non-production target and must not
+    silently carry over to a production one. A refresh that produces malformed configuration
+    behaves exactly like a malformed configuration at startup — the error is captured, not
+    thrown from a constructor, and surfaces from the next tool call. Fixing the configuration
+    and reloading recovers without restarting the process.
+  - Because a reload can repoint one connection *name* at a different database,
+    `SchemaCache` is keyed on `ConnectionRegistryEntry.SchemaCacheKey` rather than `Name`. The
+    registry bumps that entry's `ConfigurationRevision` only when the reload actually changed
+    its `Source`/`Provider`/`ConnectionString`, so an unrelated edit elsewhere in the
+    configuration does not needlessly discard a built schema.
+  - `UnknownConnectionException` and the "no connection is active" error both now point at
+    `reload_connections`. The original failure mode was *quiet*: a stale registry made a
+    configured-but-unseen connection indistinguishable from one that was never configured, so
+    an agent confidently reported the wrong finding instead of refreshing.
 - [x] Apply RSFU safeguards to production connections
   - Production is forced to `ReadOnly`, never auto-selected, and requires an explicit
     `allowProduction: true` acknowledgement in `swap_connection`. A production-only

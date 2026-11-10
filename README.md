@@ -389,6 +389,15 @@ The first non-production connection is active at startup. Use the `list_connecti
 tool to inspect redacted connection metadata and `swap_connection` to change the active
 default used by `get_schema` and `run_query` when no connection name is supplied.
 
+Connections can be added, changed, or removed while the server is running. The registry
+re-reads its configuration source whenever that source changed on disk, so a connection
+added with `dotnet user-secrets set` becomes visible to `list_connections`, `run_query`, and
+`swap_connection` without restarting the MCP client. If an expected connection is still
+missing — for example because it comes from a configuration source whose changes cannot be
+detected from file metadata — call `reload_connections` to force a re-read; it reports which
+connection names were added or removed. An active connection selected with `swap_connection`
+survives a refresh as long as it still exists.
+
 Production connections are always forced to `ReadOnly`, even if configured otherwise. They
 are never selected automatically and `swap_connection` requires an explicit
 `allowProduction: true` acknowledgement before activating one. A production-only registry
@@ -574,7 +583,8 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `delete_entity` | `contextName: string`, `entity: string`, `key: object`, `concurrency?: object`, `connectionName?: string` | Actual affected rows, or a stable not-found-or-concurrency-conflict result |
 | `list_migrations` | `contextName: string`, `connectionName?: string`, `migrationsAssembly?: string` | Known, applied, and pending migrations plus `databaseExists` and `appliedStateAvailable`. Always available (read-only, no DDL/DML) except for production connections |
 | `generate_migration_script` | `contextName: string`, `connectionName?: string`, `fromMigration?: string`, `toMigration?: string`, `idempotent?: bool`, `migrationsAssembly?: string` | The SQL EF Core's `IMigrator.GenerateScript` would produce between two migration IDs — never executed. Disabled by default |
-| `list_connections` | *(none)* | Registered connections with provider, access mode, environment, source, production flag, and which is active. Connection strings are never exposed |
+| `list_connections` | *(none)* | Registered connections with provider, access mode, environment, source, production flag, and which is active, plus `registryLoadedAtUtc`. Connection strings are never exposed |
+| `reload_connections` | *(none)* | Forces a re-read of the connection registry configuration and reports `addedConnections`/`removedConnections` plus the refreshed list. Opens no database connection and runs no query; the active connection is preserved when it still exists |
 | `swap_connection` | `connectionName: string`, `allowProduction?: bool` | The new active connection. Production connections require `allowProduction: true` |
 | `list_loaded_assemblies` | *(none)* | Every registered target assembly (logical name, source path, load timestamp, default flag) |
 | `select_target` | `targetName: string` | The new default target used when `targetName` is omitted elsewhere. Does not unload any other target |
