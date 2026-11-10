@@ -264,6 +264,22 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
             paths.Add(assembly.Location);
         }
 
+        // Applied to every candidate path, not just the ones ResolveSharedAssemblyReferencePaths
+        // itself resolved: target.LoadedAssemblyPaths can contain a provider assembly the default
+        // context could not supply, and AdditionalReferenceAssemblyNames can name one explicitly,
+        // either of which would otherwise re-admit a single provider-specific shared assembly past
+        // the all-or-nothing grouping (#122).
+        var scope = ProviderReferenceGroups.Resolve(provider, target.ReferencesAssembly);
+        paths.RemoveWhere(path => scope.Excluded.Contains(Path.GetFileNameWithoutExtension(path) ?? string.Empty));
+
+        var namesInIncludedGroups = paths
+            .Select(path => Path.GetFileNameWithoutExtension(path) ?? string.Empty)
+            .Where(scope.Included.Contains);
+        foreach (var name in ProviderReferenceGroups.UnsatisfiedGroupNames(scope.Included, namesInIncludedGroups))
+        {
+            paths.RemoveWhere(path => string.Equals(Path.GetFileNameWithoutExtension(path), name, StringComparison.OrdinalIgnoreCase));
+        }
+
         return paths.Where(File.Exists).Select(path => MetadataReference.CreateFromFile(path));
     }
 
