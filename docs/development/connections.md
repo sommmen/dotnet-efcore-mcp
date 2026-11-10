@@ -71,11 +71,20 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
   - The parsed registry is a cache over `IConfiguration`, not a one-shot startup read. Every
     accessor (`ConnectionNames`, `Get`/`TryGet`, `ActiveConnection*`, `SetActive`,
     `ListConnections`) first calls `EnsureCurrent`, which re-reads when either a provider
-    reload token fired or the cheap fingerprint of every file-backed source (path + length +
-    last-write time; file *metadata* only, never contents) changed since the last load. This
-    matters because `Program.cs` adds user-secrets and environment variables *without*
-    `reloadOnChange`, so an external `dotnet user-secrets set` neither refreshes the provider
-    nor raises a token — the fingerprint is what notices it.
+    reload token fired or the fingerprint of every file-backed source (path + length + a
+    SHA-256 of the file's contents) changed since the last load. This matters because
+    `Program.cs` adds user-secrets and environment variables *without* `reloadOnChange`, so an
+    external `dotnet user-secrets set` neither refreshes the provider nor raises a token — the
+    fingerprint is what notices it.
+  - The fingerprint hashes contents rather than trusting length plus last-write time, because
+    a connection-string edit frequently preserves the file's length (one host or database name
+    swapped for another of equal width) and two writes can land within a single timestamp tick
+    or on a filesystem with coarse timestamp resolution. Either case leaves a metadata-only
+    fingerprint unchanged, which would keep serving stale connections until someone called
+    `reload_connections` — defeating the point of the automatic refresh. These files are small
+    configuration documents, not data, and the hash is computed only on registry access, so
+    correctness is the right trade. An unreadable file (a concurrent rewrite) falls back to its
+    timestamp, which errs toward "changed" and is re-read on the next access.
   - Two startup traps had to be closed for that automatic path to actually work on the
     user-secrets store, rather than only on a file that already existed:
     - `AddUserSecrets` resolves the secrets file's directory eagerly and, when that directory
@@ -102,12 +111,25 @@ See also the [README "Configure connections"](../../README.md#configure-connecti
     silently carry over to a production one. A refresh that produces malformed configuration
     behaves exactly like a malformed configuration at startup — the error is captured, not
     thrown from a constructor, and surfaces from the next tool call. Fixing the configuration
-    and reloading recovers without restarting the process.
+    and reloading recovers without restarting the process. While it is broken the registry
+    serves *nothing* (fail closed) rather than the previously loaded entries.
+  - A provider-level reload failure is mapped to `ConnectionRegistryConfigurationException`
+    with the underlying cause appended, because an external edit can momentarily leave invalid
+    JSON on disk. Letting the raw `JsonException` escape would bypass the
+    malformed-configuration handling entirely and reach MCP callers as a generic "failed
+    unexpectedly". The parser's message names the offending file and position, which is the
+    only part a caller can act on; a configuration *path* is not a secret, and the connection
+    strings inside the file never appear in a parser message.
   - Because a reload can repoint one connection *name* at a different database,
     `SchemaCache` is keyed on `ConnectionRegistryEntry.SchemaCacheKey` rather than `Name`. The
     registry bumps that entry's `ConfigurationRevision` only when the reload actually changed
     its `Source`/`Provider`/`ConnectionString`, so an unrelated edit elsewhere in the
     configuration does not needlessly discard a built schema.
+  - Revision tracking reads from a separate `_lastKnownGoodEntries` map that survives a failed
+    reload. Clearing the served entries without retaining that history would let a later edit
+    which *both* repairs the configuration and repoints a connection resolve back to revision
+    0 — reproducing the pre-edit `SchemaCacheKey` and serving the previous database's cached
+    schema for the new one.
   - `UnknownConnectionException` and the "no connection is active" error both now point at
     `reload_connections`. The original failure mode was *quiet*: a stale registry made a
     configured-but-unseen connection indistinguishable from one that was never configured, so
