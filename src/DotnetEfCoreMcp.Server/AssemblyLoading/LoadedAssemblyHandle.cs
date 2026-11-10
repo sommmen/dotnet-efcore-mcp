@@ -67,6 +67,12 @@ public sealed class LoadedAssemblyHandle
     /// <see cref="TargetAssemblyLoadContext.TryResolveReferencePath"/>.</summary>
     internal string? TryResolveReferencePath(string simpleName) => _context.TryResolveReferencePath(simpleName);
 
+    /// <summary>Whether this target's own dependency manifest describes <paramref name="simpleName"/>,
+    /// used by the Roslyn query compiler to decide whether a provider surface the active connection
+    /// does not use still belongs in the compilation. See
+    /// <see cref="TargetAssemblyLoadContext.ReferencesAssembly"/>.</summary>
+    internal bool ReferencesAssembly(string simpleName) => _context.ReferencesAssembly(simpleName);
+
     /// <summary>The target's own <see cref="AssemblyLoadContext"/>, exposed internally so the
     /// Roslyn query compiler's per-request <c>CompiledQueryLoadContext</c> can fall back to it when
     /// resolving assemblies the compiled query assembly references but that are not in the shared

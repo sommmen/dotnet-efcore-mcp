@@ -37,6 +37,34 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
     }
 
     [Fact]
+    public void FormatQueryError_CompileErrorCausedByTheServersReferenceSet_DoesNotBlameTheQuery()
+    {
+        // Issue #122: a SQL Server query failed with a CS0012 naming an Npgsql type, and the
+        // "fix the reported compile error(s) in the query expression" guidance sent the reporter
+        // rewriting a correct query into a shape that then failed for an unrelated reason.
+        var exception = new QueryExecutionException(
+            "The C# query could not be compiled: Line 1: The type 'NpgsqlTsQuery' is defined in an assembly that is " +
+            $"not referenced. You must add a reference to assembly 'Npgsql'. {QueryCompiler.ReferenceSetFailureMarker}");
+
+        var message = EfCoreMcpTools.FormatQueryErrorForTesting(exception);
+
+        Assert.DoesNotContain("Next step: Fix the reported compile error(s)", message, StringComparison.Ordinal);
+        Assert.Contains("could not assemble a complete set of assembly references", message, StringComparison.Ordinal);
+        Assert.Contains("do not rewrite the query", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FormatQueryError_CompileErrorInTheQueryItself_StillBlamesTheQuery()
+    {
+        var exception = new QueryExecutionException(
+            "The C# query could not be compiled: Line 1: 'DbSet<Customer>' does not contain a definition for 'Nope'.");
+
+        var message = EfCoreMcpTools.FormatQueryErrorForTesting(exception);
+
+        Assert.Contains("Next step: Fix the reported compile error(s)", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PreviewQuerySql_WithScalarResult_ReportsAPreviewNotAvailableHint()
     {
         // Use InProcess mode, which is required for preview_query_sql to work.
@@ -175,6 +203,23 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         var json = await tools.RunQuery("SampleAppDbContext", "Customers.Take(3).Select(c => new { c.Id, c.Name })");
 
         Assert.DoesNotContain("could not be translated", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunQuery_WithAnInlineArrayContains_Succeeds()
+    {
+        // The reproduction from issue #122, end to end through the tool layer.
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(new QueryExecutionOptions { Mode = QueryExecutionMode.InProcess }, db);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        EnsureSchema(db);
+
+        var json = await tools.RunQuery(
+            "SampleAppDbContext",
+            "Customers.Where(c => new[] {\"A\",\"B\"}.Contains(c.Name)).Select(c => new { c.Name })");
+
+        Assert.DoesNotContain("could not be compiled", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Npgsql", json, StringComparison.OrdinalIgnoreCase);
     }
 
     private static int CountOccurrences(string haystack, string needle)
