@@ -33,6 +33,26 @@ public sealed class ConnectionRegistryRefreshTests : IDisposable
         File.WriteAllText(_secretsPath, JsonSerializer.Serialize(new { Connections = connections }));
     }
 
+    private void WriteConnectionWithConnectionString(string name, string connectionString)
+    {
+        var connection = BuildConnection(name, production: false);
+        connection["ConnectionString"] = connectionString;
+        File.WriteAllText(
+            _secretsPath,
+            JsonSerializer.Serialize(new { Connections = new Dictionary<string, object> { [name] = connection } }));
+    }
+
+    /// <summary>Writes a structurally valid but semantically malformed configuration: the connection
+    /// is missing its required ConnectionString, which the registry rejects.</summary>
+    private void WriteMalformedConnections() =>
+        File.WriteAllText(_secretsPath, JsonSerializer.Serialize(new
+        {
+            Connections = new Dictionary<string, object>
+            {
+                ["Broken"] = new Dictionary<string, object> { ["Provider"] = "Sqlite" },
+            },
+        }));
+
     private void AppendConnection(string name, bool production)
     {
         var existing = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, JsonElement>>>(
@@ -277,6 +297,87 @@ public sealed class ConnectionRegistryRefreshTests : IDisposable
         File.Delete(_secretsPath);
 
         Assert.Empty(registry.ConnectionNames);
+    }
+
+    [Fact]
+    public void SchemaCacheKey_DetectsARepointThatHappenedWhileTheConfigurationWasMalformed()
+    {
+        // Review finding on #123: a malformed intermediate state must not erase the connection-string
+        // history that revision tracking depends on. Otherwise the fix below resolves back to
+        // revision 0, reproducing the pre-edit cache key and serving the old database's schema.
+        WriteConnectionWithConnectionString("Alpha", "Data Source=original.db");
+        var registry = new ConnectionRegistry(BuildFileBackedConfiguration());
+        var original = registry.Get("Alpha").SchemaCacheKey;
+
+        WriteMalformedConnections();
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.Get("Alpha"));
+
+        WriteConnectionWithConnectionString("Alpha", "Data Source=somewhere-else.db");
+
+        Assert.NotEqual(original, registry.Get("Alpha").SchemaCacheKey);
+    }
+
+    [Fact]
+    public void ActiveConnection_WhileTheConfigurationIsMalformed_IsNotServedFromTheStaleRegistry()
+    {
+        WriteConnections("Alpha");
+        var registry = new ConnectionRegistry(BuildFileBackedConfiguration());
+        Assert.Equal("Alpha", registry.ActiveConnectionName);
+
+        WriteMalformedConnections();
+
+        // Fail closed: a broken configuration must not keep serving the previously loaded entries.
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.ActiveConnectionName);
+        Assert.Throws<ConnectionRegistryConfigurationException>(() => registry.ListConnections());
+    }
+
+    [Fact]
+    public void ConnectionNames_DetectASameLengthRewriteWithinOneTimestampTick()
+    {
+        // A connection-string edit often preserves the file's length, and the write can land inside a
+        // single timestamp tick, so a length+timestamp fingerprint would miss it entirely.
+        WriteConnectionWithConnectionString("Alpha", "Data Source=aaaa.db");
+        var registry = new ConnectionRegistry(BuildFileBackedConfiguration());
+        var original = registry.Get("Alpha").SchemaCacheKey;
+        var timestamp = File.GetLastWriteTimeUtc(_secretsPath);
+
+        WriteConnectionWithConnectionString("Alpha", "Data Source=bbbb.db");
+        File.SetLastWriteTimeUtc(_secretsPath, timestamp);
+
+        Assert.Equal("Data Source=bbbb.db", registry.Get("Alpha").ConnectionString);
+        Assert.NotEqual(original, registry.Get("Alpha").SchemaCacheKey);
+    }
+
+    [Fact]
+    public void Reload_WhenTheSourceIsNotValidJson_ReportsTheUnderlyingCause()
+    {
+        WriteConnections("Alpha");
+        var registry = new ConnectionRegistry(BuildFileBackedConfiguration());
+        _ = registry.ConnectionNames;
+
+        File.WriteAllText(_secretsPath, "{ this is not valid json");
+        var result = registry.Reload();
+
+        // The parser names the offending file and position; that detail is the only actionable part.
+        Assert.NotNull(result.ConfigurationError);
+        Assert.Contains("Cause:", result.ConfigurationError!.Message, StringComparison.Ordinal);
+        Assert.Contains("reload", result.ConfigurationError.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Reload_AfterAnInvalidJsonSourceIsRepaired_RecoversWithoutRestart()
+    {
+        WriteConnections("Alpha");
+        var registry = new ConnectionRegistry(BuildFileBackedConfiguration());
+        _ = registry.ConnectionNames;
+        File.WriteAllText(_secretsPath, "{ this is not valid json");
+        Assert.NotNull(registry.Reload().ConfigurationError);
+
+        WriteConnections("Alpha", "Beta");
+        var result = registry.Reload();
+
+        Assert.Null(result.ConfigurationError);
+        Assert.Equal(["Alpha", "Beta"], registry.ConnectionNames.OrderBy(n => n, StringComparer.Ordinal));
     }
 
     [Fact]

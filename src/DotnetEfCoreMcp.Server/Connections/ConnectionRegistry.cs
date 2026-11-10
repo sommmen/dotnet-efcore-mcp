@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Primitives;
 
 namespace DotnetEfCoreMcp.Server.Connections;
@@ -29,6 +30,15 @@ public sealed class ConnectionRegistry : IDisposable
     private string _sourceSignature = string.Empty;
     private bool _stale;
     private DateTimeOffset _lastLoadedAtUtc;
+
+    /// <summary>The last successfully parsed entries, retained across a failed reload purely so
+    /// <see cref="ResolveConfigurationRevision"/> can still detect that a connection was repointed
+    /// at a different database. A malformed reload empties <see cref="_entries"/> (every tool call
+    /// must fail closed while the configuration is broken), but forgetting the previous connection
+    /// strings as well would let a later fix that *also* repoints a connection resolve back to
+    /// revision 0 - reproducing the pre-edit <see cref="ConnectionRegistryEntry.SchemaCacheKey"/>
+    /// and serving the old database's cached schema.</summary>
+    private Dictionary<string, ConnectionRegistryEntry> _lastKnownGoodEntries = new(StringComparer.Ordinal);
 
     /// <summary>Captures a malformed-configuration failure from <see cref="Load"/> instead of
     /// letting it escape the constructor. This type is registered as a DI singleton and resolved
@@ -282,6 +292,13 @@ public sealed class ConnectionRegistry : IDisposable
         _stale = false;
     }
 
+    /// <summary>Re-reads every reload-capable provider, mapping a provider-level failure to
+    /// <see cref="ConnectionRegistryConfigurationException"/> rather than letting it escape. An
+    /// external edit can momentarily leave invalid JSON on disk, and the raw
+    /// <c>JsonException</c>/<c>FormatException</c> would otherwise bypass the malformed-configuration
+    /// handling and reach MCP callers as a generic "failed unexpectedly" error. The provider's own
+    /// message is included because it names the offending file and position, which is the only part
+    /// a caller can actually act on.</summary>
     private ConnectionRegistryConfigurationException? ReloadConfigurationRoot()
     {
         if (_configuration is not IConfigurationRoot root)
@@ -294,10 +311,13 @@ public sealed class ConnectionRegistry : IDisposable
             root.Reload();
             return null;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            // A configuration file path is not a secret (the connection strings inside it are, and
+            // they are never part of a parser's message), so naming the cause is safe here.
             return new ConnectionRegistryConfigurationException(
-                "Unable to reload the connections configuration. Correct the configuration source and retry.");
+                "Unable to reload the connections configuration. Correct the configuration source and retry. " +
+                $"Cause: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -307,7 +327,7 @@ public sealed class ConnectionRegistry : IDisposable
     private void ApplyLoad(ConnectionRegistryConfigurationException? reloadError = null)
     {
         var previousActive = _activeName;
-        var previousEntries = _entries;
+        var previousEntries = _lastKnownGoodEntries;
 
         try
         {
@@ -317,11 +337,16 @@ public sealed class ConnectionRegistry : IDisposable
             }
 
             _entries = Load(_configuration, previousEntries);
+            _lastKnownGoodEntries = _entries;
             _configurationError = null;
         }
         catch (ConnectionRegistryConfigurationException ex)
         {
+            // Serve nothing while the configuration is broken, but keep _lastKnownGoodEntries so a
+            // subsequent fix can still tell whether a connection was repointed meanwhile.
+            _entries = new Dictionary<string, ConnectionRegistryEntry>(StringComparer.Ordinal);
             _configurationError = ex;
+            _activeName = null;
             _sourceSignature = ComputeSourceSignature();
             _lastLoadedAtUtc = DateTimeOffset.UtcNow;
             return;
@@ -365,8 +390,15 @@ public sealed class ConnectionRegistry : IDisposable
         return repointed ? before.ConfigurationRevision + 1 : before.ConfigurationRevision;
     }
 
-    /// <summary>Returns a fingerprint of every file-backed configuration source. Content hashes
-    /// detect same-length rewrites that file timestamps can miss on coarse-resolution filesystems.</summary>
+    /// <summary>Returns a fingerprint of every file-backed configuration source: path plus a hash of
+    /// the file's contents. Hashing the contents rather than trusting length plus last-write time
+    /// matters because a connection-string edit frequently preserves the file's length (swapping one
+    /// host or database name for another of equal width), and two writes can land within a single
+    /// timestamp tick or on a filesystem with coarse timestamp resolution - either of which would
+    /// leave a metadata-only fingerprint unchanged and keep the registry serving stale connections
+    /// until someone called <c>reload_connections</c>, defeating the point of the automatic
+    /// refresh. These files are small (a secrets/settings document, not data), and the hash is only
+    /// computed on registry access, so reading them is cheap enough to prefer correctness.</summary>
     private string ComputeSourceSignature()
     {
         if (_configuration is not IConfigurationRoot root)
@@ -384,11 +416,28 @@ public sealed class ConnectionRegistry : IDisposable
 
             var fileInfo = fileProvider.Source.FileProvider?.GetFileInfo(path);
             parts.Add(fileInfo is { Exists: true }
-                ? $"{path}|{fileInfo.Length}|{fileInfo.LastModified.UtcTicks}"
+                ? $"{path}|{fileInfo.Length}|{ComputeContentHash(fileInfo)}"
                 : $"{path}|missing");
         }
 
         return string.Join(";", parts);
+    }
+
+    /// <summary>Hashes a configuration file's contents, falling back to its last-write time when the
+    /// file cannot be read. The fallback covers a file being rewritten concurrently with this read:
+    /// treating that as "changed" (the timestamp has moved) is the safe direction, since the next
+    /// access simply re-reads.</summary>
+    private static string ComputeContentHash(IFileInfo fileInfo)
+    {
+        try
+        {
+            using var stream = fileInfo.CreateReadStream();
+            return Convert.ToHexString(SHA256.HashData(stream));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return $"unreadable@{fileInfo.LastModified.UtcTicks}";
+        }
     }
 
     public void Dispose() => _reloadTokenSubscription?.Dispose();
