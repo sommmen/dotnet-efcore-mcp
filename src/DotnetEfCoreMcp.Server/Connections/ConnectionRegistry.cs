@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Primitives;
 
 namespace DotnetEfCoreMcp.Server.Connections;
 
@@ -8,12 +10,25 @@ namespace DotnetEfCoreMcp.Server.Connections;
 /// section - never from anything supplied by an MCP client, and never from the target project's
 /// own configuration files. Production deployments should replace the user-secrets source with a
 /// mounted secrets file or a real secret store (e.g. Azure Key Vault, AWS Secrets Manager); that
-/// integration is out of scope for this MVP.</summary>
-public sealed class ConnectionRegistry
+/// integration is out of scope for this MVP.
+///
+/// The parsed registry is a cache over that configuration, not a one-shot startup snapshot: every
+/// accessor first checks whether any file-backed configuration source changed on disk (and whether
+/// a provider raised its own reload token) and re-reads before answering, so a connection added to
+/// the secrets store while the server is running becomes visible without restarting the MCP client
+/// (issue #121). <see cref="Reload"/> forces the same refresh unconditionally, for the case where
+/// the configuration source cannot be observed by file metadata at all.</summary>
+public sealed class ConnectionRegistry : IDisposable
 {
-    private readonly Dictionary<string, ConnectionRegistryEntry> _entries;
+    private readonly IConfiguration _configuration;
     private readonly object _gate = new();
+    private readonly IDisposable? _reloadTokenSubscription;
+
+    private Dictionary<string, ConnectionRegistryEntry> _entries = new(StringComparer.Ordinal);
     private string? _activeName;
+    private string _sourceSignature = string.Empty;
+    private bool _stale;
+    private DateTimeOffset _lastLoadedAtUtc;
 
     /// <summary>Captures a malformed-configuration failure from <see cref="Load"/> instead of
     /// letting it escape the constructor. This type is registered as a DI singleton and resolved
@@ -26,36 +41,75 @@ public sealed class ConnectionRegistry
     /// message for every single tool call. Deferring the throw to first actual use (see
     /// <see cref="EnsureLoaded"/>) means it is always raised from inside a tool method body, where
     /// the existing handling applies normally.</summary>
-    private readonly ConnectionRegistryConfigurationException? _configurationError;
+    private ConnectionRegistryConfigurationException? _configurationError;
 
-    /// <summary>Non-null when the "Connections" configuration failed validation at construction
-    /// time. Every tool call already surfaces this (via <see cref="EnsureLoaded"/>) with its actual
-    /// message intact; this property additionally lets the server log the same failure prominently
-    /// at startup, before any MCP client has made a call.</summary>
-    public ConnectionRegistryConfigurationException? ConfigurationError => _configurationError;
+    /// <summary>Non-null when the most recent read of the "Connections" configuration failed
+    /// validation. Every tool call already surfaces this (via <see cref="EnsureLoaded"/>) with its
+    /// actual message intact; this property additionally lets the server log the same failure
+    /// prominently at startup, before any MCP client has made a call. Reading it never triggers a
+    /// refresh, so startup logging reports the startup state.</summary>
+    public ConnectionRegistryConfigurationException? ConfigurationError
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _configurationError;
+            }
+        }
+    }
+
+    /// <summary>When the registry last (re-)read its configuration source. Surfaced to MCP callers
+    /// so a stale-looking connection list can be reasoned about rather than guessed at.</summary>
+    public DateTimeOffset LastLoadedAtUtc
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _lastLoadedAtUtc;
+            }
+        }
+    }
 
     public ConnectionRegistry(IConfiguration configuration)
     {
-        try
+        _configuration = configuration;
+
+        lock (_gate)
         {
-            _entries = Load(configuration);
-        }
-        catch (ConnectionRegistryConfigurationException ex)
-        {
-            _entries = new Dictionary<string, ConnectionRegistryEntry>(StringComparer.Ordinal);
-            _configurationError = ex;
-            return;
+            // Forced rather than a plain ApplyLoad: the configuration may have been built before a
+            // source file existed, in which case the provider still holds no data while the file is
+            // already on disk. Recording that file's signature against the provider's stale data
+            // would make EnsureCurrent conclude everything is current and serve an empty registry
+            // indefinitely.
+            _stale = true;
+            EnsureCurrent();
         }
 
-        _activeName = _entries.Values.FirstOrDefault(entry => !entry.IsProduction)?.Name;
+        // A provider that was registered with reloadOnChange:true refreshes itself and raises this
+        // token; the file-metadata check in EnsureCurrent covers the providers that do not.
+        _reloadTokenSubscription = ChangeToken.OnChange(
+            _configuration.GetReloadToken,
+            () =>
+            {
+                lock (_gate)
+                {
+                    _stale = true;
+                }
+            });
     }
 
     public IReadOnlyCollection<string> ConnectionNames
     {
         get
         {
-            EnsureLoaded();
-            return _entries.Keys;
+            lock (_gate)
+            {
+                EnsureCurrent();
+                EnsureLoaded();
+                return _entries.Keys.ToArray();
+            }
         }
     }
 
@@ -66,8 +120,12 @@ public sealed class ConnectionRegistry
     {
         get
         {
-            EnsureLoaded();
-            return _activeName;
+            lock (_gate)
+            {
+                EnsureCurrent();
+                EnsureLoaded();
+                return _activeName;
+            }
         }
     }
 
@@ -78,27 +136,41 @@ public sealed class ConnectionRegistry
     {
         get
         {
-            EnsureLoaded();
-            return _activeName is not null && _entries.TryGetValue(_activeName, out var entry) ? entry : null;
+            lock (_gate)
+            {
+                EnsureCurrent();
+                EnsureLoaded();
+                return _activeName is not null && _entries.TryGetValue(_activeName, out var entry) ? entry : null;
+            }
         }
     }
 
     public bool TryGet(string name, out ConnectionRegistryEntry entry)
     {
-        EnsureLoaded();
-        return _entries.TryGetValue(name, out entry!);
+        lock (_gate)
+        {
+            EnsureCurrent();
+            EnsureLoaded();
+            return _entries.TryGetValue(name, out entry!);
+        }
     }
 
     /// <summary>Fails closed: throws <see cref="UnknownConnectionException"/> rather than falling
     /// back to any default connection when <paramref name="name"/> isn't registered.</summary>
     public ConnectionRegistryEntry Get(string name)
     {
-        if (!TryGet(name, out var entry))
+        lock (_gate)
         {
-            throw new UnknownConnectionException(name, ConnectionNames);
-        }
+            EnsureCurrent();
+            EnsureLoaded();
 
-        return entry;
+            if (!_entries.TryGetValue(name, out var entry))
+            {
+                throw new UnknownConnectionException(name, _entries.Keys.ToArray());
+            }
+
+            return entry;
+        }
     }
 
     /// <summary>Makes <paramref name="name"/> the active connection used as the default by MCP tools
@@ -107,15 +179,21 @@ public sealed class ConnectionRegistry
     /// so a production database can't become the default unless the caller explicitly opts in.</summary>
     public void SetActive(string name, bool allowProduction = false)
     {
-        var entry = Get(name);
-
-        if (entry.IsProduction && !allowProduction)
-        {
-            throw new ProductionProtectedException(name);
-        }
-
         lock (_gate)
         {
+            EnsureCurrent();
+            EnsureLoaded();
+
+            if (!_entries.TryGetValue(name, out var entry))
+            {
+                throw new UnknownConnectionException(name, _entries.Keys.ToArray());
+            }
+
+            if (entry.IsProduction && !allowProduction)
+            {
+                throw new ProductionProtectedException(name);
+            }
+
             _activeName = name;
         }
     }
@@ -125,25 +203,60 @@ public sealed class ConnectionRegistry
     /// flagged.</summary>
     public IReadOnlyList<ConnectionInfo> ListConnections()
     {
-        EnsureLoaded();
         lock (_gate)
         {
-            return _entries.Values
-                .OrderBy(e => e.IsProduction)
-                .ThenBy(e => e.Name, StringComparer.Ordinal)
-                .Select(e => new ConnectionInfo(
-                    e.Name,
-                    e.Provider,
-                    e.AccessMode,
-                    e.Environment,
-                    e.IsProduction,
-                    IsActive: string.Equals(e.Name, _activeName, StringComparison.Ordinal),
-                    e.Source))
-                .ToList();
+            EnsureCurrent();
+            EnsureLoaded();
+            return BuildConnectionInfos_NoLock();
         }
     }
 
-    /// <summary>Re-throws the configuration failure captured at construction time, if any. See
+    /// <summary>Unconditionally re-reads the "Connections" configuration and returns the resulting
+    /// redacted view, along with whether the set of registered connection names changed. This is the
+    /// explicit escape hatch behind the <c>reload_connections</c> tool: the automatic refresh in
+    /// <see cref="EnsureCurrent"/> only observes file-backed sources, so a configuration source that
+    /// cannot be fingerprinted (an in-memory or custom provider, or an environment variable changed
+    /// in-process) still needs a way to be picked up without restarting the MCP client.</summary>
+    public ConnectionReloadResult Reload()
+    {
+        lock (_gate)
+        {
+            var previousNames = _entries.Keys.ToArray();
+
+            // Ask every reload-capable provider to re-read its own source first; otherwise a
+            // user-secrets/JSON provider keeps serving the values it parsed at startup and the
+            // reload would be a no-op.
+            ApplyLoad(ReloadConfigurationRoot());
+            _stale = false;
+
+            var currentNames = _configurationError is null ? _entries.Keys.ToArray() : [];
+            var added = currentNames.Except(previousNames, StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+            var removed = previousNames.Except(currentNames, StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+
+            return new ConnectionReloadResult(
+                added,
+                removed,
+                _lastLoadedAtUtc,
+                _configurationError,
+                _configurationError is null ? BuildConnectionInfos_NoLock() : []);
+        }
+    }
+
+    private IReadOnlyList<ConnectionInfo> BuildConnectionInfos_NoLock() =>
+        _entries.Values
+            .OrderBy(e => e.IsProduction)
+            .ThenBy(e => e.Name, StringComparer.Ordinal)
+            .Select(e => new ConnectionInfo(
+                e.Name,
+                e.Provider,
+                e.AccessMode,
+                e.Environment,
+                e.IsProduction,
+                IsActive: string.Equals(e.Name, _activeName, StringComparison.Ordinal),
+                e.Source))
+            .ToList();
+
+    /// <summary>Re-throws the configuration failure captured by the most recent load, if any. See
     /// <see cref="_configurationError"/> for why this is deferred rather than thrown eagerly.</summary>
     private void EnsureLoaded()
     {
@@ -153,7 +266,136 @@ public sealed class ConnectionRegistry
         }
     }
 
-    private static Dictionary<string, ConnectionRegistryEntry> Load(IConfiguration configuration)
+    /// <summary>Re-reads the configuration when a reload token fired or any file-backed source's
+    /// path/length/timestamp changed since the last load. The fingerprint check exists because
+    /// <c>AddUserSecrets</c>/<c>AddJsonFile</c> are registered without <c>reloadOnChange</c> here,
+    /// so they neither refresh themselves nor raise a token when an external edit (such as
+    /// <c>dotnet user-secrets set</c>) rewrites the file.</summary>
+    private void EnsureCurrent()
+    {
+        if (!_stale && string.Equals(_sourceSignature, ComputeSourceSignature(), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ApplyLoad(ReloadConfigurationRoot());
+        _stale = false;
+    }
+
+    private ConnectionRegistryConfigurationException? ReloadConfigurationRoot()
+    {
+        if (_configuration is not IConfigurationRoot root)
+        {
+            return null;
+        }
+
+        try
+        {
+            root.Reload();
+            return null;
+        }
+        catch (Exception)
+        {
+            return new ConnectionRegistryConfigurationException(
+                "Unable to reload the connections configuration. Correct the configuration source and retry.");
+        }
+    }
+
+    /// <summary>Parses the current configuration into <see cref="_entries"/>, preserving the active
+    /// connection selection when that connection still exists. Must be called under
+    /// <see cref="_gate"/>.</summary>
+    private void ApplyLoad(ConnectionRegistryConfigurationException? reloadError = null)
+    {
+        var previousActive = _activeName;
+        var previousEntries = _entries;
+
+        try
+        {
+            if (reloadError is not null)
+            {
+                throw reloadError;
+            }
+
+            _entries = Load(_configuration, previousEntries);
+            _configurationError = null;
+        }
+        catch (ConnectionRegistryConfigurationException ex)
+        {
+            _configurationError = ex;
+            _sourceSignature = ComputeSourceSignature();
+            _lastLoadedAtUtc = DateTimeOffset.UtcNow;
+            return;
+        }
+
+        // A swap_connection selection must survive a refresh triggered by an unrelated edit, so the
+        // previous choice is kept whenever it is still registered; only a selection that vanished
+        // falls back to the startup rule (first non-production connection). A selection that was
+        // reclassified as production is dropped too - staying active would silently carry over an
+        // acknowledgment that was given for a non-production target.
+        _activeName = previousActive is not null
+            && _entries.TryGetValue(previousActive, out var retained)
+            && !(retained.IsProduction && previousEntries.TryGetValue(previousActive, out var before) && !before.IsProduction)
+                ? previousActive
+                : _entries.Values.FirstOrDefault(entry => !entry.IsProduction)?.Name;
+
+        _sourceSignature = ComputeSourceSignature();
+        _lastLoadedAtUtc = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Returns the <see cref="ConnectionRegistryEntry.ConfigurationRevision"/> a freshly
+    /// parsed connection should carry: the previous one, bumped when this reload repointed the name
+    /// at a different database, so <see cref="ConnectionRegistryEntry.SchemaCacheKey"/> changes only
+    /// when the cached schema would actually be wrong.</summary>
+    private static int ResolveConfigurationRevision(
+        IReadOnlyDictionary<string, ConnectionRegistryEntry> previous,
+        string name,
+        ConnectionSource source,
+        DatabaseProvider? provider,
+        string? connectionString)
+    {
+        if (!previous.TryGetValue(name, out var before))
+        {
+            return 0;
+        }
+
+        var repointed = before.Source != source
+            || before.Provider != provider
+            || !string.Equals(before.ConnectionString, connectionString, StringComparison.Ordinal);
+
+        return repointed ? before.ConfigurationRevision + 1 : before.ConfigurationRevision;
+    }
+
+    /// <summary>Returns a fingerprint of every file-backed configuration source. Content hashes
+    /// detect same-length rewrites that file timestamps can miss on coarse-resolution filesystems.</summary>
+    private string ComputeSourceSignature()
+    {
+        if (_configuration is not IConfigurationRoot root)
+        {
+            return string.Empty;
+        }
+
+        var parts = new List<string>();
+        foreach (var provider in root.Providers)
+        {
+            if (provider is not FileConfigurationProvider fileProvider || fileProvider.Source.Path is not { } path)
+            {
+                continue;
+            }
+
+            var fileInfo = fileProvider.Source.FileProvider?.GetFileInfo(path);
+            parts.Add(fileInfo is { Exists: true }
+                ? $"{path}|{fileInfo.Length}|{fileInfo.LastModified.UtcTicks}"
+                : $"{path}|missing");
+        }
+
+        return string.Join(";", parts);
+    }
+
+    public void Dispose() => _reloadTokenSubscription?.Dispose();
+
+    private static Dictionary<string, ConnectionRegistryEntry> Load(
+        IConfiguration configuration,
+        IReadOnlyDictionary<string, ConnectionRegistryEntry> previousEntries)
     {
         var section = configuration.GetSection("Connections");
         var result = new Dictionary<string, ConnectionRegistryEntry>(StringComparer.Ordinal);
@@ -259,6 +501,7 @@ public sealed class ConnectionRegistry
                 CommandTimeoutSeconds = commandTimeoutSeconds,
                 Environment = environment,
                 AccessPolicy = accessPolicy,
+                ConfigurationRevision = ResolveConfigurationRevision(previousEntries, name, source, provider, connectionString),
             };
         }
 
@@ -380,3 +623,16 @@ public sealed record ConnectionInfo(
     bool IsProduction,
     bool IsActive,
     ConnectionSource Source = ConnectionSource.Explicit);
+
+/// <summary>Outcome of <see cref="ConnectionRegistry.Reload"/>: which connection names appeared or
+/// disappeared relative to the previously loaded set, when the reload happened, the post-reload
+/// redacted view, and the configuration failure if the reloaded configuration is malformed (in
+/// which case <see cref="Connections"/> is empty and every later tool call surfaces the same
+/// error).</summary>
+public sealed record ConnectionReloadResult(
+    IReadOnlyList<string> AddedConnectionNames,
+    IReadOnlyList<string> RemovedConnectionNames,
+    DateTimeOffset LoadedAtUtc,
+    ConnectionRegistryConfigurationException? ConfigurationError,
+    IReadOnlyList<ConnectionInfo> Connections);
+

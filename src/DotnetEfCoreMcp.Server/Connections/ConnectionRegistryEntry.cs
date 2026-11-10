@@ -42,6 +42,18 @@ public sealed class ConnectionRegistryEntry
     /// rejects any connection missing this section rather than inferring a default policy.</summary>
     public required ConnectionAccessPolicy AccessPolicy { get; init; }
 
+    /// <summary>Set by <see cref="ConnectionRegistry"/> each time a reload repoints this connection
+    /// name at a different database (a changed <see cref="Source"/>, <see cref="Provider"/>, or
+    /// <see cref="ConnectionString"/>). Only exists to make <see cref="SchemaCacheKey"/> change with
+    /// it; defaults to 0 for entries constructed directly, including in tests.</summary>
+    public int ConfigurationRevision { get; init; }
+
+    /// <summary>Cache key for anything derived from the database this entry points at. Since the
+    /// registry re-reads its configuration while the server runs, one connection name can be
+    /// repointed at a different database mid-session; keying on the name alone would then serve the
+    /// previous database's cached schema.</summary>
+    public string SchemaCacheKey => ConfigurationRevision == 0 ? Name : $"{Name}#r{ConfigurationRevision}";
+
     /// <summary>Redacted representation safe to log or return to an MCP client - never includes
     /// <see cref="ConnectionString"/>.</summary>
     public override string ToString() =>

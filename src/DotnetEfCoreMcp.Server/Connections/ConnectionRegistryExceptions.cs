@@ -29,7 +29,9 @@ public sealed class UnknownConnectionException : Exception
     private static string BuildMessage(string requestedName, IReadOnlyCollection<string> knownNames)
     {
         var known = knownNames.Count > 0 ? string.Join(", ", knownNames) : "(none configured)";
-        return $"No connection named '{requestedName}' is configured on the server. Known connections: {known}.";
+        return $"No connection named '{requestedName}' is configured on the server. Known connections: {known}. " +
+            "If you expected this connection to exist, call reload_connections to force the registry to " +
+            "re-read its configuration source before concluding it was never configured.";
     }
 }
 

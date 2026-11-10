@@ -47,6 +47,13 @@ var builder = Host.CreateApplicationBuilder(args);
 // DOTNETEFCOREMCP_CONNECTIONS__<Name>__<Field> pattern, e.g.
 // DOTNETEFCOREMCP_CONNECTIONS__MyApp.Context__ConnectionString=... (double underscore is the
 // standard IConfiguration section-separator convention for environment variables).
+//
+// The directory is created first because AddUserSecrets silently roots its PhysicalFileProvider at
+// the *app base directory* when the secrets directory does not exist, which permanently blinds the
+// provider to that file: the secrets store could then never be re-read while the server runs, not
+// even by reload_connections (issue #121). This is exactly the fresh-install case - a user who
+// configures their first connection after starting the server.
+UserSecretsStore.EnsureDirectoryExists(typeof(Program).Assembly);
 builder.Configuration.AddUserSecrets(typeof(Program).Assembly, optional: true);
 builder.Configuration.AddEnvironmentVariables(prefix: "DOTNETEFCOREMCP_");
 

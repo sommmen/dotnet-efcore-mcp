@@ -776,7 +776,10 @@ public sealed class EfCoreMcpTools(
         "connection's database provider, access mode, environment (Development/Staging/Production), source " +
         "(Explicit or ApplicationFactory - see docs/development/startup-derived-connections.md), whether it " +
         "is a production connection (always read-only, swap-protected), and which one is currently active. " +
-        "Connection strings are never exposed.")]
+        "Connection strings are never exposed. The registry re-reads its configuration source when that " +
+        "source changed on disk, so a connection added while the server is running appears here without a " +
+        "restart; if an expected connection is still missing, call reload_connections to force a re-read " +
+        "before concluding it was never configured.")]
     public string ListConnections()
         => Execute("list_connections", ListConnectionsCore);
 
@@ -786,7 +789,56 @@ public sealed class EfCoreMcpTools(
         return resultFormatter.Format(new
         {
             activeConnection = connectionRegistry.ActiveConnectionName,
+            registryLoadedAtUtc = connectionRegistry.LastLoadedAtUtc.UtcDateTime.ToString("O"),
             connections = infos.Select(i => new
+            {
+                name = i.Name,
+                provider = i.Provider?.ToString() ?? "(inferred)",
+                accessMode = i.AccessMode.ToString(),
+                environment = i.Environment.ToString(),
+                source = i.Source.ToString(),
+                isProduction = i.IsProduction,
+                isActive = i.IsActive,
+            }),
+        });
+    }
+
+    [McpServerTool(Name = "reload_connections"), Description(
+        "Forces the server to re-read its connection registry configuration and reports which connection " +
+        "names were added or removed relative to the previously loaded set, plus the refreshed connection " +
+        "list (same redacted shape as list_connections; connection strings are never exposed). Call this when " +
+        "a connection you expect is absent from list_connections - for example because it was added to the " +
+        "user-secrets store or an environment variable after this server started - instead of concluding the " +
+        "connection does not exist or asking the user to restart their MCP client. Read-only with respect to " +
+        "the database: it opens no connection and runs no query. The active connection selected by " +
+        "swap_connection is preserved when it still exists after the reload.")]
+    public string ReloadConnections()
+        => Execute("reload_connections", ReloadConnectionsCore);
+
+    private string ReloadConnectionsCore()
+    {
+        var result = connectionRegistry.Reload();
+
+        if (result.ConfigurationError is not null)
+        {
+            logger.LogError(
+                result.ConfigurationError,
+                "Connections configuration is invalid after an explicit reload; every MCP tool call will fail until this is fixed: {Message}",
+                result.ConfigurationError.Message);
+            throw new McpException(result.ConfigurationError.Message);
+        }
+
+        logger.LogInformation(
+            "Reloaded connection registry. Added={AddedCount} Removed={RemovedCount} Total={TotalCount}",
+            result.AddedConnectionNames.Count, result.RemovedConnectionNames.Count, result.Connections.Count);
+
+        return resultFormatter.Format(new
+        {
+            activeConnection = connectionRegistry.ActiveConnectionName,
+            registryLoadedAtUtc = result.LoadedAtUtc.UtcDateTime.ToString("O"),
+            addedConnections = result.AddedConnectionNames,
+            removedConnections = result.RemovedConnectionNames,
+            connections = result.Connections.Select(i => new
             {
                 name = i.Name,
                 provider = i.Provider?.ToString() ?? "(inferred)",
@@ -1242,14 +1294,15 @@ public sealed class EfCoreMcpTools(
     /// any of these tools, in any order, against the same connection - reuse it. This means
     /// <c>get_entity_schema</c>/<c>search_schema</c> never require a prior explicit
     /// <c>get_schema</c> call to "prime" the cache. The cache is keyed by both the context type and
-    /// <see cref="ConnectionRegistryEntry.Name"/>, so two connections sharing a DbContext type
-    /// never reuse each other's schema.</summary>
+    /// <see cref="ConnectionRegistryEntry.SchemaCacheKey"/>, so two connections sharing a DbContext
+    /// type never reuse each other's schema, and neither does one connection name that was
+    /// repointed at a different database by a mid-session configuration reload.</summary>
     private Schema.SchemaDto GetOrBuildSchema(Type contextType, ConnectionRegistryEntry entry)
     {
         // The cache stores the full, unfiltered schema for this (contextType, connection) pair, so
         // the per-connection AccessPolicy filter is applied to a fresh, non-mutating view every
         // call rather than being baked into the cached value.
-        return schemaCache.GetOrBuild(contextType, entry.Name, () =>
+        return schemaCache.GetOrBuild(contextType, entry.SchemaCacheKey, () =>
         {
             using var context = CreateContext(contextType, entry);
             return Schema.SchemaBuilder.Build(context);
@@ -1488,7 +1541,7 @@ public sealed class EfCoreMcpTools(
                 var active = connectionRegistry.ActiveConnection;
                 if (active is null)
                 {
-                    throw new McpException("No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections.)");
+                    throw new McpException("No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections; call reload_connections if one you configured is missing from it.)");
                 }
                 entry = active;
             }
