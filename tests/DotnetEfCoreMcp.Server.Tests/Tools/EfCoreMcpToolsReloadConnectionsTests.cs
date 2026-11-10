@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
@@ -51,7 +52,11 @@ public sealed class EfCoreMcpToolsReloadConnectionsTests : IDisposable
         using var document = JsonDocument.Parse(tools.ListConnections());
 
         Assert.True(document.RootElement.TryGetProperty("registryLoadedAtUtc", out var loadedAt));
-        Assert.True(DateTimeOffset.TryParse(loadedAt.GetString(), out _));
+        Assert.True(DateTimeOffset.TryParse(
+            loadedAt.GetString(),
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind,
+            out _));
     }
 
     [Fact]
@@ -112,7 +117,11 @@ public sealed class EfCoreMcpToolsReloadConnectionsTests : IDisposable
         tools.LoadAssembly(TestSupport.FixturePaths.SampleAppDllPath);
 
         var beforeAdding = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", "Beta"));
+            () => tools.RunQuery(
+                "SampleAppDbContext",
+                "Customers.Select(c => c.Name)",
+                "Beta",
+                cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("No connection named 'Beta'", beforeAdding.Message, StringComparison.Ordinal);
         Assert.Contains("reload_connections", beforeAdding.Message, StringComparison.Ordinal);
 
@@ -122,7 +131,11 @@ public sealed class EfCoreMcpToolsReloadConnectionsTests : IDisposable
         // context, so the connection now resolves and is rejected by policy instead of being
         // reported as a name that does not exist.
         var afterAdding = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", "Beta"));
+            () => tools.RunQuery(
+                "SampleAppDbContext",
+                "Customers.Select(c => c.Name)",
+                "Beta",
+                cancellationToken: TestContext.Current.CancellationToken));
         Assert.DoesNotContain("No connection named", afterAdding.Message, StringComparison.Ordinal);
     }
 
@@ -139,7 +152,7 @@ public sealed class EfCoreMcpToolsReloadConnectionsTests : IDisposable
     {
         var connections = names.ToDictionary(
             name => name,
-            name => new Dictionary<string, object>
+            _ => new Dictionary<string, object>
             {
                 ["Provider"] = "Sqlite",
                 ["ConnectionString"] = "Data Source=:memory:",

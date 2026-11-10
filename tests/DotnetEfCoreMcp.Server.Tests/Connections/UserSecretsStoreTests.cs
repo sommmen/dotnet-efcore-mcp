@@ -70,7 +70,7 @@ public sealed class UserSecretsStoreTests : IDisposable
             .Build();
 
         WriteSecretsFile();
-        ((IConfigurationRoot)configuration).Reload();
+        configuration.Reload();
 
         Assert.Empty(configuration.GetSection("Connections").GetChildren());
     }
