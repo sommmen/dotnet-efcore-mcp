@@ -87,7 +87,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
             throw new QueryExecutionException("The selected DbContext cannot be used with the Roslyn query engine because it does not expose a public parameterless or DbContextOptions constructor, or an IDesignTimeDbContextFactory<TContext>.");
 
         var source = UserQuerySourceGenerator.Generate(contextType, query, Guid.NewGuid().ToString("N"));
-        var compiled = await compiler.CompileAsync(source, target, cancellationToken).ConfigureAwait(false);
+        var compiled = await compiler.CompileAsync(source, target, provider, cancellationToken).ConfigureAwait(false);
         var allowMutations = !entry.IsProduction && entry.AccessMode == ConnectionAccessMode.ReadWrite && executionOptions.AllowMutationsInRunQuery;
         var loadContext = new CompiledQueryLoadContext(target.Context, target.LoadedAssemblyPaths, $"DotnetEfCoreMcp.Query.{Guid.NewGuid():N}");
         DbContext? context = null;

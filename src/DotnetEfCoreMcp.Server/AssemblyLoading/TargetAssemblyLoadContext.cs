@@ -209,6 +209,23 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
         return _resolver.ResolveAssemblyToPath(assemblyName) ?? _probe.ResolveAssembly(assemblyName);
     }
 
+    /// <summary>Whether this target's own <c>.deps.json</c> describes <paramref name="simpleName"/>.
+    /// Unlike <see cref="TryResolveReferencePath"/> this deliberately skips the
+    /// <see cref="TargetDependencyProbe"/> fallback, which searches the NuGet cache and shared
+    /// frameworks and so answers "is this assembly obtainable" rather than "does this target use
+    /// it" - every target would look like it referenced every provider.</summary>
+    public bool ReferencesAssembly(string simpleName)
+    {
+        try
+        {
+            return _resolver.ResolveAssemblyToPath(new AssemblyName(simpleName)) is not null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or FileLoadException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Resolves an assembly against this specific target - its <c>.deps.json</c> first,
     /// then the NuGet-cache/shared-framework probe - and loads it into this isolated context.
     /// Returns <c>null</c> when neither can locate it, which lets the runtime fall back to the

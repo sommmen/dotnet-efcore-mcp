@@ -46,6 +46,12 @@ namespace DotnetEfCoreMcp.Server.AssemblyLoading;
 /// and fails if it finds a non-BCL assembly that is not itself in this list. Prefer fixing a failure
 /// there by adding the missing assembly name rather than suppressing the test.
 ///
+/// A provider-specific entry added here must also join its provider's group in
+/// <c>DotnetEfCoreMcp.Server.Compilation.ProviderReferenceGroups</c>, which decides whole provider
+/// surfaces in or out of a query compilation's reference set. An ungrouped one would be referenced
+/// on "the server loaded it" grounds alone, independently of its siblings - the half-referenced
+/// state behind issue #122.
+///
 /// Shared by both <see cref="TargetAssemblyLoadContext"/> (which loads a target project's own
 /// compiled output) and <c>DotnetEfCoreMcp.Server.Compilation.CompiledQueryLoadContext</c> (which
 /// loads a Roslyn-compiled <c>run_query</c> expression - see

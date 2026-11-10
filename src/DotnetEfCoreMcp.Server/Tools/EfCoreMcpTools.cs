@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Hooks;
@@ -1377,7 +1378,11 @@ public sealed class EfCoreMcpTools(
 
         if (message.Contains("could not be compiled", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{message} Next step: Fix the reported compile error(s) in the query expression (Roslyn execution mode accepts full C# syntax rooted at a DbSet property) and retry.";
+            // A reference-set failure is the server's own, so telling the caller to fix a query
+            // that is already correct sends them rewriting working code (#122).
+            return message.Contains(QueryCompiler.ReferenceSetFailureMarker, StringComparison.Ordinal)
+                ? $"{message} Next step: The MCP server could not assemble a complete set of assembly references for this compilation, so do not rewrite the query; report the named assembly to the server operator, and if the query targets one provider but the error names another (e.g. an Npgsql type on a SQL Server connection), note that in the report."
+                : $"{message} Next step: Fix the reported compile error(s) in the query expression (Roslyn execution mode accepts full C# syntax rooted at a DbSet property) and retry.";
         }
 
         if (message.Contains("compilation timed out", StringComparison.OrdinalIgnoreCase))

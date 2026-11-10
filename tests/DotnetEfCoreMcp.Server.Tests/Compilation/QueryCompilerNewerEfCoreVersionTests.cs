@@ -1,5 +1,6 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
+using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 
@@ -36,7 +37,7 @@ public sealed class QueryCompilerNewerEfCoreVersionTests
         var source = UserQuerySourceGenerator.Generate(descriptor.ClrType, "Products.Take(1)", "newerefcore1");
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
-        var compiled = await compiler.CompileAsync(source, handle, CancellationToken.None);
+        var compiled = await compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None);
 
         Assert.NotEmpty(compiled.Pe);
     }
@@ -57,7 +58,7 @@ public sealed class QueryCompilerNewerEfCoreVersionTests
         var source = UserQuerySourceGenerator.Generate(descriptor.ClrType, "Products.Take(1)", "newerefcore2");
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
-        var compiled = await compiler.CompileAsync(source, handle, CancellationToken.None);
+        var compiled = await compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None);
 
         Assert.NotEmpty(compiled.Pe);
     }

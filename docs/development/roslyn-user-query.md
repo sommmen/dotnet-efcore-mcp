@@ -158,10 +158,32 @@ Compilation inputs:
     copy of something the target was built against is rejected outright with CS1705 ("uses … which
     has a higher version than referenced assembly") — which is why a target one EF Core patch ahead
     of the server could not compile a single query before [#118](https://github.com/sommmen/dotnet-efcore-mcp/issues/118),
-    even though discovery already worked. Only names the server has loaded are considered: resolving
-    a shared name purely from the target's closure would widen the reference set and can leave a
-    provider surface half-referenced, which reports spurious "defined in an assembly that is not
-    referenced" diagnostics alongside the real error.
+    even though discovery already worked.
+
+    Non-provider shared names are restricted to the ones the server has loaded: they have no
+    all-or-nothing group to complete, so widening them would pull the target's unrelated
+    dependencies into the reference set.
+
+    **Provider-specific names are decided per group, not per assembly**
+    (`Compilation/ProviderReferenceGroups.cs`). Each provider's EF Core package and its driver
+    assemblies form one group — `Npgsql.EntityFrameworkCore.PostgreSQL` + `Npgsql`,
+    `Microsoft.EntityFrameworkCore.SqlServer` + `Microsoft.Data.SqlClient` + its Identity closure,
+    `Microsoft.EntityFrameworkCore.Sqlite` + `Microsoft.Data.Sqlite` + SQLitePCLRaw — and a group
+    is referenced **whole or not at all**, only when it matches the connection's provider or the
+    target's own `.deps.json` reaches it (`LoadedAssemblyHandle.ReferencesAssembly`). A group that
+    cannot be resolved in full is dropped rather than referenced in part.
+
+    This replaces the previous "only names the server has already loaded" rule, which made the
+    reference set depend on server state. `Npgsql.EntityFrameworkCore.PostgreSQL` loads eagerly
+    (the provider-configuration switch's `UseNpgsql` call site) while `Npgsql` loads only once a
+    PostgreSQL connection opens, so a SQL Server query could be compiled against a **half-
+    referenced** PostgreSQL surface: `NpgsqlDbFunctionsExtensions` overloads entered overload
+    resolution with parameter types the compiler could not bind, and an ordinary
+    `.Contains(...)` query failed with `CS0012` naming `NpgsqlTsQuery`
+    ([#122](https://github.com/sommmen/dotnet-efcore-mcp/issues/122)). Because it depended on
+    which assemblies happened to be loaded, the same query text could succeed and then fail
+    within one session. Scoping also means a SQL Server connection no longer brings PostgreSQL
+    extension methods into overload resolution at all.
 
     Compiling against a different copy than the one loaded at runtime is safe for the same reason
     sharing is: `CompiledQueryLoadContext` resolves these names by simple name through
@@ -326,6 +348,23 @@ return — it's the caller's own input, not secret. What must stay sanitized, ex
   `QueryExecutionException`-wrapping/sanitization path `QueryExecutor` already uses today (see
   `query-execution.md`'s existing conventions on stack traces, connection strings, and provider
   internals never being disclosed) — this part of the contract is unchanged by the rewrite.
+
+### Attributing a compile failure to the server rather than the query
+
+Not every compile error is the caller's fault. A diagnostic whose ID is in
+`QueryCompiler.ReferenceSetDiagnosticIds` (`CS0012`, `CS1703`, `CS1704`, `CS1705`, `CS8090`)
+reports that the **compilation's reference set** could not satisfy a binding, independent of what
+the query says. The compiler appends `QueryCompiler.ReferenceSetFailureMarker` to such a message,
+and `EfCoreMcpTools.FormatQueryError` swaps its usual "fix the reported compile error(s) in the
+query expression" guidance for one that names the real culprit and says explicitly not to rewrite
+the query.
+
+This matters because the misdirection is the expensive part. In
+[#122](https://github.com/sommmen/dotnet-efcore-mcp/issues/122) a valid SQL Server
+`.Contains(...)` query was rewritten into ~100 chained `||` comparisons chasing a `CS0012` about
+a PostgreSQL type, which then failed `MaxExpressionDepth` for an entirely unrelated reason.
+Nothing in the message distinguished "your query is wrong" from "the server could not assemble
+its reference set", and an agent has no other signal to go on.
 
 ## Safety model
 

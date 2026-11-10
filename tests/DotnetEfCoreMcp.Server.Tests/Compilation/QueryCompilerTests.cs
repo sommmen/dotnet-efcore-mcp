@@ -1,5 +1,6 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
+using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Querying;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
@@ -24,7 +25,7 @@ public sealed class QueryCompilerTests
         var source = UserQuerySourceGenerator.Generate(contextType, "Orders.Where(o => o.Amount > 10)", "compileok1");
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
-        var compiled = await compiler.CompileAsync(source, handle, CancellationToken.None);
+        var compiled = await compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None);
 
         Assert.NotEmpty(compiled.Pe);
         Assert.NotEmpty(compiled.Pdb);
@@ -44,7 +45,7 @@ public sealed class QueryCompilerTests
             contextType, "Orders.Select(o => o.Customer).OfType<Customer>().Count()", "compileunqualified1");
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
-        var compiled = await compiler.CompileAsync(source, handle, CancellationToken.None);
+        var compiled = await compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None);
 
         Assert.NotEmpty(compiled.Pe);
     }
@@ -58,7 +59,7 @@ public sealed class QueryCompilerTests
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(
-            () => compiler.CompileAsync(source, handle, CancellationToken.None));
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
 
         Assert.Contains("Line 1:", ex.Message, StringComparison.Ordinal);
     }
@@ -71,7 +72,7 @@ public sealed class QueryCompilerTests
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(
-            () => compiler.CompileAsync(source, handle, CancellationToken.None));
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
 
         Assert.Contains("could not be compiled", ex.Message, StringComparison.Ordinal);
     }
@@ -90,7 +91,7 @@ public sealed class QueryCompilerTests
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(
-            () => compiler.CompileAsync(source, handle, CancellationToken.None));
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
 
         // Counts this diagnostic specifically rather than every "Line 1:" in the message, which
         // would also count unrelated diagnostics the compilation happens to produce.
@@ -106,7 +107,7 @@ public sealed class QueryCompilerTests
         var compiler = new QueryCompiler(new QueryCompilationOptions { CompileTimeoutSeconds = 0 });
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => compiler.CompileAsync(source, handle, CancellationToken.None));
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
     }
 
     [Fact]
@@ -119,7 +120,7 @@ public sealed class QueryCompilerTests
         cts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => compiler.CompileAsync(source, handle, cts.Token));
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, cts.Token));
     }
 
     [Fact]
@@ -133,7 +134,7 @@ public sealed class QueryCompilerTests
         });
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => compiler.CompileAsync(source, handle, CancellationToken.None));
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
     }
 
     [Fact]
@@ -152,7 +153,7 @@ public sealed class QueryCompilerTests
         var source = UserQuerySourceGenerator.Generate(contextType, "Orders.Count()", "compileidentity1");
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
-        var compiled = await compiler.CompileAsync(source, handle, CancellationToken.None);
+        var compiled = await compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None);
 
         Assert.NotEmpty(compiled.Pe);
     }
@@ -172,7 +173,7 @@ public sealed class QueryCompilerTests
         var compiler = new QueryCompiler(new QueryCompilationOptions());
 
         var ex = await Assert.ThrowsAsync<QueryExecutionException>(
-            () => compiler.CompileAsync(source, handle, CancellationToken.None));
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
 
         Assert.Contains("could not be compiled", ex.Message, StringComparison.Ordinal);
     }

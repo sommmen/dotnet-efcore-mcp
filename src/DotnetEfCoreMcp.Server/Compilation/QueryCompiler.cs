@@ -1,5 +1,6 @@
 using System.Reflection;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.Querying;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -9,9 +10,13 @@ namespace DotnetEfCoreMcp.Server.Compilation;
 
 public sealed class QueryCompiler(QueryCompilationOptions options)
 {
+    /// <param name="provider">The provider of the connection the query will run against, used to
+    /// scope which EF Core provider surfaces enter the compilation's reference set. See
+    /// <see cref="ProviderReferenceGroups"/>.</param>
     internal async Task<CompiledQuery> CompileAsync(
         GeneratedUserQuerySource source,
         LoadedAssemblyHandle target,
+        DatabaseProvider? provider,
         CancellationToken cancellationToken)
     {
         if (options.CompileTimeoutSeconds <= 0)
@@ -21,10 +26,11 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.CompileTimeoutSeconds));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        var linkedCancellationToken = linked.Token;
 
         try
         {
-            return await Task.Run(() => Compile(source, target, linked.Token), linked.Token).ConfigureAwait(false);
+            return await Task.Run(() => Compile(source, target, provider, linkedCancellationToken), linkedCancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
         {
@@ -32,14 +38,18 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         }
     }
 
-    private CompiledQuery Compile(GeneratedUserQuerySource source, LoadedAssemblyHandle target, CancellationToken cancellationToken)
+    private CompiledQuery Compile(
+        GeneratedUserQuerySource source,
+        LoadedAssemblyHandle target,
+        DatabaseProvider? provider,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var syntaxTree = CSharpSyntaxTree.ParseText(source.Source, CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.Latest));
         var compilation = CSharpCompilation.Create(
             $"DotnetEfCoreMcp.UserQuery.{Guid.NewGuid():N}",
             [syntaxTree],
-            GetReferences(target),
+            GetReferences(target, provider),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release,
                 allowUnsafe: false, nullableContextOptions: NullableContextOptions.Disable));
 
@@ -52,19 +62,41 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
             // problem can occur at many: a reference-level binding failure is emitted once per
             // reference that transitively reaches the offending assembly, which concatenated into a
             // multi-kilobyte single-line error repeating the same sentence ten times (#118).
-            var messages = emit.Diagnostics
-                .Where(d => d.Severity == DiagnosticSeverity.Error)
+            var errors = emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+            var messages = errors
                 .Select(d => FormatDiagnostic(d, source))
                 .Distinct(StringComparer.Ordinal)
                 .Take(10)
                 .ToArray();
-            throw new QueryExecutionException($"The C# query could not be compiled: {string.Join(" ", messages)}");
+            var attribution = errors.Any(IsReferenceSetDiagnostic) ? " " + ReferenceSetFailureMarker : string.Empty;
+            throw new QueryExecutionException($"The C# query could not be compiled: {string.Join(" ", messages)}{attribution}");
         }
 
         EnsureNoSandboxedNamespaceUsage(compilation, syntaxTree, source);
 
         return new CompiledQuery(pe.ToArray(), pdb.ToArray());
     }
+
+    /// <summary>Appended to a compile error caused by the server's own reference set rather than by
+    /// the query text, so the tool layer can swap the "fix your query" guidance for one naming the
+    /// real culprit. The misdirection is the expensive part of
+    /// <see href="https://github.com/sommmen/dotnet-efcore-mcp/issues/122">#122</see>: a valid
+    /// SQL Server query was rewritten into an unrecognizable shape chasing an error about a
+    /// PostgreSQL type.</summary>
+    internal const string ReferenceSetFailureMarker =
+        "This is a reference set problem inside the MCP server, not an error in the query text.";
+
+    /// <summary>Roslyn error codes raised when the <em>compilation's reference set</em> cannot
+    /// satisfy a binding, independent of what the query says: CS0012 (type defined in an
+    /// unreferenced assembly), CS1705/CS1703/CS1704 (version and duplicate-reference conflicts),
+    /// and CS8090 (an error in a referenced assembly itself).</summary>
+    private static readonly string[] ReferenceSetDiagnosticIds =
+        ["CS0012", "CS1703", "CS1704", "CS1705", "CS8090"];
+
+    internal static bool IsReferenceSetDiagnosticId(string id) =>
+        ReferenceSetDiagnosticIds.Contains(id, StringComparer.Ordinal);
+
+    private static bool IsReferenceSetDiagnostic(Diagnostic diagnostic) => IsReferenceSetDiagnosticId(diagnostic.Id);
 
     /// <summary>Namespace prefixes that a user-authored query may never reference, even though the
     /// types are physically defined inside an always-required core assembly (see
@@ -198,7 +230,7 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         "System.ComponentModel.TypeConverter",
     ];
 
-    private IEnumerable<MetadataReference> GetReferences(LoadedAssemblyHandle target)
+    private IEnumerable<MetadataReference> GetReferences(LoadedAssemblyHandle target, DatabaseProvider? provider)
     {
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -221,7 +253,7 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         foreach (var path in target.LoadedAssemblyPaths) paths.Add(path);
         AddAssemblyPath(typeof(QueryExecutionException).Assembly, paths);
 
-        foreach (var path in ResolveSharedAssemblyReferencePaths(target)) paths.Add(path);
+        foreach (var path in ResolveSharedAssemblyReferencePaths(target, provider)) paths.Add(path);
 
         foreach (var name in options.AdditionalReferenceAssemblyNames)
         {
@@ -232,8 +264,34 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
             paths.Add(assembly.Location);
         }
 
+        // Applied to every candidate path, not just the ones ResolveSharedAssemblyReferencePaths
+        // itself resolved: target.LoadedAssemblyPaths can contain a provider assembly the default
+        // context could not supply, and AdditionalReferenceAssemblyNames can name one explicitly,
+        // either of which would otherwise re-admit a single provider-specific shared assembly past
+        // the all-or-nothing grouping (#122).
+        var scope = ProviderReferenceGroups.Resolve(provider, target.ReferencesAssembly);
+        paths.RemoveWhere(path => scope.Excluded.Contains(Path.GetFileNameWithoutExtension(path) ?? string.Empty));
+
+        var namesInIncludedGroups = paths
+            .Select(path => Path.GetFileNameWithoutExtension(path) ?? string.Empty)
+            .Where(scope.Included.Contains);
+        foreach (var name in ProviderReferenceGroups.UnsatisfiedGroupNames(scope.Included, namesInIncludedGroups))
+        {
+            paths.RemoveWhere(path => string.Equals(Path.GetFileNameWithoutExtension(path), name, StringComparison.OrdinalIgnoreCase));
+        }
+
         return paths.Where(File.Exists).Select(path => MetadataReference.CreateFromFile(path));
     }
+
+    /// <summary>Test seam exposing the simple names of the assemblies a compilation would
+    /// reference, so the all-or-nothing provider grouping can be asserted directly instead of only
+    /// through whichever diagnostic a half-referenced surface happens to produce.</summary>
+    internal IReadOnlySet<string> GetReferenceAssemblyNamesForTesting(LoadedAssemblyHandle target, DatabaseProvider? provider) =>
+        GetReferences(target, provider)
+            .OfType<PortableExecutableReference>()
+            .Select(reference => Path.GetFileNameWithoutExtension(reference.FilePath ?? string.Empty))
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Chooses one <c>MetadataReference</c> path per
     /// <see cref="SharedFrameworkAssemblyNames"/> entry the compilation can reach, preferring
@@ -264,8 +322,16 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
     /// reason sharing is: <c>CompiledQueryLoadContext</c> resolves these names by simple name via
     /// <see cref="SharedAssemblyResolver"/>, so the emitted code binds to the single shared
     /// instance whatever version it was compiled against, and the resolver already surfaces the gap
-    /// as a load warning (and refuses a major-version gap outright).</para></summary>
-    private static IEnumerable<string> ResolveSharedAssemblyReferencePaths(LoadedAssemblyHandle target)
+    /// as a load warning (and refuses a major-version gap outright).</para>
+    ///
+    /// <para>Provider-specific names are handled per <em>group</em> rather than per assembly (see
+    /// <see cref="ProviderReferenceGroups"/>): a group is referenced whole or not at all, and only
+    /// when the query's own provider or the target's closure calls for it. "Only names the server
+    /// has already loaded", which is what this did before #122, half-references whichever provider
+    /// the server happened to touch - and a half-referenced provider surface is worse than an
+    /// absent one, because its extension methods enter overload resolution with parameter types
+    /// the compiler cannot bind.</para></summary>
+    private static IEnumerable<string> ResolveSharedAssemblyReferencePaths(LoadedAssemblyHandle target, DatabaseProvider? provider)
     {
         var serverCopies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // Touched explicitly rather than relying on GetAssemblies(), so EF Core is a reference even
@@ -276,16 +342,34 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
             AddServerCopy(assembly);
         }
 
-        // Only names the server itself has loaded are referenced. Referencing a shared name the
-        // server does not have - resolved purely from the target's closure - would widen the
-        // reference set, and a partially-referenced provider surface is worse than an absent one:
-        // referencing Npgsql.EntityFrameworkCore.PostgreSQL without Npgsql makes its extension
-        // methods visible but unbindable, so every query reports "the type 'NpgsqlTsVector' is
-        // defined in an assembly that is not referenced" alongside its real error.
-        foreach (var (simpleName, serverPath) in serverCopies)
+        var scope = ProviderReferenceGroups.Resolve(provider, target.ReferencesAssembly);
+
+        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var simpleName in SharedFrameworkAssemblyNames.Value)
         {
-            yield return HigherVersionedPath(serverPath, target.TryResolveReferencePath(simpleName)) ?? serverPath;
+            if (scope.Excluded.Contains(simpleName)) continue;
+
+            // Non-provider names stay restricted to copies the server itself has: unlike a
+            // provider surface they have no all-or-nothing group to complete, so resolving one
+            // purely from the target's closure would widen the reference set for no benefit.
+            var serverPath = ServerCopyPath(simpleName);
+            if (serverPath is null && !scope.Included.Contains(simpleName)) continue;
+
+            var path = HigherVersionedPath(serverPath, target.TryResolveReferencePath(simpleName));
+            if (path is not null) resolved[simpleName] = path;
         }
+
+        // An included group that could not be resolved in full is dropped entirely rather than
+        // referenced in part - the exact half-referenced state #122 is about.
+        foreach (var name in ProviderReferenceGroups.UnsatisfiedGroupNames(scope.Included, resolved.Keys))
+        {
+            resolved.Remove(name);
+        }
+
+        return resolved.Values;
+
+        string? ServerCopyPath(string name) =>
+            serverCopies.TryGetValue(name, out var loaded) ? loaded : ServerDirectoryPath(name);
 
         void AddServerCopy(Assembly assembly)
         {
@@ -296,6 +380,18 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
                 serverCopies[name] = assembly.Location;
             }
         }
+    }
+
+    /// <summary>Locates a shared assembly that ships alongside the server but which nothing has
+    /// forced the runtime to load yet. Whether a provider assembly is loaded at a given moment
+    /// depends on which connections have been used so far, so resolving one purely from
+    /// <c>AppDomain.CurrentDomain.GetAssemblies()</c> made the reference set depend on server
+    /// state - the reason one query text could succeed and then fail in the same session
+    /// (#122).</summary>
+    private static string? ServerDirectoryPath(string simpleName)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, simpleName + ".dll");
+        return File.Exists(path) ? path : null;
     }
 
     private static string? HigherVersionedPath(string? left, string? right)
