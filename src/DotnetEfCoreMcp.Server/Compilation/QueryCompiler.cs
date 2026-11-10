@@ -26,10 +26,11 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.CompileTimeoutSeconds));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        var linkedCancellationToken = linked.Token;
 
         try
         {
-            return await Task.Run(() => Compile(source, target, provider, linked.Token), linked.Token).ConfigureAwait(false);
+            return await Task.Run(() => Compile(source, target, provider, linkedCancellationToken), linkedCancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
         {

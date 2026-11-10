@@ -216,7 +216,8 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
 
         var json = await tools.RunQuery(
             "SampleAppDbContext",
-            "Customers.Where(c => new[] {\"A\",\"B\"}.Contains(c.Name)).Select(c => new { c.Name })");
+            "Customers.Where(c => new[] {\"A\",\"B\"}.Contains(c.Name)).Select(c => new { c.Name })",
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("could not be compiled", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Npgsql", json, StringComparison.OrdinalIgnoreCase);

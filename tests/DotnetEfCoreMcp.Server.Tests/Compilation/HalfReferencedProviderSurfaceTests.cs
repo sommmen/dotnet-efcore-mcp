@@ -31,7 +31,7 @@ public sealed class HalfReferencedProviderSurfaceTests
 
         var errors = CompileWithHalfReferencedNpgsql(handle, source);
 
-        var cs0012 = Assert.Single(errors.Where(d => d.Id == "CS0012"));
+        var cs0012 = Assert.Single(errors, d => d.Id == "CS0012");
         Assert.Contains("Npgsql", cs0012.GetMessage(), StringComparison.Ordinal);
         Assert.True(QueryCompiler.IsReferenceSetDiagnosticId(cs0012.Id));
     }
