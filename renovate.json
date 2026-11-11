@@ -46,6 +46,43 @@
         "/^[Mm]icrosoft\\.SourceLink\\./"
       ],
       "automerge": true
+    },
+    {
+      "description": "Telemetry is non-functional instrumentation: a bad version either fails the build or stops exporting, which is immediately visible and trivially revertible. Matches the automerge opg-systems already applies to this family.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchDepNames": [
+        "/^[Oo]pen[Tt]elemetry(\\.|$)/"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Pre-1.0 SDK whose minors still break; patches only until it stabilises.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchDepNames": [
+        "/^[Mm]odel[Cc]ontext[Pp]rotocol(\\.|$)/"
+      ],
+      "automerge": true,
+      "matchUpdateTypes": [
+        "patch"
+      ]
+    },
+    {
+      "description": "Toon.DotNet is a leaf serialization helper; a breaking change surfaces as a compile error or a failing test.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchDepNames": [
+        "/^[Tt]oon\\.[Dd]ot[Nn]et$/"
+      ],
+      "automerge": true,
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ]
     }
   ]
 }
