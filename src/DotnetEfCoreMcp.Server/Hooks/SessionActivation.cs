@@ -73,6 +73,8 @@ public sealed class SessionActivation
               model, including navigations, keys, and database column types the source does not show.
             - `preview_query_sql` - translate a LINQ query to SQL without touching the database.
             - `run_query` - execute a LINQ query read-only against the configured connection.
+            - `list_migrations` / `compare_schema` / `describe_migration` - read-only migration state
+              and model-vs-database drift; use them when a query fails on a missing column or table.
 
             LINQ that compiles and reads correctly can still throw at runtime because EF Core cannot
             translate it. Validate any LINQ you write or change with `preview_query_sql` or

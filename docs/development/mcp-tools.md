@@ -248,14 +248,27 @@ for configuration, precedence, filtered-view, and non-disclosure details.
 
 ## P1 #11 — migration inspection & script generation
 
-Two structured, server-side tools for EF Core migration state and scripting, reusing the
+Four structured, server-side tools for EF Core migration state, schema comparison, and scripting, reusing the
 existing `ConnectionRegistry`/`DbContext` factory path (no raw connection strings from clients):
 
 - `list_migrations` — non-mutating read of `appliedMigrations`, `pendingMigrations`,
-  `databaseExists`, and `appliedStateAvailable`, sourced from the migration assembly's known
+  `databaseExists`, and `appliedStateAvailable`, plus `dotnet ef`-style `migrations[]`,
+  `knownMigrationCount`, `lastAppliedMigration`, `unknownAppliedMigrations`,
+  `pendingMigrations[].outOfOrder`, and `hasPendingModelChanges`, sourced from the migration assembly's known
   migration IDs and, when a live connection exists, `IHistoryRepository`'s read of
-  `__EFMigrationsHistory`. Always available (no enable flag) on non-production connections,
-  including `ReadOnly`; rejected only on production connections.
+  `__EFMigrationsHistory`. Always available (no enable flag) on every connection, including
+  production and `ReadOnly`.
+- `describe_migration` — structured `Up`/`Down` operations of one migration (full ID or unique
+  suffix), projected to `{ kind, schema?, table?, name?, columnType?, isNullable?, … }`. Uses
+  `connectionName` only to pick the provider and never opens the database, so it's available on
+  every connection.
+- `compare_schema` — live catalog vs. EF Core model, via EfCore.SchemaCompare. Parameters:
+  `contextName`, `connectionName?`, `migrationsAssembly?`, `tables?` (case-insensitive result
+  filter), `includeExtras?` (default false). Returns `hasDifferences`, `notInDatabase`, `different`,
+  `extraInDatabase`, `comparedTableCount`, `truncated`; missing tables/columns carry `introducedBy`
+  and `introducedByIsPending` when available. Always available, including production and
+  `ReadOnly`; whole-catalog reads have a timeout budget and results are capped by
+  `Migrations:MaxDriftEntries` (500). See [limitations](./migrations.md#compare_schema).
 - `generate_migration_script` — produces SQL via `IMigrator.GenerateScript(...)` as a preview
   only (never executes, opens no transaction, no `SaveChanges`). Gated by a `Migrations:Enabled`
   configuration flag (default `false`, restart-required to toggle — same convention as
@@ -264,6 +277,12 @@ existing `ConnectionRegistry`/`DbContext` factory path (no raw connection string
   and truncated at a best-effort statement boundary; the response carries `truncated: true` when
   cut short.
 
+The `list_migrations` and `compare_schema` descriptions tell agents to call them when a query
+fails with a missing-column or missing-table error, and `run_query`/`run_sql_query` append a
+static pointer to both tools when their error matches those patterns (see
+[Diagnosing schema drift](./migrations.md#diagnosing-schema-drift)). The design rationale is in
+the [migration & schema-drift diagnostics design record](./migration-diagnostics.md).
+
 `run_sql_query` remains a separate, independent opt-in escape hatch; see
 [Migration inspection](./migrations.md) for the full contract, EF Core integration points
 (`IMigrator`, `IMigrationsAssembly`, `IHistoryRepository`), read-only safety rules, and
@@ -271,7 +290,7 @@ configuration surface. Tests under
 [`tests/DotnetEfCoreMcp.Server.Tests/Migrations/`](../../tests/DotnetEfCoreMcp.Server.Tests/Migrations/)
 cover parameter binding/response shape, the `Migrations:Enabled` gate, production/`ReadOnly`
 connection rejection, script truncation, redacted failure messages (SQLite's lack of idempotent
-script support, unknown migration IDs), and proof that both tools never mutate the target
+script support, unknown migration IDs), and proof that the tools never mutate the target
 database (no `Migrate()`, `ExecuteSqlRaw`, transaction, or `SaveChanges` call, and no database
 file is created as a side effect of previewing a script).
 

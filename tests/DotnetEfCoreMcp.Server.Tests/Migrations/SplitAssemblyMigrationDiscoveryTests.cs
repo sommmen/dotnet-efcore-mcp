@@ -159,6 +159,54 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task DescribeMigration_WithMigrationsAssemblyByPath_DescribesMigrationFromSeparateAssembly()
+    {
+        var tools = CreateTools();
+
+        var json = await tools.DescribeMigration(
+            "SplitDbContext", "InitialCreate", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.EndsWith("_InitialCreate", root.GetProperty("migrationId").GetString(), StringComparison.Ordinal);
+        Assert.Contains(
+            root.GetProperty("operations").EnumerateArray(),
+            o => o.GetProperty("kind").GetString() == "CreateTable" && o.GetProperty("table").GetString() == "Widgets");
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.DescribeMigration("SplitDbContext", "InitialCreate", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Contains("list_migrations", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompareSchema_WithMigrationsAssemblyByPath_AttributesMissingTableToSplitMigration()
+    {
+        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(_db.ConnectionString))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE \"Unrelated\" (\"Id\" INTEGER NOT NULL PRIMARY KEY)";
+            command.ExecuteNonQuery();
+        }
+
+        var tools = CreateTools();
+
+        var json = await tools.CompareSchema("SplitDbContext", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
+        var withoutMigrationsAssembly = await tools.CompareSchema("SplitDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        var missing = Assert.Single(document.RootElement.GetProperty("notInDatabase").EnumerateArray());
+        Assert.Equal("Table", missing.GetProperty("kind").GetString());
+        Assert.Equal("Widgets", missing.GetProperty("table").GetString());
+        Assert.EndsWith("_InitialCreate", missing.GetProperty("introducedBy").GetString(), StringComparison.Ordinal);
+        Assert.True(missing.GetProperty("introducedByIsPending").GetBoolean());
+
+        using var unattributed = JsonDocument.Parse(withoutMigrationsAssembly);
+        var unattributedMissing = Assert.Single(unattributed.RootElement.GetProperty("notInDatabase").EnumerateArray());
+        Assert.False(unattributedMissing.TryGetProperty("introducedBy", out _));
+    }
+
+    [Fact]
     public async Task ListMigrations_WithoutMigrationsAssembly_FindsNoMigrationsInContextOnlyAssembly()
     {
         var tools = CreateTools();

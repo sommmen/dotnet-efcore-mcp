@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
@@ -45,9 +46,11 @@ public sealed class EfCoreMcpTools(
     EntityMutationExecutor entityMutationExecutor,
     IMcpMetrics metrics,
     OnboardingOptions? onboardingOptions = null,
-    UpdateNotificationService? updateNotifications = null)
+    UpdateNotificationService? updateNotifications = null,
+    SchemaComparer? schemaComparer = null)
 {
     private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
+    private readonly SchemaComparer _schemaComparer = schemaComparer ?? new SchemaComparer(migrationsOptions, NullLogger<SchemaComparer>.Instance);
 
     internal EfCoreMcpTools(
         AssemblyLoaderService assemblyLoader,
@@ -665,9 +668,20 @@ public sealed class EfCoreMcpTools(
     [McpServerTool(Name = "list_migrations"), Description(
         "Inspects Entity Framework Core migration state for a DbContext: which migrations are known to the " +
         "migration assembly, which are applied (per __EFMigrationsHistory), and which are pending. Always " +
-        "available (read-only, no DDL/DML) except for Production connections, which are rejected. When the " +
+        "available on every connection, including Production and ReadOnly connections, because it only reads " +
+        "__EFMigrationsHistory and migration metadata (no DDL/DML). When the " +
         "target database is unreachable, databaseExists is false and every known migration is reported pending " +
-        "with appliedStateAvailable set to false rather than presenting metadata as applied state.")]
+        "with appliedStateAvailable set to false rather than presenting metadata as applied state. Mirrors " +
+        "'dotnet ef migrations list': migrations[] lists every known migration in order with applied " +
+        "(true/false, or null when applied state is unavailable); knownMigrationCount of 0 usually means the " +
+        "wrong migrationsAssembly; lastAppliedMigration is the anchor for generate_migration_script " +
+        "fromMigration; unknownAppliedMigrations are history rows the loaded code doesn't know (database ahead " +
+        "of or diverged from the code); pendingMigrations[].outOfOrder is true when a pending migration sorts " +
+        "before lastAppliedMigration; hasPendingModelChanges mirrors 'dotnet ef migrations " +
+        "has-pending-model-changes' (null when it can't be computed) and doesn't need the database. When a " +
+        "query fails with 'Invalid column name' / 'Invalid object name' / 'no such column' / 'no such table' / " +
+        "'column ... does not exist', call list_migrations (and then compare_schema) for the failing connection " +
+        "to check whether the database is missing migrations.")]
     public Task<string> ListMigrations(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
@@ -679,11 +693,6 @@ public sealed class EfCoreMcpTools(
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry);
-        if (entry.IsProduction)
-        {
-            throw new McpException("Migration inspection is not permitted for production connections.");
-        }
-
         var resolvedMigrationsAssembly = ResolveMigrationsAssembly(migrationsAssembly);
         var provider = ResolveEffectiveProvider(contextType, entry);
         using var context = CreateContext(contextType, entry, resolvedMigrationsAssembly);
@@ -698,6 +707,113 @@ public sealed class EfCoreMcpTools(
                 pendingMigrations = result.PendingMigrations,
                 databaseExists = result.DatabaseExists,
                 appliedStateAvailable = result.AppliedStateAvailable,
+                migrations = result.Migrations,
+                knownMigrationCount = result.KnownMigrationCount,
+                lastAppliedMigration = result.LastAppliedMigration,
+                unknownAppliedMigrations = result.UnknownAppliedMigrations,
+                hasPendingModelChanges = result.HasPendingModelChanges,
+            });
+        }
+        catch (MigrationInspectionException ex)
+        {
+            throw new McpException(FormatSubsystemError(ex));
+        }
+    }
+
+    [McpServerTool(Name = "describe_migration"), Description(
+        "Describes the structured Up or Down operations of an EF Core migration without generating or " +
+        "executing SQL. Accepts a full migration ID or a unique case-insensitive suffix/name. Always " +
+        "available, including Production and ReadOnly connections; connectionName only selects the " +
+        "provider and the database is never opened. SQL operation bodies are capped server-side.")]
+    public Task<string> DescribeMigration(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("Full migration ID or a unique case-insensitive suffix such as AddCustomerEmail. Call list_migrations to discover IDs.")] string migrationId,
+        [Description("Logical connection name used only to select the provider. Omit to use the active connection. No database connection is opened.")] string? connectionName = null,
+        [Description("Simple name or DLL path of the migrations assembly, as for list_migrations. Paths must satisfy AssemblyLoader:AllowedRoots.")] string? migrationsAssembly = null,
+        [Description("Migration direction: up (default) or down.")] string direction = "up",
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("describe_migration", () => DescribeMigrationCore(contextName, migrationId, connectionName, migrationsAssembly, direction, cancellationToken));
+
+    private Task<string> DescribeMigrationCore(string contextName, string migrationId, string? connectionName, string? migrationsAssembly, string direction, CancellationToken cancellationToken)
+    {
+        var parsedDirection = direction?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "up" => MigrationDirection.Up,
+            "down" => MigrationDirection.Down,
+            _ => throw new McpException($"Invalid direction '{direction}'. Use 'up' or 'down'."),
+        };
+
+        var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry);
+        var resolvedMigrationsAssembly = ResolveMigrationsAssembly(migrationsAssembly);
+        var provider = ResolveEffectiveProvider(contextType, entry);
+        using var context = CreateContext(contextType, entry, resolvedMigrationsAssembly);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = migrationInspector.Describe(context, provider, migrationId, parsedDirection);
+            return Task.FromResult(resultFormatter.Format(new
+            {
+                contextName = contextType.Name,
+                migrationId = result.MigrationId,
+                direction = result.Direction.ToString().ToLowerInvariant(),
+                operations = result.Operations,
+                operationCount = result.Operations.Count,
+            }));
+        }
+        catch (MigrationInspectionException ex)
+        {
+            throw new McpException(FormatSubsystemError(ex));
+        }
+    }
+
+    [McpServerTool(Name = "compare_schema"), Description(
+        "Compares the DbContext's EF Core model with the live database catalog (schema drift detection, via " +
+        "EfCore.SchemaCompare and EF Core's reverse-engineering reader). Reports notInDatabase (tables/columns/" +
+        "keys/indexes the model expects but the database lacks), different (e.g. column type, nullability, " +
+        "default SQL), and, with includeExtras, extraInDatabase. Missing tables and columns are attributed to the " +
+        "migration that introduces them (introducedBy, introducedByIsPending); introducedBy is absent when no " +
+        "migration creates them (a model change without a migration). Always available on every connection, " +
+        "including Production and ReadOnly, because it only reads catalog metadata and __EFMigrationsHistory. " +
+        "The whole catalog is read on every call, so on large databases pass tables to narrow the report. " +
+        "Use it (after list_migrations) when a query fails with 'Invalid column name', 'Invalid object name', " +
+        "'no such column', 'no such table', or 'column ... does not exist'.")]
+    public Task<string> CompareSchema(
+        [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
+        [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
+        [Description("Simple name or DLL path of the migrations assembly, as for list_migrations; used for introducedBy attribution. Paths must satisfy AssemblyLoader:AllowedRoots.")] string? migrationsAssembly = null,
+        [Description("Optional table names (schema-qualified or not, case-insensitive) to report on. Filters the reported results only; the whole catalog is still read.")] string[]? tables = null,
+        [Description("When true, also reports tables, columns, and indexes that exist in the database but not in the model (extraInDatabase). Off by default because shared databases make this noisy.")] bool includeExtras = false,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync("compare_schema", () => CompareSchemaCore(contextName, connectionName, migrationsAssembly, tables, includeExtras, cancellationToken));
+
+    private async Task<string> CompareSchemaCore(string contextName, string? connectionName, string? migrationsAssembly, string[]? tables, bool includeExtras, CancellationToken cancellationToken)
+    {
+        var entry = ResolveConnection(connectionName);
+        var contextType = ResolveContextType(contextName, entry);
+        var resolvedMigrationsAssembly = ResolveMigrationsAssembly(migrationsAssembly);
+        var provider = ResolveEffectiveProvider(contextType, entry);
+        var contextFullName = contextType.FullName ?? contextType.Name;
+        var context = CreateContext(contextType, entry, resolvedMigrationsAssembly);
+        try
+        {
+            var request = new SchemaComparisonRequest
+            {
+                Tables = tables?.Where(t => !string.IsNullOrWhiteSpace(t)).ToList(),
+                IncludeExtras = includeExtras,
+                IsEntityVisible = entity => entry.AccessPolicy.IsEntityAllowed(contextFullName, entity),
+            };
+            var result = await _schemaComparer.CompareAsync(context, entry, provider, request, cancellationToken);
+            return resultFormatter.Format(new
+            {
+                contextName = contextType.Name,
+                connectionName = entry.Name,
+                hasDifferences = result.HasDifferences,
+                notInDatabase = result.NotInDatabase,
+                different = result.Different,
+                extraInDatabase = result.ExtraInDatabase,
+                comparedTableCount = result.ComparedTableCount,
+                truncated = result.Truncated,
             });
         }
         catch (MigrationInspectionException ex)
@@ -1364,12 +1480,36 @@ public sealed class EfCoreMcpTools(
     /// provoking a real provider failure.</summary>
     internal static string FormatQueryErrorForTesting(QueryExecutionException exception) => FormatQueryError(exception);
 
+    internal static string FormatSqlQueryErrorForTesting(QueryExecutionException exception) => FormatSqlQueryError(exception);
+
     private static string FormatQueryError(QueryExecutionException exception)
     {
         // Redact before returning: a provider can embed its own connection details in a translation
         // or execution error, and this path surfaces the cause just like the others.
-        var formatted = FormatQueryErrorCore(exception);
+        var formatted = AppendSchemaDriftHint(FormatQueryErrorCore(exception));
         return SensitiveTextRedactor.Redact(formatted) ?? formatted;
+    }
+
+    private const string SchemaDriftHint =
+        "If the model expects a column or table the database lacks, the database may be missing migrations: call list_migrations and compare_schema for this connection.";
+
+    private static readonly Regex MissingSchemaObjectPattern = new(
+        @"Invalid (column|object) name|no such (column|table)|\b(column|relation)\b[^\r\n]{0,200}?\bdoes not exist",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(100));
+
+    /// <summary>Appends a static pointer to the migration diagnostics tools when an already-formatted
+    /// error names a missing column or table; no additional provider text is echoed.</summary>
+    private static string AppendSchemaDriftHint(string formatted)
+    {
+        try
+        {
+            return MissingSchemaObjectPattern.IsMatch(formatted) ? $"{formatted} {SchemaDriftHint}" : formatted;
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return formatted;
+        }
     }
 
     private static string FormatQueryErrorCore(QueryExecutionException exception)
@@ -1504,6 +1644,7 @@ public sealed class EfCoreMcpTools(
         var formatted = string.IsNullOrEmpty(cause)
             ? $"{exception.Message} {hint}"
             : $"{exception.Message} Cause: {cause} {hint}";
+        formatted = AppendSchemaDriftHint(formatted);
 
         return SensitiveTextRedactor.Redact(formatted) ?? formatted;
     }

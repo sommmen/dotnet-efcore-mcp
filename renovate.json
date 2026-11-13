@@ -37,6 +37,16 @@
       "automerge": true
     },
     {
+      "description": "EfCore.SchemaCompare reflects over EF Core's internal DesignTimeServicesBuilder and its major version tracks EF Core's, so it joins the 'dotnet monorepo' group that bumps EF Core and lands in the same PR. Not automerged, like the rest of that group.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchDepNames": [
+        "EfCore.SchemaCompare"
+      ],
+      "groupName": "dotnet monorepo"
+    },
+    {
       "description": "Build-time only: SourceLink and reproducible-build SDKs emit nothing at runtime, so a bad version fails the build rather than reaching production.",
       "matchManagers": [
         "nuget"

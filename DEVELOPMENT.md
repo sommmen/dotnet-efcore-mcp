@@ -36,7 +36,8 @@ Each module has its own implementation checklist, design decisions, and notes:
 | [Out-of-process query host pooling](./docs/development/query-execution-host-pooling.md) | Design background and implementation notes for the opt-in bounded pooled out-of-process `run_query` host (`QueryExecution:Mode=Pooled`). |
 | [Roslyn-compiled `UserQuery`](./docs/development/roslyn-user-query.md) | Current LINQPad-style `UserQuery : TDbContext` model, statement-mode authoring guidance, safety boundaries, and result-shaping notes. |
 | [MCP tool surface](./docs/development/mcp-tools.md) | The `list_contexts` / `get_schema` / `run_query` / `run_sql_query` / `load_assembly` tools and their exposure decisions. |
-| [Migration inspection](./docs/development/migrations.md) | P1 #11: structured `list_migrations`/`generate_migration_script` tooling. |
+| [Migration inspection](./docs/development/migrations.md) | P1 #11 / #11a / #11b: canonical reference for `list_migrations`, `describe_migration`, `compare_schema`, and `generate_migration_script`, plus the schema-drift troubleshooting workflow. |
+| [Migration & schema-drift diagnostics](./docs/development/migration-diagnostics.md) | P1 #11b design record (implemented): motivation, principles, EfCore.SchemaCompare investigation and spike outcome, non-goals, and decisions. |
 | [Structured mutations](./docs/development/mutations.md) | P1 #12: gated single-entity insert, update, and delete tooling. |
 | [Visual Studio Code integration](./docs/development/vscode-integration.md) | Workspace assembly discovery, `.vscode/mcp.json` setup, and `list_assembly_candidates`. |
 | [Auditing & observability](./docs/development/observability.md) | Query logging and structured logging configuration. |
