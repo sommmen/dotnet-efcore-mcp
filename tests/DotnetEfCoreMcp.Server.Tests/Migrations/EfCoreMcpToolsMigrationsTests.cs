@@ -97,7 +97,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools(environment: EnvironmentType.Production);
 
-        var pendingJson = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests");
+        var pendingJson = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
         using (var pendingDocument = JsonDocument.Parse(pendingJson))
         {
             Assert.Equal(0, pendingDocument.RootElement.GetProperty("appliedMigrations").GetArrayLength());
@@ -106,7 +106,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
 
         await MigrateDatabaseAsync();
 
-        var appliedJson = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests");
+        var appliedJson = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
         using var appliedDocument = JsonDocument.Parse(appliedJson);
         var root = appliedDocument.RootElement;
         Assert.True(root.GetProperty("databaseExists").GetBoolean());
@@ -134,7 +134,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         await MigrateDatabaseAsync("20260906122510_InitialCreate");
         var tools = CreateTools();
 
-        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests");
+        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -161,7 +161,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         await MigrateDatabaseAsync();
         var tools = CreateTools();
 
-        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", includeExtras: true);
+        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", includeExtras: true, cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -177,8 +177,8 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         await MigrateDatabaseAsync("20260906122510_InitialCreate");
         var tools = CreateTools();
 
-        var ordersJson = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", tables: ["orders"]);
-        var customersJson = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", tables: ["main.CUSTOMERS"]);
+        var ordersJson = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", tables: ["orders"], cancellationToken: TestContext.Current.CancellationToken);
+        var customersJson = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", tables: ["main.CUSTOMERS"], cancellationToken: TestContext.Current.CancellationToken);
 
         using var orders = JsonDocument.Parse(ordersJson);
         Assert.False(orders.RootElement.GetProperty("hasDifferences").GetBoolean());
@@ -193,7 +193,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         await MigrateDatabaseAsync("20260906122510_InitialCreate");
         var tools = CreateTools(accessMode: ConnectionAccessMode.ReadOnly, environment: EnvironmentType.Production);
 
-        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests");
+        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         Assert.True(document.RootElement.GetProperty("hasDifferences").GetBoolean());
@@ -206,8 +206,8 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         await MigrateDatabaseAsync(extraSql: "ALTER TABLE \"Customers\" ADD COLUMN \"LegacyCode\" TEXT NULL");
         var tools = CreateTools();
 
-        var withoutExtras = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests");
-        var withExtras = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", includeExtras: true);
+        var withoutExtras = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
+        var withExtras = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", includeExtras: true, cancellationToken: TestContext.Current.CancellationToken);
 
         using (var document = JsonDocument.Parse(withoutExtras))
         {
@@ -228,7 +228,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         await MigrateDatabaseAsync(extraSql: "ALTER TABLE \"Customers\" ADD COLUMN \"A\" TEXT NULL; ALTER TABLE \"Customers\" ADD COLUMN \"B\" TEXT NULL");
         var tools = CreateTools(new MigrationsOptions { MaxDriftEntries = 1 });
 
-        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", includeExtras: true);
+        var json = await tools.CompareSchema("SampleAppDbContext", "MigrationsTests", includeExtras: true, cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         Assert.True(document.RootElement.GetProperty("truncated").GetBoolean());
@@ -241,7 +241,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         var tools = CreateTools();
         var dbFilePath = _db.ConnectionString["Data Source=".Length..];
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.CompareSchema("SampleAppDbContext", "MigrationsTests"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.CompareSchema("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("list_migrations", exception.Message, StringComparison.Ordinal);
         Assert.False(File.Exists(dbFilePath));
@@ -263,7 +263,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools();
 
-        var json = await tools.DescribeMigration("SampleAppDbContext", "addcustomeremail", "MigrationsTests");
+        var json = await tools.DescribeMigration("SampleAppDbContext", "addcustomeremail", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -285,7 +285,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools();
 
-        var json = await tools.DescribeMigration("SampleAppDbContext", "AddCustomerEmail", "MigrationsTests", direction: "down");
+        var json = await tools.DescribeMigration("SampleAppDbContext", "AddCustomerEmail", "MigrationsTests", direction: "down", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         Assert.Equal("down", document.RootElement.GetProperty("direction").GetString());
@@ -300,7 +300,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools();
 
-        var json = await tools.DescribeMigration("SampleAppDbContext", "InitialCreate", "MigrationsTests");
+        var json = await tools.DescribeMigration("SampleAppDbContext", "InitialCreate", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var createTables = document.RootElement.GetProperty("operations").EnumerateArray()
@@ -318,7 +318,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         var tools = CreateTools();
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.DescribeMigration("SampleAppDbContext", "DoesNotExist", "MigrationsTests"));
+            () => tools.DescribeMigration("SampleAppDbContext", "DoesNotExist", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("DoesNotExist", exception.Message, StringComparison.Ordinal);
         Assert.Contains("list_migrations", exception.Message, StringComparison.Ordinal);
@@ -330,7 +330,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         var tools = CreateTools();
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.DescribeMigration("SampleAppDbContext", "AddCustomerEmail", "MigrationsTests", direction: "sideways"));
+            () => tools.DescribeMigration("SampleAppDbContext", "AddCustomerEmail", "MigrationsTests", direction: "sideways", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("'up' or 'down'", exception.Message, StringComparison.Ordinal);
     }
@@ -342,7 +342,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         var dbFilePath = _db.ConnectionString["Data Source=".Length..];
         Assert.False(File.Exists(dbFilePath));
 
-        var json = await tools.DescribeMigration("SampleAppDbContext", "AddCustomerEmail", "MigrationsTests");
+        var json = await tools.DescribeMigration("SampleAppDbContext",         "AddCustomerEmail", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         Assert.Equal(1, document.RootElement.GetProperty("operationCount").GetInt32());

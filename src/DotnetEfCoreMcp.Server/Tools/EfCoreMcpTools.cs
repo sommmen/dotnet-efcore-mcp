@@ -50,7 +50,7 @@ public sealed class EfCoreMcpTools(
     SchemaComparer? schemaComparer = null)
 {
     private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
-    private readonly SchemaComparer schemaComparer = schemaComparer ?? new SchemaComparer(migrationsOptions, NullLogger<SchemaComparer>.Instance);
+    private readonly SchemaComparer _schemaComparer = schemaComparer ?? new SchemaComparer(migrationsOptions, NullLogger<SchemaComparer>.Instance);
 
     internal EfCoreMcpTools(
         AssemblyLoaderService assemblyLoader,
@@ -803,7 +803,7 @@ public sealed class EfCoreMcpTools(
                 IncludeExtras = includeExtras,
                 IsEntityVisible = entity => entry.AccessPolicy.IsEntityAllowed(contextFullName, entity),
             };
-            var result = await schemaComparer.CompareAsync(context, entry, provider, request, cancellationToken);
+            var result = await _schemaComparer.CompareAsync(context, entry, provider, request, cancellationToken);
             return resultFormatter.Format(new
             {
                 contextName = contextType.Name,

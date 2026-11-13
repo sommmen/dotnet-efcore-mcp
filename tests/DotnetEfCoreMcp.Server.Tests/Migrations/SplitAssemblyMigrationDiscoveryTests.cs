@@ -164,7 +164,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
         var tools = CreateTools();
 
         var json = await tools.DescribeMigration(
-            "SplitDbContext", "InitialCreate", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath);
+            "SplitDbContext", "InitialCreate", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -174,7 +174,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
             o => o.GetProperty("kind").GetString() == "CreateTable" && o.GetProperty("table").GetString() == "Widgets");
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.DescribeMigration("SplitDbContext", "InitialCreate", "MigrationsTests"));
+            () => tools.DescribeMigration("SplitDbContext", "InitialCreate", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("list_migrations", exception.Message, StringComparison.Ordinal);
     }
 
@@ -191,8 +191,8 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
 
         var tools = CreateTools();
 
-        var json = await tools.CompareSchema("SplitDbContext", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath);
-        var withoutMigrationsAssembly = await tools.CompareSchema("SplitDbContext", "MigrationsTests");
+        var json = await tools.CompareSchema("SplitDbContext", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
+        var withoutMigrationsAssembly = await tools.CompareSchema("SplitDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var missing = Assert.Single(document.RootElement.GetProperty("notInDatabase").EnumerateArray());
