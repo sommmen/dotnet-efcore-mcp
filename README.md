@@ -51,7 +51,7 @@ tests (`dotnet test`), and the server is being used day to day against real appl
 | Connections | Server-side registry with provider allowlisting, mandatory per-connection `AccessPolicy`, redacted metadata, production guard rails, and opt-in startup-derived connections from the target app's own design-time factory. |
 | Schema discovery | Paged/cursored `get_schema`, plus `list_entities`, `get_entity_schema`, and `search_schema` for cheap targeted lookups. |
 | Query execution | Roslyn-compiled LINQ over the real model, read-only by default, in-process / out-of-process / pooled host modes, bounded result shaping and row caps, and `preview_query_sql` for SQL inspection without execution. |
-| Migrations | Always-on read-only `list_migrations` and gated `generate_migration_script` (preview only, never executed). |
+| Migrations | Always-on read-only `list_migrations`, `describe_migration`, and `compare_schema`, and gated `generate_migration_script` (preview only, never executed). |
 | Mutations | Gated single-entity `insert_entity` / `update_entity` / `delete_entity`, off by default and never available for production or read-only connections. |
 | Raw SQL | Gated `run_sql_query`, off by default and never available for production or read-only connections. |
 | Observability | Structured logging plus optional OpenTelemetry metrics and tracing (export disabled by default). |
@@ -581,7 +581,9 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `insert_entity` | `contextName: string`, `entity: string`, `values: object`, `connectionName?: string` | Inserted scalar values and actual affected rows; disabled by default and restricted to development `ReadWrite` connections |
 | `update_entity` | `contextName: string`, `entity: string`, `key: object`, `values: object`, `concurrency?: object`, `connectionName?: string` | Updated scalar values and actual affected rows, or a stable not-found-or-concurrency-conflict result |
 | `delete_entity` | `contextName: string`, `entity: string`, `key: object`, `concurrency?: object`, `connectionName?: string` | Actual affected rows, or a stable not-found-or-concurrency-conflict result |
-| `list_migrations` | `contextName: string`, `connectionName?: string`, `migrationsAssembly?: string` | Known, applied, and pending migrations plus `databaseExists` and `appliedStateAvailable`. Always available (read-only, no DDL/DML) except for production connections |
+| `list_migrations` | `contextName: string`, `connectionName?: string`, `migrationsAssembly?: string` | Known, applied, and pending migrations plus `databaseExists` and `appliedStateAvailable`, and `dotnet ef`-style diagnostics: `migrations[]`, `knownMigrationCount`, `lastAppliedMigration`, `unknownAppliedMigrations`, `pendingMigrations[].outOfOrder`, `hasPendingModelChanges`. Always available on every connection, including production and `ReadOnly` (read-only, no DDL/DML) |
+| `describe_migration` | `contextName: string`, `migrationId: string`, `connectionName?: string`, `migrationsAssembly?: string`, `direction?: "up" \| "down"` | The structured operations (`kind`, table, column, type, nullability, …) of one migration, matched by full ID or unique suffix, plus `operationCount`. Never opens the database; available on every connection |
+| `compare_schema` | `contextName: string`, `connectionName?: string`, `migrationsAssembly?: string`, `tables?: string[]`, `includeExtras?: bool` | Live catalog vs. EF model: `notInDatabase`, `different`, optional `extraInDatabase`, `hasDifferences`, `comparedTableCount`, `truncated`. Missing tables/columns include migration attribution. Always available, including production and `ReadOnly` |
 | `generate_migration_script` | `contextName: string`, `connectionName?: string`, `fromMigration?: string`, `toMigration?: string`, `idempotent?: bool`, `migrationsAssembly?: string` | The SQL EF Core's `IMigrator.GenerateScript` would produce between two migration IDs — never executed. Disabled by default |
 | `list_connections` | *(none)* | Registered connections with provider, access mode, environment, source, production flag, and which is active, plus `registryLoadedAtUtc`. Connection strings are never exposed |
 | `reload_connections` | *(none)* | Forces a re-read of the connection registry configuration and reports `addedConnections`/`removedConnections` plus the refreshed list. Opens no database connection and runs no query; the active connection is preserved when it still exists |
@@ -651,7 +653,31 @@ database): it reports which migrations the assembly knows about, which are recor
 in `__EFMigrationsHistory`, and which are pending. When the target database is unreachable,
 `databaseExists` is `false`, every known migration is reported pending, and
 `appliedStateAvailable` is `false` rather than presenting metadata as confirmed applied state.
-It is rejected only for production connections.
+Like `dotnet ef migrations list`, it also returns every known migration in order with its applied
+state (`migrations[]`), `knownMigrationCount`, `lastAppliedMigration`, history rows the loaded code
+doesn't know (`unknownAppliedMigrations`), pending migrations that sort before the last applied one
+(`outOfOrder`), and `hasPendingModelChanges` (model differs from the latest snapshot).
+It is available on every connection, including production and `ReadOnly` connections, because it only reads
+`__EFMigrationsHistory` and migration metadata.
+
+`describe_migration` shows what one migration does (for example, `AddColumn Customers.Email TEXT
+NULL`) as structured operations, without generating SQL or opening the database. Pass a full
+migration ID or a unique suffix such as `AddCustomerEmail`, and `direction: "down"` for the
+rollback operations.
+
+`compare_schema` compares the model with the live database catalog using
+[EfCore.SchemaCompare](https://github.com/JonPSmith/EfCore.SchemaCompare) (MIT, Jon P Smith).
+It reports missing/different tables, columns, keys, and indexes; missing tables/columns include
+`introducedBy` and `introducedByIsPending` migration attribution. Like `list_migrations`, it is
+always available, including production and `ReadOnly` connections. Optional `tables` filters
+results (case-insensitive, schema-qualified or not); `includeExtras: true` adds database-only
+columns/indexes in mapped tables. It still reads the **whole catalog**, and TPT/TPC, name-case
+mismatches, complex types, and JSON mappings have limitations; see the
+[contract and limitations](./docs/development/migrations.md#compare_schema). Output is capped at
+`Migrations:MaxDriftEntries` entries (default 500, `truncated: true` when capped). The wall-clock
+budget is the connection's `CommandTimeoutSeconds` plus `Migrations:CancellationMargin` (default
+5 seconds); on timeout/cancellation the caller stops waiting, while the synchronous reader may
+finish in the background. It never applies migrations or fixes the schema.
 
 `generate_migration_script` previews the SQL EF Core's `IMigrator.GenerateScript` would produce
 between two migration IDs — it never executes the script, opens a transaction, or calls
@@ -669,6 +695,31 @@ is capped at `Migrations:MaxScriptLength` characters (100,000 by default) and tr
 best-effort statement boundary, with `truncated` set to `true` when that happens. Not every
 provider supports idempotent scripts (for example, SQLite does not); retry with
 `idempotent: false` if `generate_migration_script` reports that limitation.
+
+### Troubleshooting: a query fails because a column or table doesn't exist
+
+Errors such as `Invalid column name 'X'`, `Invalid object name 'T'`, `no such column`,
+`no such table`, or `column ... does not exist` usually mean the code was deployed ahead of the
+schema. `run_query` and `run_sql_query` append a pointer to this workflow when they see one. All
+steps except the last are read-only and work on production connections:
+
+```text
+list_migrations    contextName=AppDbContext connectionName=prod [migrationsAssembly=App.Migrations]
+                   → pendingMigrations, lastAppliedMigration, unknownAppliedMigrations, hasPendingModelChanges
+compare_schema     contextName=AppDbContext connectionName=prod tables=[OrderLines]
+                   → notInDatabase[{ table, column, introducedBy, introducedByIsPending }]
+describe_migration contextName=AppDbContext migrationId=<introducedBy>
+                   → the AddColumn/CreateTable operations the database is missing
+generate_migration_script contextName=AppDbContext connectionName=dev
+                   fromMigration=<prod's lastAppliedMigration>
+                   → preview SQL to hand to whoever deploys schema changes
+```
+
+`generate_migration_script` needs `Migrations:Enabled` and a non-production `ReadWrite`
+connection, so run it against a development database that has the same migrations assembly.
+`introducedBy` absent with `hasPendingModelChanges: true` means the model changed without a
+migration (`dotnet ef migrations add` was forgotten). No tool applies migrations. See
+[Migration inspection](./docs/development/migrations.md) for the full contracts.
 
 ## Security
 

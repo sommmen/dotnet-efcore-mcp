@@ -64,6 +64,39 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         Assert.Contains("Next step: Fix the reported compile error(s)", message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("Invalid column name 'DiscountCode'.")]
+    [InlineData("Invalid object name 'dbo.OrderLines'.")]
+    [InlineData("SQLite Error 1: 'no such column: c.Email'.")]
+    [InlineData("SQLite Error 1: 'no such table: Customers'.")]
+    [InlineData("42703: column c.Email does not exist")]
+    [InlineData("42P01: relation \"Customers\" does not exist")]
+    public void FormatQueryErrors_MissingColumnOrTable_PointToMigrationDiagnostics(string providerMessage)
+    {
+        var exception = new QueryExecutionException(
+            "The query failed to execute.", new InvalidOperationException(providerMessage));
+
+        foreach (var message in new[]
+        {
+            EfCoreMcpTools.FormatQueryErrorForTesting(exception),
+            EfCoreMcpTools.FormatSqlQueryErrorForTesting(exception),
+        })
+        {
+            Assert.Contains("call list_migrations and compare_schema", message, StringComparison.Ordinal);
+            Assert.Equal(1, CountOccurrences(message, providerMessage));
+        }
+    }
+
+    [Fact]
+    public void FormatQueryErrors_UnrelatedFailure_DoesNotMentionMigrationDiagnostics()
+    {
+        var exception = new QueryExecutionException(
+            "The query failed to execute.", new InvalidOperationException("Incorrect syntax near 'FROM'."));
+
+        Assert.DoesNotContain("list_migrations", EfCoreMcpTools.FormatQueryErrorForTesting(exception), StringComparison.Ordinal);
+        Assert.DoesNotContain("list_migrations", EfCoreMcpTools.FormatSqlQueryErrorForTesting(exception), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task PreviewQuerySql_WithScalarResult_ReportsAPreviewNotAvailableHint()
     {

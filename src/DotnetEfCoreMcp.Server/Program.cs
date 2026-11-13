@@ -99,6 +99,7 @@ builder.Services.AddSingleton<SqlQueryExecutor>();
 builder.Services.AddSingleton(builder.Configuration.GetSection("Onboarding").Get<OnboardingOptions>() ?? new OnboardingOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Migrations").Get<MigrationsOptions>() ?? new MigrationsOptions());
 builder.Services.AddSingleton<MigrationInspector>();
+builder.Services.AddSingleton<SchemaComparer>();
 
 // Update check: notify only, never self-update. Registered as a hosted service so the lookup runs
 // in the background after startup rather than on the initialize path - a slow or unreachable feed

@@ -58,18 +58,34 @@ public sealed class MigrationInspector(MigrationsOptions options, ILogger<Migrat
             }
         }
 
+        var lastAppliedMigration = appliedMigrations.Count > 0 ? appliedMigrations[^1].MigrationId : null;
+
+        var migrations = new List<KnownMigrationInfo>();
         var pendingMigrations = new List<PendingMigrationInfo>();
         foreach (var (migrationId, migrationType) in knownMigrations)
         {
-            if (appliedIds.Contains(migrationId))
+            var applied = appliedIds.Contains(migrationId);
+            migrations.Add(new KnownMigrationInfo { MigrationId = migrationId, Applied = appliedStateAvailable ? applied : null });
+            if (applied)
             {
                 continue;
             }
 
             var migration = migrationsAssembly.CreateMigration(migrationType, ToProviderAssemblyName(provider));
             var productVersion = migration.TargetModel.FindAnnotation(ProductVersionAnnotationName)?.Value as string ?? "unknown";
-            pendingMigrations.Add(new PendingMigrationInfo { MigrationId = migrationId, Target = $"{provider}:{productVersion}" });
+            pendingMigrations.Add(new PendingMigrationInfo
+            {
+                MigrationId = migrationId,
+                Target = $"{provider}:{productVersion}",
+                OutOfOrder = lastAppliedMigration is not null && string.CompareOrdinal(migrationId, lastAppliedMigration) < 0,
+            });
         }
+
+        var knownIds = new HashSet<string>(knownMigrations.Keys, StringComparer.OrdinalIgnoreCase);
+        var unknownAppliedMigrations = appliedMigrations
+            .Select(m => m.MigrationId)
+            .Where(id => !knownIds.Contains(id))
+            .ToList();
 
         return new MigrationsInspectionResult
         {
@@ -77,6 +93,80 @@ public sealed class MigrationInspector(MigrationsOptions options, ILogger<Migrat
             PendingMigrations = pendingMigrations,
             DatabaseExists = databaseExists,
             AppliedStateAvailable = appliedStateAvailable,
+            Migrations = migrations,
+            KnownMigrationCount = knownMigrations.Count,
+            LastAppliedMigration = lastAppliedMigration,
+            UnknownAppliedMigrations = unknownAppliedMigrations,
+            HasPendingModelChanges = TryHasPendingModelChanges(context, entry),
+        };
+    }
+
+    private bool? TryHasPendingModelChanges(DbContext context, ConnectionRegistryEntry entry)
+    {
+        try
+        {
+            return context.Database.HasPendingModelChanges();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to compute pending model changes for connection '{ConnectionName}'.", entry.Name);
+            return null;
+        }
+    }
+
+    /// <summary>Returns the operations of one migration without touching the database: the
+    /// migration is instantiated from the migrations assembly for <paramref name="provider"/> and
+    /// its <c>Up</c>/<c>Down</c> operations are projected.</summary>
+    public MigrationDescription Describe(DbContext context, DatabaseProvider provider, string migrationId, MigrationDirection direction)
+    {
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var resolvedId = ResolveMigrationId(migrationsAssembly.Migrations.Keys, migrationId);
+        var migration = migrationsAssembly.CreateMigration(migrationsAssembly.Migrations[resolvedId], ToProviderAssemblyName(provider));
+        var operations = direction == MigrationDirection.Down ? migration.DownOperations : migration.UpOperations;
+
+        return new MigrationDescription
+        {
+            MigrationId = resolvedId,
+            Direction = direction,
+            Operations = operations.Select(o => MigrationOperationProjector.Project(o, options.MaxScriptLength)).ToList(),
+        };
+    }
+
+    /// <summary>Builds a <see cref="MigrationOperationIndex"/> from every known migration's
+    /// <c>Up</c> operations, in EF Core migration order. Never touches the database.</summary>
+    public static MigrationOperationIndex BuildOperationIndex(DbContext context, DatabaseProvider provider)
+    {
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var providerAssemblyName = ToProviderAssemblyName(provider);
+        return MigrationOperationIndex.Build(migrationsAssembly.Migrations.Select(pair =>
+            (pair.Key, (IEnumerable<Microsoft.EntityFrameworkCore.Migrations.Operations.MigrationOperation>)
+                migrationsAssembly.CreateMigration(pair.Value, providerAssemblyName).UpOperations)));
+    }
+
+    /// <summary>Resolves a full migration ID, its name part, or a unique suffix (all
+    /// case-insensitive) to a known migration ID.</summary>
+    internal static string ResolveMigrationId(IEnumerable<string> knownMigrationIds, string migrationId)
+    {
+        var knownIds = knownMigrationIds.ToList();
+        var exact = knownIds.FirstOrDefault(id => string.Equals(id, migrationId, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null)
+        {
+            return exact;
+        }
+
+        var byName = knownIds.Where(id => id.EndsWith("_" + migrationId, StringComparison.OrdinalIgnoreCase)).ToList();
+        var matches = byName.Count > 0
+            ? byName
+            : knownIds.Where(id => id.EndsWith(migrationId, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        return matches.Count switch
+        {
+            1 => matches[0],
+            0 => throw new MigrationInspectionException(
+                $"No known migration matches '{migrationId}' ({knownIds.Count} known). Next step: call list_migrations " +
+                "to see the known migration IDs, or pass migrationsAssembly if the migrations live in another assembly."),
+            _ => throw new MigrationInspectionException(
+                $"Migration ID '{migrationId}' is ambiguous; it matches: {string.Join(", ", matches)}. Pass the full migration ID."),
         };
     }
 
@@ -160,7 +250,7 @@ public sealed class MigrationInspector(MigrationsOptions options, ILogger<Migrat
     /// <summary>Truncates generated SQL to at most <paramref name="maxLength"/> characters,
     /// preferring to cut at the last statement-separator boundary at or before the cap rather than
     /// bisecting a statement.</summary>
-    private static string TruncateAtStatementBoundary(string sql, int maxLength)
+    internal static string TruncateAtStatementBoundary(string sql, int maxLength)
     {
         var window = sql[..maxLength];
         var lastBoundary = window.LastIndexOf('\n');

@@ -14,4 +14,8 @@ public sealed class MigrationsOptions
 
     /// <summary>Extra wall-clock margin added to the connection command timeout before cancellation.</summary>
     public TimeSpan CancellationMargin { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Maximum number of entries <c>compare_schema</c> returns across all result buckets;
+    /// further entries are dropped and <c>truncated</c> is set.</summary>
+    public int MaxDriftEntries { get; init; } = 500;
 }

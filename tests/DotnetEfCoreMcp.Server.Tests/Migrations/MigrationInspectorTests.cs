@@ -4,16 +4,21 @@ using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DotnetEfCoreMcp.Server.Tests.Migrations;
 
 /// <summary>Exercises <see cref="MigrationInspector"/> directly against the real
-/// <c>InitialCreate</c> migration scaffolded into the SampleApp fixture, so applied/pending state
+/// <c>InitialCreate</c> and <c>AddCustomerEmail</c> migrations scaffolded into the SampleApp fixture, so applied/pending state
 /// and script generation are verified against genuine EF Core behavior rather than hand-authored
 /// stand-ins.</summary>
 public sealed class MigrationInspectorTests : IDisposable
 {
+    private const string InitialCreateId = "20260906122510_InitialCreate";
+    private const string AddCustomerEmailId = "20261113093414_AddCustomerEmail";
+
     private readonly SqliteTestDatabase _db = new();
     private readonly Type _contextType;
 
@@ -42,13 +47,24 @@ public sealed class MigrationInspectorTests : IDisposable
         Assert.False(result.DatabaseExists);
         Assert.False(result.AppliedStateAvailable);
         Assert.Empty(result.AppliedMigrations);
-        var pending = Assert.Single(result.PendingMigrations);
-        Assert.Contains("InitialCreate", pending.MigrationId, StringComparison.Ordinal);
-        Assert.Equal("Sqlite:10.0.11", pending.Target);
+        Assert.Collection(
+            result.PendingMigrations,
+            pending =>
+            {
+                Assert.Equal(InitialCreateId, pending.MigrationId);
+                Assert.Equal("Sqlite:10.0.11", pending.Target);
+                Assert.False(pending.OutOfOrder);
+            },
+            pending => Assert.Equal(AddCustomerEmailId, pending.MigrationId));
+        Assert.Equal(2, result.KnownMigrationCount);
+        Assert.All(result.Migrations, m => Assert.Null(m.Applied));
+        Assert.Null(result.LastAppliedMigration);
+        Assert.Empty(result.UnknownAppliedMigrations);
+        Assert.False(result.HasPendingModelChanges);
     }
 
     [Fact]
-    public async Task InspectAsync_AfterMigrate_ReportsTheMigrationApplied()
+    public async Task InspectAsync_AfterMigrate_ReportsEveryMigrationApplied()
     {
         using (var setupContext = NewContext())
         {
@@ -62,10 +78,76 @@ public sealed class MigrationInspectorTests : IDisposable
 
         Assert.True(result.DatabaseExists);
         Assert.True(result.AppliedStateAvailable);
-        var applied = Assert.Single(result.AppliedMigrations);
-        Assert.Contains("InitialCreate", applied.MigrationId, StringComparison.Ordinal);
-        Assert.Equal("10.0.12", applied.ProductVersion);
+        Assert.Equal([InitialCreateId, AddCustomerEmailId], result.AppliedMigrations.Select(m => m.MigrationId));
+        Assert.All(result.AppliedMigrations, m => Assert.Equal("10.0.12", m.ProductVersion));
         Assert.Empty(result.PendingMigrations);
+        Assert.All(result.Migrations, m => Assert.True(m.Applied));
+        Assert.Equal(AddCustomerEmailId, result.LastAppliedMigration);
+        Assert.Empty(result.UnknownAppliedMigrations);
+        Assert.False(result.HasPendingModelChanges);
+    }
+
+    [Fact]
+    public async Task InspectAsync_WithOnlyFirstMigrationApplied_ReportsLaterMigrationPending()
+    {
+        await MigrateToAsync(InitialCreateId);
+
+        using var context = NewContext();
+        var result = await NewInspector().InspectAsync(context, _db.ToRegistryEntry(), DatabaseProvider.Sqlite, CancellationToken.None);
+
+        Assert.Equal(2, result.KnownMigrationCount);
+        Assert.Equal(InitialCreateId, result.LastAppliedMigration);
+        var pending = Assert.Single(result.PendingMigrations);
+        Assert.Equal(AddCustomerEmailId, pending.MigrationId);
+        Assert.False(pending.OutOfOrder);
+        Assert.Collection(
+            result.Migrations,
+            m => { Assert.Equal(InitialCreateId, m.MigrationId); Assert.True(m.Applied); },
+            m => { Assert.Equal(AddCustomerEmailId, m.MigrationId); Assert.False(m.Applied); });
+        Assert.Empty(result.UnknownAppliedMigrations);
+    }
+
+    [Fact]
+    public async Task InspectAsync_WithHistoryRowUnknownToAssembly_ReportsUnknownAppliedMigration()
+    {
+        const string unknownId = "29990101000000_FromAnotherBranch";
+        await MigrateToAsync(target: null);
+        await ExecuteSqlAsync($"INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") VALUES ('{unknownId}', '10.0.12')");
+
+        using var context = NewContext();
+        var result = await NewInspector().InspectAsync(context, _db.ToRegistryEntry(), DatabaseProvider.Sqlite, CancellationToken.None);
+
+        Assert.Equal([unknownId], result.UnknownAppliedMigrations);
+        Assert.Equal(unknownId, result.LastAppliedMigration);
+        Assert.Empty(result.PendingMigrations);
+        Assert.Equal(2, result.KnownMigrationCount);
+    }
+
+    [Fact]
+    public async Task InspectAsync_WithEarlierMigrationMissingFromHistory_FlagsItOutOfOrder()
+    {
+        await MigrateToAsync(target: null);
+        await ExecuteSqlAsync($"DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '{InitialCreateId}'");
+
+        using var context = NewContext();
+        var result = await NewInspector().InspectAsync(context, _db.ToRegistryEntry(), DatabaseProvider.Sqlite, CancellationToken.None);
+
+        Assert.Equal(AddCustomerEmailId, result.LastAppliedMigration);
+        var pending = Assert.Single(result.PendingMigrations);
+        Assert.Equal(InitialCreateId, pending.MigrationId);
+        Assert.True(pending.OutOfOrder);
+    }
+
+    private async Task MigrateToAsync(string? target)
+    {
+        using var context = NewContext();
+        await context.GetService<IMigrator>().MigrateAsync(target);
+    }
+
+    private async Task ExecuteSqlAsync(string sql)
+    {
+        using var context = NewContext();
+        await context.Database.ExecuteSqlRawAsync(sql);
     }
 
     [Fact]
@@ -87,7 +169,8 @@ public sealed class MigrationInspectorTests : IDisposable
         Assert.True(result.DatabaseExists);
         Assert.False(result.AppliedStateAvailable);
         Assert.Empty(result.AppliedMigrations);
-        Assert.Single(result.PendingMigrations);
+        Assert.Equal(2, result.PendingMigrations.Count);
+        Assert.All(result.Migrations, m => Assert.Null(m.Applied));
     }
 
     [Fact]
@@ -101,7 +184,7 @@ public sealed class MigrationInspectorTests : IDisposable
 
         Assert.Contains("CREATE TABLE", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.False(result.Truncated);
-        Assert.Equal(1, result.MigrationCount);
+        Assert.Equal(2, result.MigrationCount);
 
         // Non-mutation proof: the script is generated purely from the migration assembly's known
         // metadata - it must never touch the target database itself.

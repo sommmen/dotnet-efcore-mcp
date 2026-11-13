@@ -14,9 +14,10 @@ loading](./assembly-loading.md), [`DbContext` discovery](./dbcontext-discovery.m
 [connection management](./connections.md), [schema discovery](./schema-discovery.md),
 [query execution](./query-execution.md), the [MCP tool surface](./mcp-tools.md), the
 [named multi-target assembly registry](./assembly-registry.md),
-[startup-derived connections](./startup-derived-connections.md), and
-[update notification](./update-notification.md) are all complete and covered by tests
-(`dotnet test`).
+[startup-derived connections](./startup-derived-connections.md),
+[update notification](./update-notification.md), and
+[migration & schema-drift diagnostics](./migration-diagnostics.md) are all complete and covered
+by tests (`dotnet test`).
 
 ## Adding new work
 

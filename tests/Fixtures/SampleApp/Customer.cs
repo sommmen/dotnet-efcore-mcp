@@ -14,6 +14,8 @@ public class Customer
 
     public int? Version { get; set; }
 
+    public string? Email { get; set; }
+
     public List<Order> Orders { get; set; } = new();
 
     /// <summary>Not part of the EF model on purpose - exercises that query result projection only
