@@ -114,7 +114,8 @@ under `%LOCALAPPDATA%/dotnet-efcore-mcp/hook-data/` by default, overridable with
 
 ## Implementation checklist
 
-- [x] `hooks` CLI verb dispatched before the host is built, leaving MCP server startup unchanged
+- [x] `hooks` CLI verb dispatched before the host is built, leaving MCP server and CLI startup unchanged
+- [x] CLI use counts like MCP use: a shell command running `dotnet-efcore-mcp cli <query-operation>` (snake_case or kebab-case, through `dotnet-efcore-mcp`, `dnx`, `npx` or `dotnet <dll>`) is classified as `EfCoreCliToolUse`, clears the nudge, and switches that session's reminders to CLI wording
 - [x] `hooks install` / `uninstall` / `status`, with `--client`, `--path`, and `--force`
 - [x] Payload parsing across all three client dialects, including tool input sent as a JSON string
 - [x] EF Core LINQ detection requiring both a query operator and an EF signal

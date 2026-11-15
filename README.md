@@ -16,7 +16,7 @@ Most existing EF Core + MCP integrations require the tools to be baked into the 
 
 - Accepts an **arbitrary, already-compiled** `DbContext` assembly.
 - Discovers its model dynamically via reflection instead of design-time source generation.
-- Exposes safe, generalized schema discovery and querying to an MCP client.
+- Exposes safe, generalized schema discovery and querying to an MCP client, or to a plain shell command (see [Choose MCP or CLI](#choose-mcp-or-cli)).
 
 This project fills that gap. See [DEVELOPMENT.md](./DEVELOPMENT.md) for the module guides and the [status](#status) below for what ships today.
 
@@ -141,6 +141,72 @@ troubleshooting.
 Preview builds are published to NuGet.org from every push to `main`; stable releases are
 published from tagged GitHub Releases (see
 [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)).
+
+### Choose MCP or CLI
+
+One tool, two equal surfaces, both built on [dotnet-agent-surface](https://github.com/sommmen/dotnet-agent-surface)
+and backed by the same tool implementations (same gates, same redaction, same output):
+
+| | MCP server | CLI |
+|---|---|---|
+| Start it | `dotnet-efcore-mcp` (no arguments) | `dotnet-efcore-mcp cli <operation> ...` |
+| For | MCP clients (VS Code, Claude Code, Copilot, Codex, ...) | Agents that run shell commands, skills, scripts, CI |
+| State | One long-lived process | One process per call; `load_assembly`, `select_target` and `swap_connection` are remembered in a session file |
+
+The MCP server is the default and behaves exactly as before. Every install path below gives you both.
+
+```powershell
+# MCP: point your client at the command with no arguments (see the VS Code setup below)
+dotnet-efcore-mcp
+
+# CLI: operations use the MCP tool names; snake_case and kebab-case both work
+dotnet-efcore-mcp cli --help
+dotnet-efcore-mcp cli list-contexts --assembly .\MyApp\bin\Debug\net10.0\MyApp.dll
+dotnet-efcore-mcp cli run-query --assembly .\MyApp\bin\Debug\net10.0\MyApp.dll --connection Dev `
+  --context-name AppDbContext --query "Orders.Where(o => o.Total > 10).Take(5)"
+```
+
+How to run the CLI per install method:
+
+| Installed via | CLI command |
+|---|---|
+| `dotnet tool install --global` | `dotnet-efcore-mcp cli <operation> ...` |
+| `dotnet tool install --local` | `dotnet tool run dotnet-efcore-mcp cli <operation> ...` |
+| `dnx` | `dnx DotnetEfCoreMcp.Server --prerelease --yes -- cli <operation> ...` |
+| `npx` | `npx -y dotnet-efcore-mcp cli <operation> ...` |
+
+**Global options** (before or after the operation): `--assembly <dll>` (loads the target; exit 1 if it
+cannot be loaded), `--workspace <dir>` (discover the target there; defaults to the current directory when
+nothing else names a target), `--target <name>`, `--connection <name>`, `--config Key=Value` (any
+configuration key, e.g. `--config ToolOutput:Format=json`), `--session <id>`, and the adapter flags
+`--output toon|json`, `--fields`, `--full`. Operation parameters are kebab-case flags (`--context-name`);
+long values can come from a file (`--query @query.linq`) or stdin (`--query -`).
+
+**Output and exit codes.** A tool's result goes to stdout byte-for-byte (the same text the MCP tool
+returns, untruncated), and nothing else does: logs go to stderr at `Warning`. Exit codes: `0` success,
+`1` operation error (the same message the MCP tool would return), `2` usage error, `130` cancelled.
+
+**Sessions.** Every CLI call is a new process, so `load_assembly`, `select_target` and `swap_connection`
+record their intent (names and paths only, never connection strings) in a per-user session file, and the
+next call restores it:
+
+```powershell
+dotnet-efcore-mcp cli load-assembly --assembly-path .\MyApp\bin\Debug\net10.0\MyApp.dll
+dotnet-efcore-mcp cli swap-connection --connection-name Dev
+dotnet-efcore-mcp cli run-query --context-name AppDbContext --query "Orders.Take(5)"
+dotnet-efcore-mcp cli session show     # where the state lives; `session clear` forgets it
+```
+
+The session defaults to one per working directory; override it with `--session <id>` or
+`DOTNET_EFCORE_MCP_SESSION`. `run_query` cursors also work across calls (the session keeps a stable
+signing key unless you configure `QueryExecution:CursorSigningKey`). Each call still reloads the
+assembly, so per-call latency is higher than a warm MCP server; a background daemon is future work.
+
+**CLI-mode differences.** No background services run (no reload watcher, update check or telemetry
+export; use `dotnet-efcore-mcp version --check-updates`). `QueryExecution:Mode=Pooled` runs as `Auto`.
+`dotnet-efcore-mcp cli skill generate --out-dir <dir>` writes an agent skill that documents the CLI.
+Connections, access policies and every gate (`RawSqlExecution:Enabled`, `EntityMutations:Enabled`,
+`Migrations:Enabled`) are configured exactly as for MCP.
 
 ### Updating
 

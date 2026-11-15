@@ -383,3 +383,27 @@ isolation between two targets, name-collision reload-in-place versus duplicate e
 unknown-`targetName` rejection without leaking other registered names, the omitted-`targetName`
 backward-compatibility path across all four downstream tools, and unaffected `AccessPolicy`
 enforcement when a resolved context/entity comes from a non-default target.
+
+## CLI mode (`dotnet-efcore-mcp cli`)
+
+The same tools run as a plain command line. `Program.cs` hands off to
+[`EfCoreSurface`](../../src/DotnetEfCoreMcp.Server/Cli/EfCoreSurface.cs), which uses
+`DotNetAgentSurface.Hosting`'s `AgentSurfaceApplication`: `hooks`, `onboard` and `version` are host verbs,
+`cli` selects CLI mode, and no arguments (or only `--Key=Value` configuration) starts the MCP server as
+before. Both modes import the same `[McpServerTool]` methods from `EfCoreMcpTools` into one operation
+catalog, so descriptions, parameters, gates and redaction cannot drift between surfaces. The MCP
+`tools/list` output is unchanged and pinned by `McpToolsListSnapshotTests`.
+
+- [x] MCP host on agent-surface: `WithOperations` over `AddMcpServerTools` (`SafetyMapping.None`, targets resolved from DI); instructions, stdio transport and the `FlushOnDisconnectStdioTransport` override untouched
+- [x] CLI operations use the tool names (snake_case and kebab-case), with `--context-name`-style flags; a result string is written to stdout verbatim and untruncated
+- [x] Global options: `--assembly` → `TargetAssemblyPath`, `--workspace` → `WorkspacePath`, `--target` → `targetName`, `--connection` → `connectionName`, `--config Key=Value`, `--session <id>`
+- [x] An explicit `--assembly` that cannot be loaded fails the command (exit 1); with no target named, the CLI discovers one in the working directory unless the session remembers a target
+- [x] Exit codes: 0 success, 1 operation error, 2 usage error, 130 cancelled; logs on stderr at `Warning`
+- [x] `QueryExecution:Mode=Pooled` is treated as `Auto`; hosted services (reload watcher, update check, telemetry export) do not run
+- [x] CLI-aware wording for missing target/connection errors through `IToolSurfaceHints` (`ToolSurfaceHints.Cli`); the MCP text is byte-identical
+- [x] `cli skill generate|check` produce and verify an agent skill for the CLI
+- [x] Session state (equal MCP/CLI flows): `load_assembly`, `select_target` and `swap_connection` persist `targets`, `defaultTarget` and `activeConnection` through `IAgentSession`; `EfCoreSessionInitializer` rehydrates them at CLI start; the stable `run_query` cursor HMAC key lives in the session as `cursorKey` unless `QueryExecution:CursorSigningKey` is configured. Names, paths and the cursor key are stored, never connection strings. MCP mode uses the in-memory session and is unchanged
+- [x] Hooks: `ToolCallClassifier` recognises `dotnet-efcore-mcp cli <query-operation>` shell commands and `HookReminder` phrases its reminders as CLI commands for that session
+- [ ] Future: a background daemon so the CLI is a thin client to a warm server (see [CLI surface](./cli-surface.md))
+
+Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Cli`](../../tests/DotnetEfCoreMcp.Server.Tests/Cli).

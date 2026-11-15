@@ -11,7 +11,8 @@ document only tracks items that are still outstanding, plus how to add new ones.
 
 | Item | Area | Notes |
 | --- | --- | --- |
-| MCP and plain CLI, both on `dotnet-agent-surface` | Hosting / distribution | Planned. See [CLI surface](./cli-surface.md), workstreams B–G. Blocked on upstream [agent-surface#88–#92](https://github.com/sommmen/dotnet-agent-surface/issues?q=is%3Aissue+88+OR+89+OR+90+OR+91+OR+92); B (composition refactor + `tools/list` diff test) can start now. |
+| CLI daemon / warm server | Hosting / distribution | Future work. The MCP server and the plain CLI both ship on `dotnet-agent-surface` (see [CLI surface](./cli-surface.md)); each CLI call still reloads the target assembly, which a background daemon would remove. |
+| CLI-only package (`DotNetEfCore.Cli`, plan item E1) | Hosting / distribution | Future work. See [CLI surface](./cli-surface.md#future-work). |
 
 Everything else is complete: [project scaffolding](./project-scaffolding.md), [assembly
 loading](./assembly-loading.md), [`DbContext` discovery](./dbcontext-discovery.md),
@@ -20,7 +21,7 @@ loading](./assembly-loading.md), [`DbContext` discovery](./dbcontext-discovery.m
 [named multi-target assembly registry](./assembly-registry.md),
 [startup-derived connections](./startup-derived-connections.md),
 [update notification](./update-notification.md), and
-[migration & schema-drift diagnostics](./migration-diagnostics.md) are all complete and covered
+[migration & schema-drift diagnostics](./migration-diagnostics.md), and the [MCP and plain CLI on `dotnet-agent-surface`](./cli-surface.md) are all complete and covered
 by tests (`dotnet test`).
 
 ## Adding new work

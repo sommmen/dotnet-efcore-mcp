@@ -276,6 +276,12 @@ mechanism tests already use to stay out of the real profile. Contents: last chec
 installed version at check time, latest version found, channel. Writes are best-effort and
 corruption is treated as a cache miss — never a startup failure.
 
+## CLI mode
+
+`dotnet-efcore-mcp cli ...` runs no hosted services, so no background update check runs on each call,
+`UpdateNotificationService.Result` stays null, and `onboard` reports `checkedForUpdates=false`. The `version
+--check-updates` verb remains the way to check for updates from the MCP server or the CLI.
+
 ## Options still open
 
 ### O1 — Feed policy
