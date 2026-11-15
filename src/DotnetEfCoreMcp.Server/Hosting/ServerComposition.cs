@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using DotNetAgentSurface.Mcp;
 using ModelContextProtocol.Protocol;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
@@ -221,7 +222,15 @@ public static class ServerComposition
                     """;
             })
             .WithStdioServerTransport()
-            .WithTools<EfCoreMcpTools>();
+            .WithOperations(
+                catalog => catalog.AddMcpServerTools(
+                    typeof(EfCoreMcpTools).Assembly,
+                    targetFactory: null,
+                    options =>
+                    {
+                        options.SafetyMapping = McpToolSafetyMapping.None;
+                        options.ResolveTargetsFromServices = true;
+                    }));
 
         // WithStdioServerTransport() above wires up the single-session hosted service that actually runs
         // the server; this replaces only the ITransport it resolves. The SDK's stock stream transport
