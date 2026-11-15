@@ -133,7 +133,8 @@ public static class SchemaBuilder
             return type.FullName;
 
         var genericArguments = string.Join(", ", type.GetGenericArguments().Select(a => FormatClrFullName(a) ?? a.Name));
-        return $"{definitionName[..definitionName.IndexOf('`')]}<{genericArguments}>";
+        // Arity markers are stripped everywhere so a nested type keeps its "+Inner" suffix.
+        return $"{System.Text.RegularExpressions.Regex.Replace(definitionName, @"`\d+", string.Empty)}<{genericArguments}>";
     }
 
     // Table/column/store-type metadata comes from the relational annotation extensions

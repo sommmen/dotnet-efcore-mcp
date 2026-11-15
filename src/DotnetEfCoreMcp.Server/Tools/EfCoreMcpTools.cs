@@ -762,9 +762,11 @@ public sealed class EfCoreMcpTools(
         if (result.KnownMigrationCount == 0)
         {
             var current = string.IsNullOrWhiteSpace(migrationsAssembly) ? "the context's own assembly" : $"migrationsAssembly '{migrationsAssembly}'";
+            var consequence = result.UnknownAppliedMigrations.Count > 0
+                ? "so every applied migration shows as unknown and nothing can be reported pending. The migrations probably live in a different project"
+                : "so nothing can be reported pending. If you expected migrations, they probably live in a different project";
             warnings.Add(
-                $"No migrations were found in {current}, so every applied migration shows as unknown and nothing can be reported pending. " +
-                "The migrations probably live in a different project: pass migrationsAssembly as the path to that project's built DLL " +
+                $"No migrations were found in {current}, {consequence}: pass migrationsAssembly as the path to that project's built DLL " +
                 "(for example <repo>/src/<Project>/bin/Debug/<tfm>/<Project>.dll, which also works for a sibling project that is not a dependency of the loaded assembly).");
         }
         else if (result.UnknownAppliedMigrations.Count > 0)
@@ -1460,7 +1462,8 @@ public sealed class EfCoreMcpTools(
     {
         for (var current = exception; current is not null; current = current.InnerException)
         {
-            if (current is FileNotFoundException { FileName: { Length: > 0 } fileName })
+            if (current is FileNotFoundException { FileName: { Length: > 0 } fileName } notFound
+                && IsAssemblyResolutionFailure(notFound, fileName))
             {
                 try
                 {
@@ -1475,6 +1478,11 @@ public sealed class EfCoreMcpTools(
 
         return null;
     }
+
+    // The runtime reports an unresolved dependency with an assembly display name ("X, Version=...") and a "Could not load file or assembly" message; a missing config or data file is neither.
+    private static bool IsAssemblyResolutionFailure(FileNotFoundException exception, string fileName) =>
+        fileName.Contains(", Version=", StringComparison.Ordinal)
+        || exception.Message.StartsWith("Could not load file or assembly", StringComparison.Ordinal);
 
     private LoadedAssemblyHandle RequireLoadedAssembly(string? targetName = null)
     {
