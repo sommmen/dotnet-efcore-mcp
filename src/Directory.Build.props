@@ -7,6 +7,9 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
+    <!-- version.json lives at the repo root; point NB.GV there so every project shares one build-session cache. -->
+    <GitVersionBaseDirectory>$(MSBuildThisFileDirectory)..</GitVersionBaseDirectory>
+
     <!-- Shared NuGet package metadata for every packable project in this repo. -->
     <Authors>Dion Leurink</Authors>
     <Company>Dion Leurink</Company>
