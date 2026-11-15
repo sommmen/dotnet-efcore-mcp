@@ -159,7 +159,7 @@ At the repository root, next to `dotnet-efcore-mcp.slnx`:
 ### 4.4 CI
 
 Both workflows keep working unchanged — a plain `dotnet test <solution>` is valid under
-MTP. Optionally add `--report-gh` to get GitHub annotations and a run summary, which is
+MTP. `ci.yml` now passes `--report-gh` to get GitHub annotations and a run summary, which is
 what §4.1 adds the extension package for.
 
 One thing to watch in `publish.yml`: it runs `dotnet pack` over the whole solution.
