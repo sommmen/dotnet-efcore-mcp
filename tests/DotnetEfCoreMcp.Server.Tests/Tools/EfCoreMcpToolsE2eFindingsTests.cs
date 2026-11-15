@@ -21,7 +21,7 @@ namespace DotnetEfCoreMcp.Server.Tests.Tools;
 /// <summary>Regression coverage for the findings of the end-to-end run against two real
 /// applications: required-parameter validation, query and cursor error text, log noise, the advertised
 /// server version, query-execution-mode selection and the default-target alias.</summary>
-public sealed class EfCoreMcpToolsE2eFindingsTests
+public sealed class EfCoreMcpToolsE2EFindingsTests
 {
     [Theory]
     [InlineData("load_assembly", "assemblyPath")]
