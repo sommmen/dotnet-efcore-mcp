@@ -9,7 +9,11 @@ document only tracks items that are still outstanding, plus how to add new ones.
 
 ## Open items
 
-There are currently no open items — [project scaffolding](./project-scaffolding.md), [assembly
+| Item | Area | Notes |
+| --- | --- | --- |
+| MCP and plain CLI, both on `dotnet-agent-surface` | Hosting / distribution | Planned. See [CLI surface](./cli-surface.md), workstreams B–G. Blocked on upstream [agent-surface#88–#92](https://github.com/sommmen/dotnet-agent-surface/issues?q=is%3Aissue+88+OR+89+OR+90+OR+91+OR+92); B (composition refactor + `tools/list` diff test) can start now. |
+
+Everything else is complete: [project scaffolding](./project-scaffolding.md), [assembly
 loading](./assembly-loading.md), [`DbContext` discovery](./dbcontext-discovery.md),
 [connection management](./connections.md), [schema discovery](./schema-discovery.md),
 [query execution](./query-execution.md), the [MCP tool surface](./mcp-tools.md), the
