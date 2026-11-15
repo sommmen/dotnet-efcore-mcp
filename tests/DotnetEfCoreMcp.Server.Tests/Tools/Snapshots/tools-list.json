@@ -1,0 +1,844 @@
+{
+  "serverInfo": {
+    "name": "DotnetEfCoreMcp.Server"
+  },
+  "instructions": "Use dotnet-efcore-mcp for running LINQ queries and schema discovery against the\ntarget application's EF Core model, instead of guessing at entity shapes or writing\none-off inspection code. When adding or changing LINQ queries, always validate them\nusing dotnet-efcore-mcp at the end of the session.\n\nThis server also ships optional agent integrations that are off until installed:\nlifecycle hooks that re-deliver the instruction above at the moment a LINQ query is\nwritten, and a feedback skill for filing a usable issue about this server without\nleaking private code. Call the read-only `onboard` tool to see what is available and\nwhat is already set up, and mention it if the user is hitting rough edges with this\nserver. Never install anything without the user asking for it.\n\nThe `onboard` tool also reports this server's version and whether a newer one has been\npublished. If it reports an update, pass the notice along to the user; do not run the\nupgrade yourself.",
+  "tools": [
+    {
+      "name": "compare_schema",
+      "description": "Compares the DbContext's EF Core model with the live database catalog (schema drift detection, via EfCore.SchemaCompare and EF Core's reverse-engineering reader). Reports notInDatabase (tables/columns/keys/indexes the model expects but the database lacks), different (e.g. column type, nullability, default SQL), and, with includeExtras, extraInDatabase. Missing tables and columns are attributed to the migration that introduces them (introducedBy, introducedByIsPending); introducedBy is absent when no migration creates them (a model change without a migration). Always available on every connection, including Production and ReadOnly, because it only reads catalog metadata and __EFMigrationsHistory. The whole catalog is read on every call, so on large databases pass tables to narrow the report. Use it (after list_migrations) when a query fails with 'Invalid column name', 'Invalid object name', 'no such column', 'no such table', or 'column ... does not exist'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "migrationsAssembly": {
+            "description": "Simple name or DLL path of the migrations assembly, as for list_migrations; used for introducedBy attribution. Paths must satisfy AssemblyLoader:AllowedRoots.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "tables": {
+            "description": "Optional table names (schema-qualified or not, case-insensitive) to report on. Filters the reported results only; the whole catalog is still read.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "includeExtras": {
+            "description": "When true, also reports tables, columns, and indexes that exist in the database but not in the model (extraInDatabase). Off by default because shared databases make this noisy.",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "contextName"
+        ]
+      }
+    },
+    {
+      "name": "delete_entity",
+      "description": "Deletes one metadata-validated entity from a Development ReadWrite connection. This destructive tool is disabled unless EntityMutations:Enabled is explicitly true; it always rejects Production and ReadOnly connections.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "entity": {
+            "description": "CLR type name of the entity to delete.",
+            "type": "string"
+          },
+          "key": {
+            "description": "Complete primary-key values by exact property name.",
+            "type": "object"
+          },
+          "concurrency": {
+            "description": "Original values for every concurrency-token property, when required.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "default": null
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName",
+          "entity",
+          "key"
+        ]
+      }
+    },
+    {
+      "name": "describe_migration",
+      "description": "Describes the structured Up or Down operations of an EF Core migration without generating or executing SQL. Accepts a full migration ID or a unique case-insensitive suffix/name. Always available, including Production and ReadOnly connections; connectionName only selects the provider and the database is never opened. SQL operation bodies are capped server-side.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "migrationId": {
+            "description": "Full migration ID or a unique case-insensitive suffix such as AddCustomerEmail. Call list_migrations to discover IDs.",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name used only to select the provider. Omit to use the active connection. No database connection is opened.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "migrationsAssembly": {
+            "description": "Simple name or DLL path of the migrations assembly, as for list_migrations. Paths must satisfy AssemblyLoader:AllowedRoots.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "direction": {
+            "description": "Migration direction: up (default) or down.",
+            "type": "string",
+            "default": "up"
+          }
+        },
+        "required": [
+          "contextName",
+          "migrationId"
+        ]
+      }
+    },
+    {
+      "name": "generate_migration_script",
+      "description": "Generates a preview SQL migration script between two migration IDs via IMigrator.GenerateScript. This is a preview only: the script is never executed, no transaction is opened, and the database is never mutated. Unavailable unless Migrations:Enabled is explicitly set to true on the server; always rejected for Production and ReadOnly connections. The generated SQL is capped server-side and truncated at a best-effort statement boundary when it exceeds the cap.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "fromMigration": {
+            "description": "Migration ID to script from (exclusive). Omit or pass \"0\" to script from the beginning of history.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "toMigration": {
+            "description": "Migration ID to script to (inclusive). Omit to script through the latest known migration.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "idempotent": {
+            "description": "If true (default), generate a script safe to run on an already-applied database (__EFMigrationsHistory-guarded). Not every provider supports idempotent scripts.",
+            "type": "boolean",
+            "default": true
+          },
+          "migrationsAssembly": {
+            "description": "Simple name or DLL path of the assembly containing the migrations, when they live in a different assembly than the DbContext type. Omit when migrations are in the same assembly as the DbContext (the default). A simple name is resolved as a dependency of the currently loaded target assembly; a path is loaded explicitly, subject to the same AssemblyLoader:AllowedRoots restriction as load_assembly.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName"
+        ]
+      }
+    },
+    {
+      "name": "get_entity_schema",
+      "description": "Returns the complete schema definition (properties, primary keys, foreign keys, navigations, ownership, and inheritance metadata) for one exact entity name on a DbContext. Reuses the schema already discovered by get_schema for this context if one is cached, otherwise builds and caches it on demand - a prior get_schema call is never required.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entityName": {
+            "description": "Exact entity name (CLR type name), as returned by get_schema/list_contexts entity names.",
+            "type": "string"
+          },
+          "contextName": {
+            "description": "Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "entityName"
+        ]
+      }
+    },
+    {
+      "name": "get_schema",
+      "description": "Returns a bounded, paginated page of the EF Core model (entities, properties, keys, foreign keys, navigations) for a DbContext in the currently loaded target assembly. Prefer the returned nextCursor when hasMore is true; it continues safely even if page sizes change.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry, used only to construct the context; no query is executed against the database to build the schema. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "page": {
+            "description": "One-based entity page number. Defaults to 1.",
+            "type": "integer",
+            "default": 1
+          },
+          "pageSize": {
+            "description": "Number of entities per page. Defaults to 25 and is capped at 100. Reuse the pageSize returned by the prior response when following nextPage.",
+            "type": "integer",
+            "default": 25
+          },
+          "cursor": {
+            "description": "Optional opaque continuation returned as nextCursor. Supply it alone to continue without depending on the caller's page size; it cannot be combined with page/pageSize changes.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_entity",
+      "description": "Inserts one metadata-validated entity into a Development ReadWrite connection. This destructive tool is disabled unless EntityMutations:Enabled is explicitly true; it always rejects Production and ReadOnly connections.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "entity": {
+            "description": "CLR type name of the entity to insert.",
+            "type": "string"
+          },
+          "values": {
+            "description": "Values for writable scalar properties.",
+            "type": "object"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName",
+          "entity",
+          "values"
+        ]
+      }
+    },
+    {
+      "name": "list_assembly_candidates",
+      "description": "Discovers compiled project assemblies under a workspace, ordered by the recommended selection: assemblies whose metadata suggests they contain a DbContext-derived type are ranked first, then Debug outputs are preferred over other configurations and Release, then newest/highest-TFM as tie-breakers. Pass any returned assemblyPath to load_assembly to switch targets. In monorepos with many projects/build configurations, results are grouped per project by default (one representative candidate per project, with an otherBuildsOfThisProject count) - set includeAllBuilds to true to see every Configuration/TFM combination individually. Use pathFilter (a case-insensitive substring match against each candidate's projectPath) to narrow results to a specific area of the workspace, e.g. pathFilter: \"MyApp.Data\" instead of grepping the full output.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workspacePath": {
+            "description": "Absolute path to the workspace or repository to inspect.",
+            "type": "string"
+          },
+          "pathFilter": {
+            "description": "Optional case-insensitive substring to filter candidates by their projectPath (e.g. a project or folder name). Omit to return all projects.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "includeAllBuilds": {
+            "description": "When false (default), only one representative candidate per project is returned (the preferred build, or the best match if pathFilter narrows to that project), with otherBuildsOfThisProject noting how many other Configuration/TFM builds exist. Set to true to list every build of every project individually.",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "workspacePath"
+        ]
+      }
+    },
+    {
+      "name": "list_connections",
+      "description": "Lists the connections currently registered in the server's connection registry, including each connection's database provider, access mode, environment (Development/Staging/Production), source (Explicit or ApplicationFactory - see docs/development/startup-derived-connections.md), whether it is a production connection (always read-only, swap-protected), and which one is currently active. Connection strings are never exposed. The registry re-reads its configuration source when that source changed on disk, so a connection added while the server is running appears here without a restart; if an expected connection is still missing, call reload_connections to force a re-read before concluding it was never configured.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "list_contexts",
+      "description": "Lists the Microsoft.EntityFrameworkCore.DbContext-derived types discovered in the currently loaded target assembly, including warnings when none are found or when assembly types could not load. Pass targetName to inspect a non-default named target loaded via load_assembly; omit it to use the current default target (today's behavior).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "name": "list_entities",
+      "description": "Lists the entity CLR names and relational table names available from a DbContext without returning full schema definitions. Use get_entity_schema for one entity or get_schema when detailed model metadata is needed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "name": "list_loaded_assemblies",
+      "description": "Lists every target assembly currently registered on the server, including each target's logical name, source path, load timestamp, and whether it is the current default target used when targetName is omitted from load_assembly/list_contexts/get_schema/run_query/run_sql_query.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "list_migrations",
+      "description": "Inspects Entity Framework Core migration state for a DbContext: which migrations are known to the migration assembly, which are applied (per __EFMigrationsHistory), and which are pending. Always available on every connection, including Production and ReadOnly connections, because it only reads __EFMigrationsHistory and migration metadata (no DDL/DML). When the target database is unreachable, databaseExists is false and every known migration is reported pending with appliedStateAvailable set to false rather than presenting metadata as applied state. Mirrors 'dotnet ef migrations list': migrations[] lists every known migration in order with applied (true/false, or null when applied state is unavailable); knownMigrationCount of 0 usually means the wrong migrationsAssembly; lastAppliedMigration is the anchor for generate_migration_script fromMigration; unknownAppliedMigrations are history rows the loaded code doesn't know (database ahead of or diverged from the code); pendingMigrations[].outOfOrder is true when a pending migration sorts before lastAppliedMigration; hasPendingModelChanges mirrors 'dotnet ef migrations has-pending-model-changes' (null when it can't be computed) and doesn't need the database. When a query fails with 'Invalid column name' / 'Invalid object name' / 'no such column' / 'no such table' / 'column ... does not exist', call list_migrations (and then compare_schema) for the failing connection to check whether the database is missing migrations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "migrationsAssembly": {
+            "description": "Simple name or DLL path of the assembly containing the migrations, when they live in a different assembly than the DbContext type. Omit when migrations are in the same assembly as the DbContext (the default). A simple name is resolved as a dependency of the currently loaded target assembly; a path is loaded explicitly, subject to the same AssemblyLoader:AllowedRoots restriction as load_assembly.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName"
+        ]
+      }
+    },
+    {
+      "name": "load_assembly",
+      "description": "Loads (or reloads) a compiled target .NET project's assembly (its bin/<Configuration>/<TFM>/*.dll output) into an isolated, collectible AssemblyLoadContext, replacing any previously loaded assembly under the same target. Returns warnings when no DbContexts are found or when assembly types could not load. Call this before list_contexts/get_schema/run_query, or again after rebuilding the target project. Pass targetName to register/replace an additional named target instead of the default one, so multiple compiled assemblies can be loaded and addressed simultaneously; omit it to preserve today's single-target behavior.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "assemblyPath": {
+            "description": "Absolute or relative path to the target project's compiled assembly DLL.",
+            "type": "string"
+          },
+          "targetName": {
+            "description": "Optional logical name to register this assembly under, so it can be addressed later via targetName without disturbing other loaded targets. Omit to load/replace the default target (today's behavior).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "assemblyPath"
+        ]
+      }
+    },
+    {
+      "name": "onboard",
+      "description": "Reports and optionally installs the optional agent integrations that ship with this MCP server: lifecycle hooks (announce this server at session start, remind you to validate EF Core LINQ with it after writing a query) and agent skills (notably a feedback skill that turns a bad experience with this server into a self-contained GitHub issue with no private code in it). Call this with apply=false to see what is available and what is already installed - that is read-only and safe. Installing via apply=true additionally requires the server-side Onboarding:AllowInstall setting; when it is off, report the suggested command and let the user run it themselves. Only use apply=true after the user has explicitly asked for the setup, because it writes configuration files into their repository or home directory.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workspacePath": {
+            "description": "Absolute path to the workspace or repository to inspect or install into. Omit to use the server's working directory.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "apply": {
+            "description": "When false (default), only report status. When true, install the selected components.",
+            "type": "boolean",
+            "default": false
+          },
+          "scope": {
+            "description": "Install destination: 'workspace' (default; repo-local files you can commit for your team) or 'user' (home directory; applies to every repository).",
+            "type": "string",
+            "default": "workspace"
+          },
+          "what": {
+            "description": "What to install: 'hooks', 'skills', or 'all' (default). Ignored when apply is false.",
+            "type": "string",
+            "default": "all"
+          },
+          "force": {
+            "description": "When true, replace an existing dotnet-efcore-mcp install instead of leaving it as-is.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "name": "preview_query_sql",
+      "description": "Previews the SQL a run_query expression would issue, without executing it: the ToQueryString() call itself never opens a database connection, runs a command, or reads/writes rows - however, a caller-supplied expression may force enumeration or other side effects before that point. Accepts the exact same LINQPad-style expression syntax as run_query, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). Only queries whose final value is an unexecuted IQueryable have SQL to preview; scalar/element results (Count, FirstOrDefault, Sum, ...), already-materialized results (.ToList()), and operators with no SQL translation (Zip) are rejected - use run_query for those instead. Preview compilation runs in the configured isolated query host unless QueryExecution:Mode is InProcess, and is available for every connection run_query supports, including ApplicationFactory connections (which require an isolated mode). Optionally accepts include, with the same syntax and validation as run_query's include parameter, to preview the SQL including the filtered/capped Include()/ThenInclude() calls it would issue.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "query": {
+            "description": "LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "include": {
+            "description": "Optional dot-separated EF navigation paths to include, e.g. [\"Orders\", \"Orders.OrderLines\"]. Same validation and capping rules as run_query's include parameter.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          }
+        },
+        "required": [
+          "contextName",
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "reload_connections",
+      "description": "Forces the server to re-read its connection registry configuration and reports which connection names were added or removed relative to the previously loaded set, plus the refreshed connection list (same redacted shape as list_connections; connection strings are never exposed). Call this when a connection you expect is absent from list_connections - for example because it was added to the user-secrets store or an environment variable after this server started - instead of concluding the connection does not exist or asking the user to restart their MCP client. Read-only with respect to the database: it opens no connection and runs no query. The active connection selected by swap_connection is preserved when it still exists after the reload.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "run_query",
+      "description": "Executes a safe, read-only LINQPad-style C# expression rooted at a public DbSet property on the selected DbContext. For example: Customers.Where(c => c.Age > 18).Select(c => c.Name). A terminal call like .ToList()/.FirstOrDefault() is never required: IQueryable results are materialized and capped server-side at 50 rows by default, up to a configured maximum of 200 (scalar aggregates/element operators such as Count/FirstOrDefault/Single/Any return single values; already-materialized results like .ToList() return as-is without capping). Add an explicit OrderBy() when using Skip()/Take() to ensure stable ordering. Cursor pagination requires an explicit OrderBy and cannot be combined with Skip. The full LINQPad surface is supported: Where, Select, GroupBy, ordering (OrderBy/OrderByDescending/ThenBy/ThenByDescending), Skip, Take, Distinct, Count, LongCount, Sum, Average, Min, Max, First, FirstOrDefault, Single, SingleOrDefault, Any, All, Join, GroupJoin, SelectMany, Zip, and the set operators Concat/Union/Except/Intersect (which may reference another public DbSet by name, e.g. Customers.Select(c => c.Name).Union(Orders.Select(o => o.OwnerName))). The response includes hasMoreRows: true when at least one further row exists beyond the returned page (rows/rowCount are capped at effectiveTake for IQueryable results); it is false for take:0, scalar results, and already-materialized collections. Optionally accepts include: an array of dot-separated EF navigation paths (e.g. [\"Orders\", \"Orders.OrderLines\"]) rooted at the query's entity type; each path is validated against the EF model before execution (unknown/scalar/duplicate/cyclic paths, or paths exceeding the server-configured max depth/count, are rejected). Included collections are ordered deterministically by primary key and capped server-side (database-side, via a filtered Take()) at the configured per-parent maximum; included reference navigations are not capped. When include is supplied, all mapped scalar properties are returned along with only the requested navigation branches per row.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "query": {
+            "description": "LINQPad-style expression rooted at a public DbSet property, e.g. Customers.Where(c => c.Age > 18).Select(c => c.Name). ",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "include": {
+            "description": "Optional dot-separated EF navigation paths to include, e.g. [\"Orders\", \"Orders.OrderLines\"]. Each included collection is capped server-side at a configured per-parent maximum and ordered deterministically by primary key.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null
+          },
+          "pagination": {
+            "description": "Optional forward-only keyset pagination. Use { mode: \"cursor\" } for the first page and pass the returned nextCursor as cursor for later pages. Requires an explicitly ordered entity query and cannot be combined with Skip().",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "mode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName",
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "run_sql_query",
+      "description": "Executes a parameterized raw SQL command against a Development ReadWrite connection. This potentially destructive tool is unavailable unless RawSqlExecution:Enabled is explicitly set to true on the server; it is always rejected for Production and ReadOnly connections. Use @p0, @p1, ... placeholders for values provided through parameters. Result rows are capped server-side.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "sql": {
+            "description": "Raw SQL command text. Use @p0, @p1, ... for values rather than embedding them in this string.",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "parameters": {
+            "description": "Positional parameter values referenced by SQL placeholders @p0, @p1, ...",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {},
+            "default": null
+          },
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName",
+          "sql"
+        ]
+      }
+    },
+    {
+      "name": "search_schema",
+      "description": "Searches the schema for a DbContext, matching entity names, property names, and relationship (navigation) names against a case-insensitive substring query. Reuses the schema already discovered by get_schema for this context if one is cached, otherwise builds and caches it on demand - a prior get_schema call is never required. Returns compact matches only (not full entity definitions); use get_entity_schema for a complete slice.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "Optional DbContext short name or fully qualified CLR type name. Omit only when the loaded assembly has exactly one DbContext.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "query": {
+            "description": "Non-empty, case-insensitive substring to match against entity, property, and relationship names.",
+            "type": "string",
+            "default": ""
+          },
+          "maxResults": {
+            "description": "Maximum number of entity matches to return. Defaults to 10 and is capped at 25.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "targetName": {
+            "description": "Optional name of a target registered via load_assembly's targetName parameter. Omit to use the current default target.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      }
+    },
+    {
+      "name": "select_target",
+      "description": "Selects which registered target assembly resolves as the default when load_assembly/list_contexts/get_schema/run_query/run_sql_query calls omit targetName. Does not unload or otherwise affect any other registered target.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "targetName": {
+            "description": "Logical target name previously registered via load_assembly's targetName parameter.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "targetName"
+        ]
+      }
+    },
+    {
+      "name": "swap_connection",
+      "description": "Swaps the server's active connection to the named connection, changing which connection subsequent get_schema/run_query calls default to when no explicit connectionName is supplied. For production connections (environment = Production), this is refused unless allowProduction is set to true.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry to make active.",
+            "type": "string"
+          },
+          "allowProduction": {
+            "description": "Set to true to allow making a production connection active (for intentionally running diagnostics/read-only queries against production).",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "connectionName"
+        ]
+      }
+    },
+    {
+      "name": "test_connection",
+      "description": "Runs a bounded, read-only connectivity probe against a registered connection: resolves the connection registry entry and constructs the requested DbContext, then checks whether the provider accepts a connection within the connection's configured command timeout. Never executes user SQL, never changes the active connection, and never returns connection strings or provider error details - only a redacted status (healthy/failed/timedOut).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName"
+        ]
+      }
+    },
+    {
+      "name": "update_entity",
+      "description": "Updates one metadata-validated entity in a Development ReadWrite connection. This destructive tool is disabled unless EntityMutations:Enabled is explicitly true; it always rejects Production and ReadOnly connections.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contextName": {
+            "description": "CLR type name of the DbContext, as returned by list_contexts.",
+            "type": "string"
+          },
+          "entity": {
+            "description": "CLR type name of the entity to update.",
+            "type": "string"
+          },
+          "key": {
+            "description": "Complete primary-key values by exact property name.",
+            "type": "object"
+          },
+          "values": {
+            "description": "Non-empty values for writable scalar properties to change.",
+            "type": "object"
+          },
+          "concurrency": {
+            "description": "Original values for every concurrency-token property, when required.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "default": null
+          },
+          "connectionName": {
+            "description": "Logical connection name from the server registry. Required whenever more than one connection is registered; if omitted and exactly one connection is registered, that connection is used.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "contextName",
+          "entity",
+          "key",
+          "values"
+        ]
+      }
+    }
+  ]
+}

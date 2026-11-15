@@ -14,6 +14,11 @@ breakdown, implementation status, and where to track outstanding work.
   part of the test run so tests can load its real compiled DLL.
 - Build/test: `dotnet build dotnet-efcore-mcp.slnx` / `dotnet test dotnet-efcore-mcp.slnx`
   (auto-discovered from the repo root; see [README.md](./README.md#build--test)).
+- `McpToolsListSnapshotTests` starts the built server and compares its `tools/list`, server name
+  and instructions with `tests/DotnetEfCoreMcp.Server.Tests/Tools/Snapshots/tools-list.json`. After
+  an intentional change to the advertised surface, regenerate it with
+  `$env:UPDATE_SNAPSHOTS = '1'; dotnet test tests/DotnetEfCoreMcp.Server.Tests --filter-class "*McpToolsListSnapshotTests"`
+  and commit the file.
 
 ## Feature and module guides
 
