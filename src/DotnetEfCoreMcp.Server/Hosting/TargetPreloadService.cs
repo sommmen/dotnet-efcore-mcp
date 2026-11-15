@@ -11,6 +11,11 @@ namespace DotnetEfCoreMcp.Server.Hosting;
 /// ahead of every other hosted service so targets are loaded before the reload watcher and the transport
 /// start. It also runs for CLI invocations, where an explicit <c>--assembly</c> that cannot be loaded
 /// fails the command instead of only being logged.</summary>
+/// <param name="services">Root service provider the targets are loaded into.</param>
+/// <param name="configuration">Configuration that names the configured targets.</param>
+/// <param name="loggerFactory">Factory for the preload logger.</param>
+/// <param name="failOnConfiguredAssemblyError">Whether a configured assembly that cannot be loaded
+/// fails startup instead of only being logged.</param>
 /// <param name="implicitWorkspacePath">Workspace to discover in when nothing else names a target and the
 /// session remembers none. The CLI passes the current directory.</param>
 public sealed class TargetPreloadService(
