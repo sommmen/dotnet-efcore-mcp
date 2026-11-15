@@ -47,8 +47,10 @@ internal static class ToolSessionState
             return;
         }
 
+        // allowProduction is deliberately not persisted, so a protected connection must be opted into again.
+        // Writing false also overwrites a flag persisted by older versions.
         session.Set(ToolSessionKeys.ActiveConnection, connectionName);
-        session.Set(ToolSessionKeys.ActiveConnectionAllowProduction, allowProduction);
+        session.Set(ToolSessionKeys.ActiveConnectionAllowProduction, false);
     }
 
     public static string GetOrCreateCursorKey(IAgentSession session)
