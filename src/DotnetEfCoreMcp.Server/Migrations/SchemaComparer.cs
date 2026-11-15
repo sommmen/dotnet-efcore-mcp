@@ -324,7 +324,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
     /// default to fill existing rows (a <c>DefaultValueSql</c> the model doesn't declare, and the
     /// resulting <c>ValueGenerated</c> Never/OnAdd mismatch on the same column), SQL expressions the
     /// database merely reformatted, client-only delete behaviors the database cannot record, and the
-    /// nullability the catalog reports for computed columns.</summary>
+    /// nullability and type the database infers for computed columns.</summary>
     internal static IEnumerable<FlatEntry> WithoutComparisonNoise(IEnumerable<FlatEntry> entries, IReadOnlySet<(string Table, string Column)>? computedColumns = null)
     {
         var list = entries.ToList();
@@ -336,7 +336,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
             .ToHashSet();
 
         return list.Where(e => !IsEquivalentDifference(e) && !(e.State == CompareState.Different
-            && ((e.Entry.Attribute == nameof(CompareAttributes.Nullability) && computedColumns is not null && e.Entry.Column is not null && computedColumns.Contains((e.Entry.Table, e.Entry.Column)))
+            && ((e.Entry.Attribute is nameof(CompareAttributes.Nullability) or nameof(CompareAttributes.ColumnType) && computedColumns is not null && e.Entry.Column is not null && computedColumns.Contains((e.Entry.Table, e.Entry.Column)))
                 || (defaultedColumns.Contains((e.Entry.Table, e.Entry.Column))
                     && (e.Entry.Attribute == nameof(CompareAttributes.DefaultValueSql)
                         || (e.Entry.Attribute == nameof(CompareAttributes.ValueGenerated) && e.Entry.Expected == "Never" && e.Entry.Found == "OnAdd"))))));
@@ -403,6 +403,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
         while (text != previous);
 
         text = Regex.Replace(text, @"\s+", string.Empty);
+        text = RemoveLeftOperandGroups(text);
         while (text.Length > 1 && text[0] == '(' && text[^1] == ')' && AreOuterParenthesesPaired(text))
         {
             text = text[1..^1];
@@ -410,6 +411,45 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
 
         return text;
     }
+    /// <summary>Removes parentheses around the left operand of <c>+</c>/<c>-</c> when that operand starts an
+    /// expression, the grouping SQL Server adds when it stores <c>a+b+c</c> as <c>((a)+b)+c</c>. Additive operators
+    /// are left-associative, so the grouping never changes meaning; a group after another operator is kept.</summary>
+    private static string RemoveLeftOperandGroups(string text)
+    {
+        var index = 0;
+        while (index < text.Length)
+        {
+            if (text[index] == '(' && (index == 0 || text[index - 1] is '(' or ','))
+            {
+                var close = FindClosingParenthesis(text, index);
+                if (close > 0 && close + 1 < text.Length && text[close + 1] is '+' or '-')
+                {
+                    text = string.Concat(text.AsSpan(0, index), text.AsSpan(index + 1, close - index - 1), text.AsSpan(close + 1));
+                    continue;
+                }
+            }
+
+            index++;
+        }
+
+        return text;
+    }
+
+    private static int FindClosingParenthesis(string text, int open)
+    {
+        var depth = 0;
+        for (var index = open; index < text.Length; index++)
+        {
+            depth += text[index] == '(' ? 1 : text[index] == ')' ? -1 : 0;
+            if (depth == 0)
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
     private static string StripParentheses(string text) => text.Replace("(", string.Empty).Replace(")", string.Empty);
 
     private static bool AreParenthesesBalanced(string text)

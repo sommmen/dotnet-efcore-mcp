@@ -322,7 +322,7 @@ public static class ServerComposition
             }
             catch (AssemblyLoadFailedException ex)
             {
-                logger.LogWarning(ex, "Failed to load configured TargetAssemblyPath '{Path}' at startup; use the load_assembly tool once the issue is resolved.", configuredAssemblyPath);
+                logger.LogWarning("Failed to load configured TargetAssemblyPath '{Path}' at startup; use the load_assembly tool once the issue is resolved. {Reason}", configuredAssemblyPath, ex.Message);
             }
         }
 
@@ -348,7 +348,7 @@ public static class ServerComposition
             }
             catch (AssemblyLoadFailedException ex)
             {
-                logger.LogWarning(ex, "Failed to load configured AssemblyLoader:Targets entry '{TargetName}' at startup ('{Path}'); use the load_assembly tool once the issue is resolved.", targetName, targetOptions.Path);
+                logger.LogWarning("Failed to load configured AssemblyLoader:Targets entry '{TargetName}' at startup ('{Path}'); use the load_assembly tool once the issue is resolved. {Reason}", targetName, targetOptions.Path, ex.Message);
             }
         }
     }
@@ -367,7 +367,7 @@ public static class ServerComposition
         }
         catch (AssemblyDiscoveryException ex)
         {
-            logger.LogWarning(ex, "Could not discover target assemblies under workspace {WorkspacePath}.", workspacePath);
+            logger.LogWarning("Could not discover target assemblies under workspace {WorkspacePath}: {Reason}", workspacePath, ex.Message);
             return;
         }
 
@@ -395,7 +395,7 @@ public static class ServerComposition
             }
             catch (AssemblyLoadFailedException ex)
             {
-                logger.LogInformation(ex, "Skipped candidate {AssemblyPath}: it could not be loaded.", candidate.AssemblyPath);
+                logger.LogInformation("Skipped candidate {AssemblyPath}: it could not be loaded. {Reason}", candidate.AssemblyPath, ex.Message);
             }
         }
 

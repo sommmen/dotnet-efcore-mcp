@@ -70,6 +70,8 @@ public sealed class SchemaComparerTests : IDisposable
     [InlineData("[OrderNumberSnapshot] + '.' + CONVERT(varchar(11), [Index])", "[OrderNumberSnapshot]+'.')+CONVERT([varchar](11),[Index]")]
     [InlineData("MONTH(SWITCHOFFSET(OrderDateTime, '+02:00'))", "datepart(month,switchoffset([OrderDateTime],'+02:00'))")]
     [InlineData("CONVERT(bit, CASE WHEN [IsCompany] = 1 OR NULLIF(LTRIM(RTRIM([CompanyName])), N'') IS NOT NULL THEN 1 ELSE 0 END)", "CONVERT([bit],case when [IsCompany]=(1) OR nullif(ltrim(rtrim([CompanyName])),N'') IS NOT NULL then (1) else (0) end)")]
+    [InlineData("\n\t\tCASE WHEN a <> '' THEN a ELSE '' END\n\t\t+\n\t\tCASE WHEN b <> '' THEN ' '+b ELSE '' END\n\t\t+\n\t\tCASE WHEN c <> '' THEN ' '+c ELSE '' END", "(case when [a]<>'' then [a] else '' end+case when [b]<>'' then ' '+[b] else '' end)+case when [c]<>'' then ' '+[c] else '' end")]
+    [InlineData("[A] + [B] - [C] + [D]", "(([A]+[B])-[C])+[D]")]
     public void SqlExpressionsMatch_TreatsDatabaseReformattingAsEquivalent(string expected, string found) =>
         Assert.True(SchemaComparer.SqlExpressionsMatch(expected, found));
 
@@ -78,8 +80,26 @@ public sealed class SchemaComparerTests : IDisposable
     [InlineData("YEAR(OrderDateTime)", "datepart(month,[OrderDateTime])")]
     [InlineData("[A] + [B]", "[A] - [B]")]
     [InlineData("[A] * ([B] + [C])", "[A] * [B] + [C]")]
+    [InlineData("[A] - ([B] + [C])", "[A] - [B] + [C]")]
+    [InlineData("([A] + [B]) * [C]", "[A] + [B] * [C]")]
     public void SqlExpressionsMatch_KeepsGenuinelyDifferentExpressions(string expected, string found) =>
         Assert.False(SchemaComparer.SqlExpressionsMatch(expected, found));
+
+    [Fact]
+    public void WithoutComparisonNoise_DropsInferredTypeAndNullabilityOfComputedColumnsOnly()
+    {
+        var entries = new[]
+        {
+            Different("FullName", "ColumnType", "nvarchar(max)", "nvarchar(4000)"),
+            Different("FullName", "Nullability", "NOT NULL", "NULL"),
+            Different("DisplayName", "ColumnType", "nvarchar(max)", "nvarchar(100)"),
+        };
+
+        var kept = SchemaComparer.WithoutComparisonNoise(entries, new HashSet<(string, string)> { ("OrderLines", "FullName") })
+            .Select(e => e.Entry.Column).ToList();
+
+        Assert.Equal(["DisplayName"], kept);
+    }
 
     [Fact]
     public void WithoutComparisonNoise_DropsReformattedSqlButKeepsChangedSql()
