@@ -15,6 +15,10 @@ public sealed class HookSessionState
 
     /// <summary>When the last reminder was emitted, used to enforce the cooldown.</summary>
     public DateTimeOffset? LastReminderAt { get; set; }
+
+    /// <summary>Whether the agent last reached this tool through its CLI rather than MCP, so reminders
+    /// name shell commands instead of MCP tools.</summary>
+    public bool UsesCli { get; set; }
 }
 
 /// <summary>
