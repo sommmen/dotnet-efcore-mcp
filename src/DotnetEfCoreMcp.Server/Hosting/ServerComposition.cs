@@ -28,8 +28,15 @@ public static class ServerComposition
     /// <summary>Registers configuration layering, logging, options and services.
     /// <paramref name="includeHostedServices"/> only controls the <see cref="IHostedService"/>
     /// registrations (assembly reload watcher, query host pool, update notification); the
-    /// singletons behind them are always registered.</summary>
-    public static void AddEfCoreServices(HostApplicationBuilder builder, bool includeHostedServices = true)
+    /// singletons behind them are always registered. <paramref name="overrideConfiguration"/> runs after
+    /// the secrets and environment layers so a caller can pin values that must beat them (the CLI's
+    /// explicit flags). <paramref name="cursorSigningKeyFactory"/> supplies a stable
+    /// <c>run_query</c> cursor key when <c>QueryExecution:CursorSigningKey</c> is not configured.</summary>
+    public static void AddEfCoreServices(
+        HostApplicationBuilder builder,
+        bool includeHostedServices = true,
+        Action<ConfigurationManager>? overrideConfiguration = null,
+        Func<IServiceProvider, string>? cursorSigningKeyFactory = null)
     {
         // Server-side secrets: .NET user-secrets for local/dev (always loaded, not just when
         // DOTNET_ENVIRONMENT=Development, so behavior is predictable regardless of how the server is
@@ -47,6 +54,7 @@ public static class ServerComposition
         UserSecretsStore.EnsureDirectoryExists(typeof(ServerComposition).Assembly);
         builder.Configuration.AddUserSecrets(typeof(ServerComposition).Assembly, optional: true);
         builder.Configuration.AddEnvironmentVariables(prefix: "DOTNETEFCOREMCP_");
+        overrideConfiguration?.Invoke(builder.Configuration);
 
         // stdio is the MCP transport, so stdout is reserved for the JSON-RPC stream - all logs must go to
         // stderr.
@@ -79,7 +87,15 @@ public static class ServerComposition
         {
             queryExecutionOptions = queryExecutionOptions with { OutOfProcessHostPath = QueryHostLocator.TryGetBundledHostPath() };
         }
-        builder.Services.AddSingleton(queryExecutionOptions);
+        if (cursorSigningKeyFactory is not null && string.IsNullOrWhiteSpace(builder.Configuration["QueryExecution:CursorSigningKey"]))
+        {
+            var configuredQueryExecutionOptions = queryExecutionOptions;
+            builder.Services.AddSingleton(services => configuredQueryExecutionOptions with { CursorSigningKey = cursorSigningKeyFactory(services) });
+        }
+        else
+        {
+            builder.Services.AddSingleton(queryExecutionOptions);
+        }
         builder.Services.AddSingleton(builder.Configuration.GetSection("QueryCompilation").Get<QueryCompilationOptions>() ?? new QueryCompilationOptions());
         builder.Services.AddSingleton<QueryCompiler>();
         builder.Services.AddSingleton<RoslynQueryExecutor>();
@@ -197,9 +213,12 @@ public static class ServerComposition
     }
 
     /// <summary>Registers the MCP server with its stdio transport and tool set.</summary>
-    public static void AddEfCoreMcpServer(HostApplicationBuilder builder)
+    public static void AddEfCoreMcpServer(HostApplicationBuilder builder) => AddEfCoreMcpServer(builder.Services);
+
+    /// <inheritdoc cref="AddEfCoreMcpServer(HostApplicationBuilder)"/>
+    public static void AddEfCoreMcpServer(IServiceCollection services)
     {
-        builder.Services
+        services
             .AddMcpServer(options =>
             {
                 options.ServerInstructions =
@@ -238,15 +257,17 @@ public static class ServerComposition
         // afterwards, so a client that writes a request and immediately closes stdin - a scripted or
         // short-lived session - never receives the response it is waiting for. See
         // FlushOnDisconnectStdioTransport.
-        builder.Services.AddSingleton<ITransport>(services => new FlushOnDisconnectStdioTransport(
+        services.AddSingleton<ITransport>(provider => new FlushOnDisconnectStdioTransport(
             Console.OpenStandardInput(),
             Console.OpenStandardOutput(),
             "DotnetEfCoreMcp.Server",
-            services.GetService<ILoggerFactory>()));
+            provider.GetService<ILoggerFactory>()));
     }
 
-    /// <summary>Loads the configured target assemblies after the host is built.</summary>
-    public static void PreloadTargets(IServiceProvider services, IConfiguration configuration, ILogger logger)
+    /// <summary>Loads the configured target assemblies after the host is built. With
+    /// <paramref name="throwOnConfiguredAssemblyFailure"/> a <c>TargetAssemblyPath</c> that cannot be
+    /// loaded throws instead of only logging, so a one-shot caller can fail fast.</summary>
+    public static void PreloadTargets(IServiceProvider services, IConfiguration configuration, ILogger logger, bool throwOnConfiguredAssemblyFailure = false)
     {
         // Optional startup convenience: if a target assembly path is configured, load it immediately so
         // list_contexts/get_schema/run_query work without a separate load_assembly call first. This is
@@ -305,6 +326,10 @@ public static class ServerComposition
             {
                 loader.Load(configuredAssemblyPath);
                 logger.LogInformation("Loaded target assembly from configured TargetAssemblyPath: {Path}", configuredAssemblyPath);
+            }
+            catch (AssemblyLoadFailedException) when (throwOnConfiguredAssemblyFailure)
+            {
+                throw;
             }
             catch (AssemblyLoadFailedException ex)
             {

@@ -47,9 +47,11 @@ public sealed class EfCoreMcpTools(
     IMcpMetrics metrics,
     OnboardingOptions? onboardingOptions = null,
     UpdateNotificationService? updateNotifications = null,
-    SchemaComparer? schemaComparer = null)
+    SchemaComparer? schemaComparer = null,
+    IToolSurfaceHints? surfaceHints = null)
 {
     private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
+    private readonly IToolSurfaceHints surfaceHints = surfaceHints ?? ToolSurfaceHints.Mcp;
     private readonly SchemaComparer _schemaComparer = schemaComparer ?? new SchemaComparer(migrationsOptions, NullLogger<SchemaComparer>.Instance);
 
     internal EfCoreMcpTools(
@@ -1396,7 +1398,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             return assemblyLoader.Get(targetName)
-                ?? throw new McpException("No target assembly is loaded yet. Call load_assembly with the path to a compiled target project's DLL first.");
+                ?? throw new McpException(surfaceHints.NoTargetLoaded);
         }
         catch (UnknownAssemblyTargetException ex)
         {
@@ -1687,7 +1689,7 @@ public sealed class EfCoreMcpTools(
                 var active = connectionRegistry.ActiveConnection;
                 if (active is null)
                 {
-                    throw new McpException("No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections; call reload_connections if one you configured is missing from it.)");
+                    throw new McpException(surfaceHints.NoActiveConnection);
                 }
                 entry = active;
             }
