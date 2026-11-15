@@ -33,7 +33,7 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.RunQuery("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ApplicationFactory", exception.Message, StringComparison.Ordinal);
         Assert.Contains("OutOfProcess", exception.Message, StringComparison.Ordinal);
@@ -46,7 +46,7 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.PreviewQuerySql("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.PreviewQuerySql("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ApplicationFactory", exception.Message, StringComparison.Ordinal);
         Assert.Contains("OutOfProcess", exception.Message, StringComparison.Ordinal);
@@ -66,7 +66,7 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
             var tools = CreateTools(mode, outOfProcessHostPath: FixturePaths.QueryHostDllPath);
             tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
-            var json = await tools.PreviewQuerySql("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)");
+            var json = await tools.PreviewQuerySql("ApplicationFactoryDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Contains("SELECT", json, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Customers", json, StringComparison.Ordinal);
@@ -106,7 +106,7 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunSqlQuery("ApplicationFactoryDbContext", "SELECT 1"));
+            () => tools.RunSqlQuery("ApplicationFactoryDbContext", "SELECT 1", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ApplicationFactory", exception.Message, StringComparison.Ordinal);
     }
@@ -118,7 +118,7 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.ListMigrations("ApplicationFactoryDbContext"));
+            () => tools.ListMigrations("ApplicationFactoryDbContext", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ApplicationFactory", exception.Message, StringComparison.Ordinal);
     }
@@ -130,7 +130,7 @@ public sealed class EfCoreMcpToolsApplicationFactoryTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.GenerateMigrationScript("ApplicationFactoryDbContext"));
+            () => tools.GenerateMigrationScript("ApplicationFactoryDbContext", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ApplicationFactory", exception.Message, StringComparison.Ordinal);
     }

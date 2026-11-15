@@ -71,7 +71,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools();
 
-        var json = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests");
+        var json = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -252,7 +252,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools(accessMode: ConnectionAccessMode.ReadOnly);
 
-        var json = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests");
+        var json = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         Assert.True(document.RootElement.TryGetProperty("pendingMigrations", out _));
@@ -354,7 +354,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools(new MigrationsOptions { Enabled = false });
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Migrations:Enabled", exception.Message, StringComparison.Ordinal);
@@ -367,7 +367,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools(new MigrationsOptions { Enabled = true }, environment: EnvironmentType.Production);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("production", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -377,7 +377,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools(new MigrationsOptions { Enabled = true }, accessMode: ConnectionAccessMode.ReadOnly);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ReadWrite", exception.Message, StringComparison.Ordinal);
     }
@@ -387,7 +387,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools(new MigrationsOptions { Enabled = true });
 
-        var json = await tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", idempotent: false);
+        var json = await tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", idempotent: false, cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -408,7 +408,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     {
         var tools = CreateTools(new MigrationsOptions { Enabled = true, MaxScriptLength = 50 });
 
-        var json = await tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", idempotent: false);
+        var json = await tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", idempotent: false, cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -422,7 +422,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         var tools = CreateTools(new MigrationsOptions { Enabled = true });
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", idempotent: true));
+            () => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", idempotent: true, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("idempotent: false", exception.Message, StringComparison.Ordinal);
         // Issue #85: the provider's own limitation text is now appended as the cause, since that is
@@ -437,7 +437,7 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
         var tools = CreateTools(new MigrationsOptions { Enabled = true });
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", fromMigration: "does-not-exist", idempotent: false));
+            () => tools.GenerateMigrationScript("SampleAppDbContext", "MigrationsTests", fromMigration: "does-not-exist", idempotent: false, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("list_migrations", exception.Message, StringComparison.Ordinal);
     }

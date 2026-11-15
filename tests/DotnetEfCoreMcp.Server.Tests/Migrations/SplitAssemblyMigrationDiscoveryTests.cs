@@ -86,7 +86,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     {
         var tools = CreateTools();
 
-        var json = await tools.ListMigrations("SplitDbContext", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath);
+        var json = await tools.ListMigrations("SplitDbContext", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -211,7 +211,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
     {
         var tools = CreateTools();
 
-        var json = await tools.ListMigrations("SplitDbContext", "MigrationsTests");
+        var json = await tools.ListMigrations("SplitDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         Assert.Equal(0, document.RootElement.GetProperty("pendingMigrations").GetArrayLength());
@@ -227,7 +227,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
         var tools = CreateTools(assemblyLoaderOptions: new AssemblyLoaderOptions { AllowedRoots = [contextAppRoot] });
 
         var exception = await Assert.ThrowsAsync<McpException>(() =>
-            tools.ListMigrations("SplitDbContext", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath));
+            tools.ListMigrations("SplitDbContext", "MigrationsTests", FixturePaths.SplitMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("outside the configured allowed roots", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -434,7 +434,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
         var tools = CreateTools();
 
         var exception = await Assert.ThrowsAsync<McpException>(() =>
-            tools.ListMigrations("SplitDbContext", "MigrationsTests", "NotARealAssembly"));
+            tools.ListMigrations("SplitDbContext", "MigrationsTests", "NotARealAssembly", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("could not be resolved", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -446,7 +446,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
         var missingPath = Path.Combine(Path.GetDirectoryName(FixturePaths.SplitMigrationsAppDllPath)!, "DoesNotExist.dll");
 
         var exception = await Assert.ThrowsAsync<McpException>(() =>
-            tools.ListMigrations("SplitDbContext", "MigrationsTests", missingPath));
+            tools.ListMigrations("SplitDbContext", "MigrationsTests", missingPath, cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("not found", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -460,7 +460,7 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
             "SplitDbContext",
             "MigrationsTests",
             idempotent: false,
-            migrationsAssembly: FixturePaths.SplitMigrationsAppDllPath);
+            migrationsAssembly: FixturePaths.SplitMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;

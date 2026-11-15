@@ -145,7 +145,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("not permitted", exception.Message, StringComparison.Ordinal);
     }
@@ -157,7 +157,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("Customer", exception.Message, StringComparison.Ordinal);
         Assert.Contains("not permitted", exception.Message, StringComparison.Ordinal);
@@ -173,7 +173,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.InsertEntity("SampleAppDbContext", "Customer", Values("Name", "Ada", "Age", 37)));
+            () => tools.InsertEntity("SampleAppDbContext", "Customer", Values("Name", "Ada", "Age", 37), cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("not permitted", exception.Message, StringComparison.Ordinal);
     }
@@ -234,7 +234,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
             setupContext.Database.EnsureCreated();
         }
 
-        var result = await tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)");
+        var result = await tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("not permitted", result, StringComparison.Ordinal);
     }
@@ -249,7 +249,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         var tools = CreateTools(allowEntities: [new EntitySelector("SampleApp.SampleAppDbContext", "Customer")]);
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
-        var result = await tools.PreviewQuerySql("SampleAppDbContext", "Customers.Select(c => c.Name)");
+        var result = await tools.PreviewQuerySql("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("not permitted", result, StringComparison.Ordinal);
         Assert.Contains("SELECT", result, StringComparison.OrdinalIgnoreCase);
@@ -262,7 +262,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.PreviewQuerySql("SampleAppDbContext", "Orders.Select(o => o.Id).Union(Customers.Select(c => c.Id))"));
+            () => tools.PreviewQuerySql("SampleAppDbContext", "Orders.Select(o => o.Id).Union(Customers.Select(c => c.Id))", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("Customer", exception.Message, StringComparison.Ordinal);
         Assert.Contains("not permitted", exception.Message, StringComparison.Ordinal);
@@ -280,7 +280,7 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Orders.Select(o => o.Id).Union(Customers.Select(c => c.Id))"));
+            () => tools.RunQuery("SampleAppDbContext", "Orders.Select(o => o.Id).Union(Customers.Select(c => c.Id))", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("Customer", exception.Message, StringComparison.Ordinal);
         Assert.Contains("not permitted", exception.Message, StringComparison.Ordinal);

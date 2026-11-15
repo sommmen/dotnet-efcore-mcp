@@ -68,7 +68,7 @@ public sealed class MigrationInspectorTests : IDisposable
     {
         using (var setupContext = NewContext())
         {
-            await setupContext.Database.MigrateAsync();
+            await setupContext.Database.MigrateAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         using var context = NewContext();
@@ -158,7 +158,7 @@ public sealed class MigrationInspectorTests : IDisposable
         // at all" that the tool must not conflate with "zero migrations applied".
         using (var setupContext = NewContext())
         {
-            await setupContext.Database.EnsureCreatedAsync();
+            await setupContext.Database.EnsureCreatedAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         using var context = NewContext();
@@ -188,7 +188,7 @@ public sealed class MigrationInspectorTests : IDisposable
 
         // Non-mutation proof: the script is generated purely from the migration assembly's known
         // metadata - it must never touch the target database itself.
-        Assert.False(await context.Database.CanConnectAsync());
+        Assert.False(await context.Database.CanConnectAsync(cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]

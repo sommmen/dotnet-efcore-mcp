@@ -29,20 +29,20 @@ public sealed class EntityMutationExecutorTests : IDisposable
     {
         using var context = NewContext();
         var insert = await _executor.ExecuteAsync(context, new EntityMutationRequest(
-            EntityMutationOperation.Insert, "Customer", Values: Values("Name", "Ada", "Age", 37, "Version", 1)), default);
+            EntityMutationOperation.Insert, "Customer", Values: Values("Name", "Ada", "Age", 37, "Version", 1)), TestContext.Current.CancellationToken);
 
         Assert.Equal("insert", insert.Operation);
         Assert.Equal(1, insert.AffectedRows);
         var id = Assert.IsType<int>(insert.Values!["Id"]);
 
         var update = await _executor.ExecuteAsync(context, new EntityMutationRequest(
-            EntityMutationOperation.Update, "Customer", Values("Id", id), Values("Age", 38), Values("Version", 1)), default);
+            EntityMutationOperation.Update, "Customer", Values("Id", id), Values("Age", 38), Values("Version", 1)), TestContext.Current.CancellationToken);
 
         Assert.Equal("update", update.Operation);
         Assert.Equal(1, update.AffectedRows);
 
         var delete = await _executor.ExecuteAsync(context, new EntityMutationRequest(
-            EntityMutationOperation.Delete, "Customer", Values("Id", id), Concurrency: Values("Version", 1)), default);
+            EntityMutationOperation.Delete, "Customer", Values("Id", id), Concurrency: Values("Version", 1)), TestContext.Current.CancellationToken);
 
         Assert.Equal("delete", delete.Operation);
         Assert.Equal(1, delete.AffectedRows);
@@ -53,7 +53,7 @@ public sealed class EntityMutationExecutorTests : IDisposable
     {
         using var context = NewContext();
         await Assert.ThrowsAsync<MutationExecutionException>(() => _executor.ExecuteAsync(context,
-            new EntityMutationRequest(EntityMutationOperation.Update, "Customer", Values("Id", 1), Values("Age", 38)), default));
+            new EntityMutationRequest(EntityMutationOperation.Update, "Customer", Values("Id", 1), Values("Age", 38)), TestContext.Current.CancellationToken));
         Assert.Empty(context.ChangeTracker.Entries());
     }
 
@@ -62,9 +62,9 @@ public sealed class EntityMutationExecutorTests : IDisposable
     {
         using var context = NewContext();
         await Assert.ThrowsAsync<MutationExecutionException>(() => _executor.ExecuteAsync(context,
-            new EntityMutationRequest(EntityMutationOperation.Update, "Customer", Values("Id", 1), Values("Id", 2), Values("Version", 1)), default));
+            new EntityMutationRequest(EntityMutationOperation.Update, "Customer", Values("Id", 1), Values("Id", 2), Values("Version", 1)), TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<MutationExecutionException>(() => _executor.ExecuteAsync(context,
-            new EntityMutationRequest(EntityMutationOperation.Update, "Customer", Values("Id", 1), Values("Orders", 2), Values("Version", 1)), default));
+            new EntityMutationRequest(EntityMutationOperation.Update, "Customer", Values("Id", 1), Values("Orders", 2), Values("Version", 1)), TestContext.Current.CancellationToken));
         Assert.Empty(context.ChangeTracker.Entries());
     }
 
@@ -73,7 +73,7 @@ public sealed class EntityMutationExecutorTests : IDisposable
     {
         using var context = NewContext();
         var result = await _executor.ExecuteAsync(context, new EntityMutationRequest(
-            EntityMutationOperation.Delete, "Customer", Values("Id", -1), Concurrency: Values("Version", 1)), default);
+            EntityMutationOperation.Delete, "Customer", Values("Id", -1), Concurrency: Values("Version", 1)), TestContext.Current.CancellationToken);
 
         Assert.True(result.IsConflict);
         Assert.Equal(0, result.AffectedRows);

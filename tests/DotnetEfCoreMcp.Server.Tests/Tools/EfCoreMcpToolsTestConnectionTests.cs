@@ -70,7 +70,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
             setupContext.Database.EnsureCreated();
         }
 
-        using var document = JsonDocument.Parse(await tools.TestConnection("SampleAppDbContext", "Primary"));
+        using var document = JsonDocument.Parse(await tools.TestConnection("SampleAppDbContext", "Primary", cancellationToken: TestContext.Current.CancellationToken));
         var root = document.RootElement;
 
         Assert.Equal("SampleAppDbContext", root.GetProperty("contextName").GetString());
@@ -98,7 +98,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
             setupContext.Database.EnsureCreated();
         }
 
-        using var document = JsonDocument.Parse(await tools.TestConnection("SampleAppDbContext"));
+        using var document = JsonDocument.Parse(await tools.TestConnection("SampleAppDbContext", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal("Primary", document.RootElement.GetProperty("connectionName").GetString());
         Assert.Equal("healthy", document.RootElement.GetProperty("status").GetString());
@@ -112,7 +112,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
         assemblyLoader.Load(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.TestConnection("SampleAppDbContext", "DoesNotExist"));
+            () => tools.TestConnection("SampleAppDbContext", "DoesNotExist", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("DoesNotExist", exception.Message, StringComparison.Ordinal);
     }
@@ -152,7 +152,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
             new EntityMutationExecutor(NullLogger<EntityMutationExecutor>.Instance));
         assemblyLoader.Load(FixturePaths.SampleAppDllPath);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.TestConnection("SampleAppDbContext"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.TestConnection("SampleAppDbContext", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("No connection is active", exception.Message, StringComparison.Ordinal);
     }
@@ -168,7 +168,7 @@ public sealed class EfCoreMcpToolsTestConnectionTests
         var tools = CreateTools(db, out var assemblyLoader);
         assemblyLoader.Load(FixturePaths.SampleAppDllPath);
 
-        using var document = JsonDocument.Parse(await tools.TestConnection("SampleAppDbContext", "Primary"));
+        using var document = JsonDocument.Parse(await tools.TestConnection("SampleAppDbContext", "Primary", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Equal("failed", document.RootElement.GetProperty("status").GetString());
         Assert.DoesNotContain(db.ConnectionString, document.RootElement.GetRawText(), StringComparison.Ordinal);

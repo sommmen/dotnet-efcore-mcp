@@ -95,9 +95,9 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
 
         var exception = await Assert.ThrowsAsync<McpException>(() => operation switch
         {
-            "insert" => tools.InsertEntity("SampleAppDbContext", "Customer", Values("Name", "Ada", "Age", 37)),
-            "update" => tools.UpdateEntity("SampleAppDbContext", "Customer", Values("Id", 1), Values("Age", 38)),
-            _ => tools.DeleteEntity("SampleAppDbContext", "Customer", Values("Id", 1))
+            "insert" => tools.InsertEntity("SampleAppDbContext", "Customer", Values("Name", "Ada", "Age", 37), cancellationToken: TestContext.Current.CancellationToken),
+            "update" => tools.UpdateEntity("SampleAppDbContext", "Customer", Values("Id", 1), Values("Age", 38), cancellationToken: TestContext.Current.CancellationToken),
+            _ => tools.DeleteEntity("SampleAppDbContext", "Customer", Values("Id", 1), cancellationToken: TestContext.Current.CancellationToken)
         });
 
         Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -121,7 +121,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var tools = CreateTools(db, out var assemblyLoader);
         assemblyLoader.Load(FixturePaths.SampleAppDllPath);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("RawSqlExecution:Enabled", exception.Message, StringComparison.Ordinal);
@@ -135,7 +135,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var tools = CreateTools(db, out var assemblyLoader, new RawSqlExecutionOptions { Enabled = true });
         assemblyLoader.Load(FixturePaths.SampleAppDllPath);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ReadWrite", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -147,7 +147,7 @@ public sealed class EfCoreMcpToolsProviderInferenceTests
         var tools = CreateTools(db, out var assemblyLoader, new RawSqlExecutionOptions { Enabled = true }, readWrite: true, production: true);
         assemblyLoader.Load(FixturePaths.SampleAppDllPath);
 
-        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred"));
+        var exception = await Assert.ThrowsAsync<McpException>(() => tools.RunSqlQuery("SampleAppDbContext", "SELECT 1", "Inferred", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("production", exception.Message, StringComparison.OrdinalIgnoreCase);
     }

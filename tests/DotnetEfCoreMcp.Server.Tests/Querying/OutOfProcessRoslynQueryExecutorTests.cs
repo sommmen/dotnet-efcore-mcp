@@ -351,7 +351,7 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
             CancellationToken.None));
 
         Assert.Equal("Query timed out after 1s.", timeout.Message);
-        Assert.Equal(0, (await pool.GetSnapshotAsync()).TotalWorkers);
+        Assert.Equal(0, (await pool.GetSnapshotAsync(cancellationToken: TestContext.Current.CancellationToken)).TotalWorkers);
 
         var replacementWorkerPid = await ExecuteProcessIdQueryAsync(pool, _handle, _contextType, commandTimeoutSeconds: 30);
         Assert.NotEqual(firstWorkerPid, replacementWorkerPid);
@@ -368,7 +368,7 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
         var secondPid = await ExecuteProcessIdQueryAsync(pool, _handle, _contextType);
 
         Assert.Equal(firstPid, secondPid);
-        Assert.Equal(0, (await pool.GetSnapshotAsync()).TotalWorkers);
+        Assert.Equal(0, (await pool.GetSnapshotAsync(cancellationToken: TestContext.Current.CancellationToken)).TotalWorkers);
 
         var thirdPid = await ExecuteProcessIdQueryAsync(pool, _handle, _contextType);
         Assert.NotEqual(firstPid, thirdPid);
@@ -396,7 +396,7 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
             Assert.Equal(secondPid, secondPidAgain);
             Assert.NotEqual(firstPid, secondPid);
 
-            var snapshot = await pool.GetSnapshotAsync();
+            var snapshot = await pool.GetSnapshotAsync(cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(2, snapshot.TotalWorkers);
             Assert.Equal(2, snapshot.Workers.Select(static w => w.TargetAssemblyPath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         }
@@ -422,7 +422,7 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
             await ExecuteProcessIdQueryAsync(pool, _handle, _contextType);
             await ExecuteProcessIdQueryAsync(pool, otherHandle, otherContextType);
 
-            var snapshot = await pool.GetSnapshotAsync();
+            var snapshot = await pool.GetSnapshotAsync(cancellationToken: TestContext.Current.CancellationToken);
             Assert.True(snapshot.TotalWorkers <= 1);
             Assert.Equal(1, snapshot.FallbackExecutions);
         }
@@ -458,7 +458,7 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
         };
 
         process.Start();
-        await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(6));
+        await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(6), TestContext.Current.CancellationToken);
 
         Assert.True(process.HasExited);
         Assert.Equal(0, process.ExitCode);
