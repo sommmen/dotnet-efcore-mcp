@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Lets the transitive pins below override versions pulled in indirectly. -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,6 +36,17 @@
     <PackageVersion Include="System.Linq.Dynamic.Core" Version="1.7.4" />
     <PackageVersion Include="System.Reflection.MetadataLoadContext" Version="10.0.12" />
     <PackageVersion Include="Toon.DotNet" Version="4.1.1" />
+
+    <!-- Transitive pins. Microsoft.EntityFrameworkCore.Design pulls Microsoft.CodeAnalysis.CSharp.Workspaces
+         5.0.0, which requires Microsoft.CodeAnalysis.Common (= 5.0.0) and conflicts with the 5.9.0 Roslyn
+         compiler we reference directly (NU1608). Keep these aligned with Microsoft.CodeAnalysis.CSharp. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.9.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="5.9.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.9.0" />
+    <!-- Pulled in via Microsoft.EntityFrameworkCore.SqlServer > Microsoft.Data.SqlClient at 9.0.11, which
+         is affected by GHSA-2fmv-rv2c-59x7 (moderate) and GHSA-846f-f764-76mx (high); 10.0.13 is the
+         first patched 10.x release. Drop once SqlClient ships a patched dependency. -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
 
     <!-- Packable src/ projects only (see src/Directory.Build.props) -->
     <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94" />
