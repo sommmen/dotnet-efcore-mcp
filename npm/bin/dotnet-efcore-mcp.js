@@ -2,7 +2,7 @@
 
 /**
  * dotnet-efcore-mcp launcher
- * 
+ *
  * This package ships no server code; it exists so the server can be started via
  * `npx -y dotnet-efcore-mcp`. The launcher verifies the .NET SDK is present,
  * ensures the matching-version `DotnetEfCoreMcp.Server` .NET global tool is
@@ -70,14 +70,14 @@ function installedVersion() {
 function install(alreadyInstalled) {
   const verb = alreadyInstalled ? "update" : "install";
   process.stderr.write(`dotnet-efcore-mcp: ${verb}ing ${PACKAGE_ID} v${version}...\n`);
-  
+
   const args = ["tool", verb, "--global", PACKAGE_ID, "--version", version];
-  
+
   // If a custom NuGet source is configured, add it to the args
   if (process.env.DOTNET_EFCORE_MCP_NUGET_SOURCE) {
     args.push("--add-source", process.env.DOTNET_EFCORE_MCP_NUGET_SOURCE);
   }
-  
+
   execFileSync("dotnet", args, { stdio: ["ignore", 2, 2] });
 }
 
@@ -102,7 +102,7 @@ function resolveExecutable() {
   const dir = toolsDir();
   const executable = process.platform === "win32" ? `${COMMAND}.exe` : COMMAND;
   const fullPath = path.join(dir, executable);
-  
+
   if (fs.existsSync(fullPath)) {
     return fullPath;
   }
@@ -134,7 +134,7 @@ function launch() {
   const signalHandler = (signal) => {
     child.kill(signal);
   };
-  
+
   process.on("SIGINT", () => signalHandler("SIGINT"));
   process.on("SIGTERM", () => signalHandler("SIGTERM"));
 
