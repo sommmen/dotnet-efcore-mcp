@@ -34,9 +34,12 @@ Related compilation settings live under `QueryCompilation`:
 query-host process for each query. `Pooled` uses a bounded pool of long-lived out-of-process query
 hosts keyed by target assembly full path + last-write-time UTC so warm workers never cross builds
 or worktrees, but still retain out-of-process isolation from the MCP server itself. `Auto`
-currently chooses `OutOfProcess` as a fail-closed default; compatibility fingerprinting for
-choosing an in-process execution path has not yet been implemented, and `Auto` does not yet opt
-into pooling.
+always stays isolated: it resolves to `Pooled` when the server is a long-lived host (the stdio MCP
+server) and to `OutOfProcess` for the one-shot CLI, where a pool would be torn down immediately.
+Compatibility fingerprinting for choosing an in-process execution path has not been implemented.
+Over MCP the first query per target pays the model-build cost once; later queries reuse the warm
+worker (on the SampleApp fixture: ~3.6 s first call, then ~0.2 s, versus ~3.6-4.4 s on every call
+with the previous one-shot default).
 
 `QueryExecution:OutOfProcessHostPath` does not need to be set manually in the common case: if left
 unset, the server auto-detects the query host via

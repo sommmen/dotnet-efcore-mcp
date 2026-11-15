@@ -11,8 +11,28 @@ namespace DotnetEfCoreMcp.Server.Querying;
 /// <summary>Builds and validates forward-only keyset pages for mapped entity queries.</summary>
 internal static class CursorPaginationExecutor
 {
-    internal const string InvalidCursorMessage = "The cursor pagination request is invalid.";
+    internal const string InvalidCursorMessage =
+        "The cursor is invalid or expired: it was not issued by this server session or has been altered. " +
+        "Restart pagination without a cursor (pagination: { mode: \"cursor\" }).";
 
+    internal const string CursorQueryMismatchMessage =
+        "The cursor was issued for a different query. Reuse a cursor only with the same context, entity and OrderBy " +
+        "it was returned for, or restart pagination without a cursor.";
+
+    internal const string ProjectionNotSupportedMessage =
+        "Cursor pagination pages mapped entities, not projections or scalar results. Paginate the entity query, " +
+        "drop Select(), and project client-side from the returned rows.";
+
+    internal const string PaginationFailedMessage = "The cursor pagination request is invalid.";
+
+    /// <summary>Verifies a cursor's signature and that it was issued for <paramref name="contextType"/>
+    /// without touching the database or the query host, so a tampered or foreign cursor fails at once.</summary>
+    internal static void ValidateToken(string token, string signingKey, Type contextType)
+    {
+        var cursor = DecodeCursor(token, signingKey);
+        if (cursor.Context != (contextType.FullName ?? contextType.Name))
+            throw new QueryExecutionException(CursorQueryMismatchMessage);
+    }
     public static async Task<QueryResult> ExecuteAsync(
         IQueryable sequence,
         DbContext context,
@@ -28,12 +48,12 @@ internal static class CursorPaginationExecutor
         if (ContainsSkip(sequence.Expression))
             throw new QueryExecutionException("Cursor pagination cannot be combined with LINQ Skip().");
         if (sequence.ElementType != context.Model.FindEntityType(sequence.ElementType)?.ClrType)
-            throw new QueryExecutionException("Cursor pagination requires a query returning a mapped entity type.");
+            throw new QueryExecutionException(ProjectionNotSupportedMessage);
 
         try
         {
             var entityType = context.Model.FindEntityType(sequence.ElementType)
-                ?? throw new QueryExecutionException("Cursor pagination requires a query returning a mapped entity type.");
+                ?? throw new QueryExecutionException(ProjectionNotSupportedMessage);
             var orderings = GetOrderings(sequence.Expression);
             if (orderings.Count == 0)
                 throw new QueryExecutionException("Cursor pagination requires an explicit deterministic OrderBy().");
@@ -48,7 +68,7 @@ internal static class CursorPaginationExecutor
             {
                 var cursor = DecodeCursor(pagination.Cursor, options.CursorSigningKey);
                 if (!Matches(cursor, contextType, entityType, orderingShape))
-                    throw new QueryExecutionException(InvalidCursorMessage);
+                    throw new QueryExecutionException(CursorQueryMismatchMessage);
                 ordered = ApplySeek(sequence.Provider, ordered, sequence.ElementType, orderings, cursor.Values);
             }
 
@@ -66,7 +86,7 @@ internal static class CursorPaginationExecutor
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException or FormatException or CryptographicException)
         {
-            throw new QueryExecutionException(InvalidCursorMessage, ex);
+            throw new QueryExecutionException(PaginationFailedMessage, ex);
         }
     }
 
@@ -132,7 +152,7 @@ internal static class CursorPaginationExecutor
         IReadOnlyList<Ordering> orderings, JsonElement[] values)
     {
         if (values.Length != orderings.Count)
-            throw new QueryExecutionException(InvalidCursorMessage);
+            throw new QueryExecutionException(CursorQueryMismatchMessage);
 
         var parameter = Expression.Parameter(elementType, "entity");
         var predicate = BuildSeekPredicate(orderings, values, parameter);
@@ -238,7 +258,7 @@ internal static class CursorPaginationExecutor
         catch (TargetInvocationException ex) when (ex.InnerException is not null)
         {
             // DynamicInvoke wraps exceptions; unwrap and convert to QueryExecutionException for consistent error handling
-            throw new QueryExecutionException(InvalidCursorMessage, ex.InnerException);
+            throw new QueryExecutionException(PaginationFailedMessage, ex.InnerException);
         }
     }
 
@@ -271,7 +291,7 @@ internal static class CursorPaginationExecutor
         }
         catch (Exception ex) when (ex is FormatException or CryptographicException or JsonException or ArgumentException)
         {
-            throw new QueryExecutionException(InvalidCursorMessage, ex);
+            throw new QueryExecutionException(InvalidCursorMessage);
         }
     }
 

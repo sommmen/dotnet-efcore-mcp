@@ -774,7 +774,7 @@ public sealed class RoslynQueryExecutorTests : IDisposable
                 Pagination = new QueryPagination { Mode = "cursor", Cursor = first.NextCursor },
             },
             CancellationToken.None));
-        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, mismatched.Message);
+        Assert.Equal(CursorPaginationExecutor.CursorQueryMismatchMessage, mismatched.Message);
     }
 
     [Fact]
@@ -942,7 +942,7 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             CancellationToken.None));
 
         // Verify the mismatch is detected (cursor from Age+1 is invalid for Id+1 ordering).
-        Assert.Equal(CursorPaginationExecutor.InvalidCursorMessage, mismatchedOrderingException.Message);
+        Assert.Equal(CursorPaginationExecutor.CursorQueryMismatchMessage, mismatchedOrderingException.Message);
     }
 
     [Fact]

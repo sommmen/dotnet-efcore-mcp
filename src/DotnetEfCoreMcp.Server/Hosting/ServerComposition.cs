@@ -88,6 +88,7 @@ public static class ServerComposition
         {
             queryExecutionOptions = queryExecutionOptions with { OutOfProcessHostPath = QueryHostLocator.TryGetBundledHostPath() };
         }
+        queryExecutionOptions = queryExecutionOptions.ResolveAutoMode(longLivedHost: includeHostedServices);
         if (cursorSigningKeyFactory is not null && string.IsNullOrWhiteSpace(builder.Configuration["QueryExecution:CursorSigningKey"]))
         {
             var configuredQueryExecutionOptions = queryExecutionOptions;
@@ -216,12 +217,21 @@ public static class ServerComposition
     /// <summary>Registers the MCP server with its stdio transport and tool set.</summary>
     public static void AddEfCoreMcpServer(HostApplicationBuilder builder) => AddEfCoreMcpServer(builder.Services);
 
+    /// <summary>The <c>serverInfo</c> advertised on <c>initialize</c>, versioned like the <c>version</c> verb
+    /// rather than with the assembly version, which the build pins to <c>0.1.0.0</c>.</summary>
+    internal static Implementation CreateServerInfo() => new()
+    {
+        Name = "DotnetEfCoreMcp.Server",
+        Version = PackageVersionProvider.GetPackageVersion() ?? "0.0.0",
+    };
+
     /// <inheritdoc cref="AddEfCoreMcpServer(HostApplicationBuilder)"/>
     public static void AddEfCoreMcpServer(IServiceCollection services)
     {
         services
             .AddMcpServer(options =>
             {
+                options.ServerInfo = CreateServerInfo();
                 options.ServerInstructions =
                     """
                     Use dotnet-efcore-mcp for running LINQ queries and schema discovery against the

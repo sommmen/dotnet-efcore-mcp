@@ -119,7 +119,9 @@ public sealed class EfCoreMcpTools(
 
     private string ListAssemblyCandidatesCore(string? workspacePath, string? pathFilter, bool includeAllBuilds)
     {
-        workspacePath = string.IsNullOrWhiteSpace(workspacePath) ? Directory.GetCurrentDirectory() : workspacePath;
+        if (string.IsNullOrWhiteSpace(workspacePath) && ReferenceEquals(_surfaceHints, ToolSurfaceHints.Cli))
+            workspacePath = Directory.GetCurrentDirectory();
+        RequireArgument(workspacePath, "workspacePath");
         try
         {
             var candidates = assemblyDiscovery.Discover(workspacePath);
@@ -188,7 +190,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (AssemblyDiscoveryException ex)
         {
-            logger.LogWarning(ex, "Failed to discover target assemblies. WorkspacePath={WorkspacePath}", workspacePath);
+            logger.LogWarning("Failed to discover target assemblies. WorkspacePath={WorkspacePath} Reason={Reason}", workspacePath, ex.Message);
             throw new McpException(FormatSubsystemError(ex));
         }
     }
@@ -208,6 +210,7 @@ public sealed class EfCoreMcpTools(
 
     private string LoadAssemblyCore(string assemblyPath, string? targetName = null)
     {
+        RequireArgument(assemblyPath, "assemblyPath");
         try
         {
             var handle = assemblyLoader.Load(assemblyPath, targetName);
@@ -222,7 +225,7 @@ public sealed class EfCoreMcpTools(
                 handle.AssemblyPath, targetName, scan.Descriptors.Count);
             if (warnings.Count > 0)
             {
-                logger.LogWarning(
+                logger.LogDebug(
                     "Assembly scan produced warnings. Path={AssemblyPath} Warnings={Warnings}",
                     handle.AssemblyPath, string.Join(" | ", warnings));
             }
@@ -242,7 +245,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (AssemblyLoadFailedException ex)
         {
-            logger.LogWarning(ex, "Failed to load target assembly. Path={AssemblyPath}", assemblyPath);
+            logger.LogWarning("Failed to load target assembly. Path={AssemblyPath} Reason={Reason}", assemblyPath, ex.Message);
             throw new McpException(FormatSubsystemError(ex));
         }
     }
@@ -262,7 +265,7 @@ public sealed class EfCoreMcpTools(
         var warnings = BuildScanWarnings(scan);
         if (warnings.Count > 0)
         {
-            logger.LogWarning(
+            logger.LogDebug(
                 "Assembly scan produced warnings. Path={AssemblyPath} Warnings={Warnings}",
                 handle.AssemblyPath, string.Join(" | ", warnings));
         }
@@ -521,6 +524,11 @@ public sealed class EfCoreMcpTools(
             {
                 EnsureEntityAllowed(contextType, entry, entityName);
             }
+            if (pagination?.Cursor is { } cursor)
+            {
+                CursorPaginationExecutor.ValidateToken(cursor, queryExecutionOptions.CursorSigningKey, contextType);
+            }
+
             QueryResult result;
             try
             {
@@ -1037,6 +1045,7 @@ public sealed class EfCoreMcpTools(
 
     private string SwapConnectionCore(string connectionName, bool allowProduction)
     {
+        RequireArgument(connectionName, "connectionName");
         try
         {
             connectionRegistry.SetActive(connectionName, allowProduction);
@@ -1048,7 +1057,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (ProductionProtectedException ex)
         {
-            logger.LogWarning(ex, "Refused swap to production connection. Connection={ConnectionName}", ex.ConnectionName);
+            logger.LogWarning("Refused swap to production connection. Connection={ConnectionName}", ex.ConnectionName);
             throw new McpException(ex.Message);
         }
         catch (UnknownConnectionException ex)
@@ -1245,12 +1254,10 @@ public sealed class EfCoreMcpTools(
         var targets = assemblyLoader.ListTargets();
         return resultFormatter.Format(new
         {
-            defaultTargetName = assemblyLoader.CurrentDefaultTargetName == AssemblyLoaderService.DefaultTargetName
-                ? null
-                : assemblyLoader.CurrentDefaultTargetName,
+            defaultTargetName = DisplayTargetName(assemblyLoader.CurrentDefaultTargetName),
             targets = targets.Select(t => new
             {
-                targetName = t.Name == AssemblyLoaderService.DefaultTargetName ? null : t.Name,
+                targetName = DisplayTargetName(t.Name),
                 assemblyPath = t.Handle.AssemblyPath,
                 loadedAtUtc = t.Handle.LoadedAtUtc,
                 isDefault = t.IsDefault,
@@ -1261,26 +1268,41 @@ public sealed class EfCoreMcpTools(
     [McpServerTool(Name = "select_target"), Description(
         "Selects which registered target assembly resolves as the default when load_assembly/list_contexts/" +
         "get_schema/run_query/run_sql_query calls omit targetName. Does not unload or otherwise affect any " +
-        "other registered target.")]
+        "other registered target. The target loaded without a targetName is named \"default\"; select it by that name " +
+        "to go back to it.")]
     public string SelectTarget(
         [Description("Logical target name previously registered via load_assembly's targetName parameter.")] string targetName)
         => Execute("select_target", () => SelectTargetCore(targetName));
 
     private string SelectTargetCore(string targetName)
     {
+        RequireArgument(targetName, "targetName");
         try
         {
             assemblyLoader.SelectDefault(targetName);
-            ToolSessionState.RecordDefaultTarget(agentSession, targetName);
+            ToolSessionState.RecordDefaultTarget(agentSession, assemblyLoader.CurrentDefaultTargetName);
+            var selected = assemblyLoader.Get();
+            var scan = selected is null ? null : DbContextScanner.FindDbContextTypes(selected.Assembly);
+            var warnings = scan is { Descriptors.Count: 0 } ? BuildScanWarnings(scan, selected) : [];
             return resultFormatter.Format(new
             {
-                defaultTargetName = targetName,
+                defaultTargetName = DisplayTargetName(assemblyLoader.CurrentDefaultTargetName),
+                warnings = warnings.Count > 0 ? warnings : null,
             });
         }
         catch (UnknownAssemblyTargetException ex)
         {
             throw new McpException(ex.Message);
         }
+    }
+
+    private static string DisplayTargetName(string targetName) =>
+        targetName == AssemblyLoaderService.DefaultTargetName ? AssemblyLoaderService.DefaultTargetAlias : targetName;
+
+    private static void RequireArgument([System.Diagnostics.CodeAnalysis.NotNull] string? value, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new McpException($"{parameterName} is required.");
     }
 
     private T Execute<T>(string operation, Func<T> action)
@@ -1652,12 +1674,35 @@ public sealed class EfCoreMcpTools(
             return $"{message} Next step: This indicates a protocol-level failure between the server and the query host rather than a problem with the query; consult server logs and retry.";
         }
 
+        if (IsCursorInputError(message))
+        {
+            return message.Contains(CursorPaginationExecutor.PaginationFailedMessage, StringComparison.Ordinal)
+                ? $"{message} Next step: restart pagination without a cursor, with an explicit OrderBy on a non-null key."
+                : message;
+        }
+
+        if (IsIncludeInputError(message))
+        {
+            return $"{message} Next step: pass navigation names exactly as listed by get_entity_schema for the query's entity, within the configured include limits.";
+        }
+
+        if (IsQueryInputError(message))
+        {
+            return message;
+        }
+
         // Out-of-process modes have no InnerException to read: the isolated host already flattened
         // the cause into its single wire-level Error string (see QueryHost's ErrorWithCause), so the
         // detail arrives inside `message` and must not be duplicated behind a second "Cause:".
         var cause = message.Contains(" Cause: ", StringComparison.Ordinal)
             ? null
             : QueryExceptionDetail.Describe(exception.InnerException);
+
+        if (message.Contains("RowLimitingOperationWithoutOrderBy", StringComparison.OrdinalIgnoreCase) ||
+            cause?.Contains("RowLimitingOperationWithoutOrderBy", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return RowLimitWithoutOrderByMessage;
+        }
 
         if (string.IsNullOrEmpty(cause))
             return $"{message} Next step: {ResolveCauseHint(message)}";
@@ -1719,6 +1764,27 @@ public sealed class EfCoreMcpTools(
         return GenericQueryRecoveryHint;
     }
 
+    private const string RowLimitWithoutOrderByMessage =
+        "EF Core rejected the query because a row limit (Take/Skip/First) has no OrderBy, so which rows come back would be " +
+        "nondeterministic (RowLimitingOperationWithoutOrderBy is configured as an error on this DbContext). " +
+        "Next step: add an explicit OrderBy(...) (for example on the primary key) before Take/Skip/First, then retry.";
+
+    private static bool IsCursorInputError(string message) =>
+        message.Contains("cursor", StringComparison.OrdinalIgnoreCase) &&
+        (message.StartsWith("The cursor", StringComparison.Ordinal) ||
+         message.StartsWith("Cursor pagination", StringComparison.Ordinal) ||
+         message.StartsWith("`pagination.mode`", StringComparison.Ordinal));
+
+    private static bool IsIncludeInputError(string message) =>
+        message.StartsWith("Include ", StringComparison.Ordinal) ||
+        message.StartsWith("Included collection", StringComparison.Ordinal);
+
+    private static bool IsQueryInputError(string message) =>
+        message.StartsWith("`query` ", StringComparison.Ordinal) ||
+        message.StartsWith("Raw `", StringComparison.Ordinal) ||
+        message.StartsWith("Query syntax tree", StringComparison.Ordinal) ||
+        message.StartsWith("Query contains ", StringComparison.Ordinal);
+
     private const string GenericQueryRecoveryHint =
         "verify entity and property names with get_schema, validate LINQ query syntax, and consult server logs if the problem persists.";
 
@@ -1761,7 +1827,8 @@ public sealed class EfCoreMcpTools(
         {
             warnings.Add(
                 "No DbContext-derived types were found in the loaded assembly. If a DbContext is expected here, " +
-                "check that the assembly path points at the project actually declaring it, and that all of its " +
+                "check that the assembly path points at the project actually declaring it (a DbContext may live in a " +
+                "referenced assembly, such as a separate data-access project), and that all of its " +
                 "runtime dependencies (including any ASP.NET Core shared framework or transitive NuGet packages) " +
                 "are present in the output folder.");
         }

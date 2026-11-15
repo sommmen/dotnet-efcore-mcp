@@ -655,7 +655,7 @@ indented JSON tool payloads, set `ToolOutput:Format` to `json` (for example,
 | `reload_connections` | *(none)* | Forces a re-read of the connection registry configuration and reports `addedConnections`/`removedConnections` plus the refreshed list. Opens no database connection and runs no query; the active connection is preserved when it still exists |
 | `swap_connection` | `connectionName: string`, `allowProduction?: bool` | The new active connection. Production connections require `allowProduction: true` |
 | `list_loaded_assemblies` | *(none)* | Every registered target assembly (logical name, source path, load timestamp, default flag) |
-| `select_target` | `targetName: string` | The new default target used when `targetName` is omitted elsewhere. Does not unload any other target |
+| `select_target` | `targetName: string` | The new default target used when `targetName` is omitted elsewhere. Does not unload any other target. The target loaded without a `targetName` is named `default` and can be selected by that name; warns when the selected target contains no DbContext |
 | `onboard` | `workspacePath?: string`, `apply?: bool`, `scope?: string`, `what?: string`, `force?: bool` | What hooks/skills exist and what is installed (read-only by default), plus any pending update notice. `apply: true` also requires the server-side `Onboarding:AllowInstall` setting |
 
 `query` is Roslyn-compiled C# rooted at an exact, public `DbSet<T>` property on the selected

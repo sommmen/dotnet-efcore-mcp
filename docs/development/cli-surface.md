@@ -127,7 +127,8 @@ The MCP path is the same code in the same order, just moved. `McpServerShutdownT
      `Telemetry:Enabled` has no effect in CLI mode; this is documented.
    - **Force `QueryExecution:Mode` away from `Pooled`.** Use `Auto` or `OutOfProcess` instead.
      A pool would spawn a persistent worker only to tear it down at exit.
-   - **The default `Auto` mode already uses the one-shot `OutOfProcessRoslynQueryExecutor`.**
+   - **`Auto` resolves to the one-shot `OutOfProcessRoslynQueryExecutor` in CLI mode.** `Auto`
+     prefers `Pooled` only for the long-lived MCP server (`includeHostedServices`).
      It kills the process tree on cancellation, and the QueryHost exits when its stdin closes,
      so orphaned processes are unlikely.
    - **Dispose the host with `await using` / `DisposeAsync()`.** `QueryHostPool` is a resolved

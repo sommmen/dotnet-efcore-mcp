@@ -740,7 +740,7 @@
     },
     {
       "name": "select_target",
-      "description": "Selects which registered target assembly resolves as the default when load_assembly/list_contexts/get_schema/run_query/run_sql_query calls omit targetName. Does not unload or otherwise affect any other registered target.",
+      "description": "Selects which registered target assembly resolves as the default when load_assembly/list_contexts/get_schema/run_query/run_sql_query calls omit targetName. Does not unload or otherwise affect any other registered target. The target loaded without a targetName is named \"default\"; select it by that name to go back to it.",
       "inputSchema": {
         "type": "object",
         "properties": {

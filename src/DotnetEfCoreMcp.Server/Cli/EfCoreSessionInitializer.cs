@@ -45,7 +45,7 @@ public sealed class EfCoreSessionInitializer(
             }
             catch (AssemblyLoadFailedException ex)
             {
-                logger.LogWarning(ex, "Could not restore target '{TargetName}' from session path '{Path}'.", name, path);
+                logger.LogWarning("Could not restore target '{TargetName}' from session path '{Path}': {Reason}", name, path, ex.Message);
             }
         }
 
@@ -61,7 +61,7 @@ public sealed class EfCoreSessionInitializer(
         }
         catch (UnknownAssemblyTargetException ex)
         {
-            logger.LogWarning(ex, "Could not restore default target '{TargetName}' from the session.", defaultTarget);
+            logger.LogWarning("Could not restore default target '{TargetName}' from the session: {Reason}", defaultTarget, ex.Message);
         }
     }
 
@@ -79,7 +79,7 @@ public sealed class EfCoreSessionInitializer(
         }
         catch (Exception ex) when (ex is UnknownConnectionException or ProductionProtectedException)
         {
-            logger.LogWarning(ex, "Could not restore active connection '{ConnectionName}' from the session.", connection);
+            logger.LogWarning("Could not restore active connection '{ConnectionName}' from the session: {Reason}", connection, ex.Message);
         }
     }
 }
