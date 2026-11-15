@@ -20,13 +20,14 @@ jobs:
   lint-pr-title:
     name: Validate PR title
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Validate PR title
         uses: actions/github-script@v9
         with:
           script: |
             const title = context.payload.pull_request.title;
-            const pattern = /^(?:build|chore|ci|docs|feat|fix|perf|ref|refactor|revert|style|test)(?:\(.+\))?!?: .{4,}(?<![.\s])$/;
+            const pattern = /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\(.+\))?!?: .{4,}(?<![.\s])$/;
 
             if (pattern.test(title)) {
               core.info(`PR title OK: "${title}"`);
