@@ -82,6 +82,7 @@
     <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\README.md" Condition="Exists('..\..\README.md')" Pack="true" PackagePath="\" />
     <None Include="..\..\LICENSE" Condition="Exists('..\..\LICENSE')" Pack="true" PackagePath="\" />
+    <None Include="..\..\img\nuget-icon-dotnet-efcore-mcp.png" Pack="true" PackagePath="\" />
     <!-- Nerdbank.GitVersioning automatically replaces 0.0.0-placeholder in this file with the
          actual computed package version at pack time. -->
     <None Include=".mcp\server.json" Pack="true" PackagePath="/.mcp/" />
