@@ -31,6 +31,27 @@ public sealed class CliOperationTests : IDisposable
     }
 
     [Fact]
+    public async Task OutputJson_RendersTheToolResultAsJson()
+    {
+        var result = await _host.RunAsync("list_contexts", "--assembly", FixturePaths.SampleAppDllPath, "--output", "json");
+
+        Assert.Equal(0, result.ExitCode);
+        using var document = JsonDocument.Parse(result.Output);
+        Assert.Contains(
+            document.RootElement.GetProperty("contexts").EnumerateArray(),
+            context => context.GetProperty("name").GetString() == "SampleAppDbContext");
+    }
+
+    [Fact]
+    public async Task MissingRequiredParameter_IsAUsageError()
+    {
+        var result = await _host.RunAsync("swap_connection");
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("--connection-name", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task KebabCaseOperationNames_AreAccepted()
     {
         var snake = await _host.RunAsync("list_contexts", "--assembly", FixturePaths.SampleAppDllPath);
