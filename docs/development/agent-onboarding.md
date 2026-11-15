@@ -35,6 +35,10 @@ mechanisms worth separating:
   instruction text, and `initial_instructions` exists specifically "for clients that do not read the
   initial instructions when the MCP server is connected."
 
+The same applies when an agent uses the [CLI](./cli-surface.md) instead of the MCP server (`dotnet-efcore-mcp cli ...`): there is
+no connection step at all, so the hooks and the feedback skill matter even more. The hooks recognise both surfaces, and the
+reminder names MCP tools or CLI commands depending on which one the agent last used.
+
 The takeaway is the split: a lifecycle hook makes the server *visible*, and a tool makes the setup
 *actionable from inside the conversation* rather than only from a shell the user has to find.
 

@@ -1,8 +1,34 @@
-# CLI surface (plan)
+# CLI surface
 
 [← Back to Development Guide](../../DEVELOPMENT.md)
 
-Status: **planned, not started.** Tracked in the [work tracker](./WORK-TRACKER.md).
+Status: **delivered** (MCP host and CLI on `dotnet-agent-surface` 0.1.77-preview, session-backed equal flows,
+hooks and docs). Open: the background daemon and the CLI-only package (E1), both listed under
+[Future work](#future-work). Tracked in the [work tracker](./WORK-TRACKER.md).
+
+The sections below are the original plan and its rationale. Where the shipped design differs, [What was
+delivered](#what-was-delivered) is authoritative.
+
+## What was delivered
+
+| Item | Result |
+| --- | --- |
+| A. Upstream gaps ([agent-surface#88–#92](https://github.com/sommmen/dotnet-agent-surface/issues?q=is%3Aissue+88+OR+89+OR+90+OR+91+OR+92)) | Fixed upstream and published as `DotNetAgentSurface.*` 0.1.77-preview on nuget.org. |
+| B. Composition refactor | `ServerComposition` (done earlier). |
+| C. CLI mode | `dotnet-efcore-mcp cli <operation>` through `AgentSurfaceApplication` in [`Cli/EfCoreSurface.cs`](../../src/DotnetEfCoreMcp.Server/Cli/EfCoreSurface.cs). Host verbs `hooks`, `onboard`, `version`; global options `--assembly`, `--workspace`, `--target`, `--connection`, `--config Key=Value` (plus upstream `--session`); fail-fast on an unloadable `--assembly`; `Pooled` forced to `Auto`; `Warning` logs on stderr; CLI wording for missing target/connection (`IToolSurfaceHints`); `cli skill generate\|check`. |
+| C3. Cursor key | Replaced by the session: `run_query` cursors are signed with a stable key stored in the session as `cursorKey` unless `QueryExecution:CursorSigningKey` is configured. No bespoke key file. |
+| C5. Hooks | `ToolCallClassifier` recognises `dotnet-efcore-mcp cli <query-operation>` (snake or kebab case); `HookReminder` has CLI wording. |
+| C4. Tests | [`tests/DotnetEfCoreMcp.Server.Tests/Cli`](../../tests/DotnetEfCoreMcp.Server.Tests/Cli): operations, pagination across runs, byte-identical output, exit codes, `--help`, session flows, hooks, and a built-DLL process smoke test. |
+| C6, D. Renovate and docs | `DotNetAgentSurface.*` Renovate group (exact pin, no automerge); README "Choose MCP or CLI"; this folder's docs updated. |
+| F. MCP host on agent-surface | `WithOperations` over `AddMcpServerTools`; the `tools/list` snapshot matched without regeneration and the full suite passes unchanged. F3 (moving telemetry/redaction into an invocation filter) and F4 (tool annotations) are not done. |
+| G. Equal flows through session state | `load_assembly`, `select_target` and `swap_connection` stay available in the CLI and persist `targets`, `defaultTarget` and `activeConnection` through `IAgentSession`; `EfCoreSessionInitializer` rehydrates them at CLI start. Per-call `--assembly`/`--connection` stay as overrides. Never store secrets in the session. |
+
+## Future work
+
+- **Daemon / warm server.** Each CLI call reloads the assembly and warms Roslyn and EF Core. A background daemon (the CLI as a thin client to a warm server process) would remove that latency. It needs IPC, lifecycle, auth and stale-build handling, and it can reuse the session state model.
+- **E1: a CLI-only package** (`DotnetEfCore.Cli`, command e.g. `efcore-cli`) with no `McpServer` package type, defaulting to CLI mode. Not started; see E1 below for what it needs.
+- **E2, E3:** `onboard` installing the generated CLI skill, and `--confirm` for mutation and raw-SQL operations.
+- **F3, F4:** share telemetry and redaction through an `IOperationInvocationFilter`; annotate tools with `ReadOnly`/`Destructive`/`Idempotent` (a deliberate `tools/list` change).
 
 ## Goal
 

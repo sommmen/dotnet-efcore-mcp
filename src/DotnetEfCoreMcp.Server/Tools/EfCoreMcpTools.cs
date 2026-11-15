@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using DotNetAgentSurface.Core;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
@@ -47,9 +48,12 @@ public sealed class EfCoreMcpTools(
     IMcpMetrics metrics,
     OnboardingOptions? onboardingOptions = null,
     UpdateNotificationService? updateNotifications = null,
-    SchemaComparer? schemaComparer = null)
+    SchemaComparer? schemaComparer = null,
+    IToolSurfaceHints? surfaceHints = null,
+    IAgentSession? agentSession = null)
 {
     private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
+    private readonly IToolSurfaceHints _surfaceHints = surfaceHints ?? ToolSurfaceHints.Mcp;
     private readonly SchemaComparer _schemaComparer = schemaComparer ?? new SchemaComparer(migrationsOptions, NullLogger<SchemaComparer>.Instance);
 
     internal EfCoreMcpTools(
@@ -206,6 +210,10 @@ public sealed class EfCoreMcpTools(
         try
         {
             var handle = assemblyLoader.Load(assemblyPath, targetName);
+            ToolSessionState.RecordTarget(
+                agentSession,
+                string.IsNullOrWhiteSpace(targetName) ? assemblyLoader.CurrentDefaultTargetName : targetName,
+                handle.AssemblyPath);
             var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
             var warnings = BuildScanWarnings(scan, handle);
             logger.LogInformation(
@@ -982,6 +990,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             connectionRegistry.SetActive(connectionName, allowProduction);
+            ToolSessionState.RecordActiveConnection(agentSession, connectionName, allowProduction);
             return resultFormatter.Format(new
             {
                 activeConnection = connectionRegistry.ActiveConnectionName,
@@ -1212,6 +1221,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             assemblyLoader.SelectDefault(targetName);
+            ToolSessionState.RecordDefaultTarget(agentSession, targetName);
             return resultFormatter.Format(new
             {
                 defaultTargetName = targetName,
@@ -1396,7 +1406,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             return assemblyLoader.Get(targetName)
-                ?? throw new McpException("No target assembly is loaded yet. Call load_assembly with the path to a compiled target project's DLL first.");
+                ?? throw new McpException(_surfaceHints.NoTargetLoaded);
         }
         catch (UnknownAssemblyTargetException ex)
         {
@@ -1687,7 +1697,7 @@ public sealed class EfCoreMcpTools(
                 var active = connectionRegistry.ActiveConnection;
                 if (active is null)
                 {
-                    throw new McpException("No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections; call reload_connections if one you configured is missing from it.)");
+                    throw new McpException(_surfaceHints.NoActiveConnection);
                 }
                 entry = active;
             }

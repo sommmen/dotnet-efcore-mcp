@@ -36,6 +36,21 @@ public sealed class HookReminder
         If the dotnet-efcore-mcp tools are not loaded yet, load them now rather than skipping this.
         """;
 
+    private const string CliLinqReminderText =
+        """
+        LINQ validation reminder (dotnet-efcore-mcp): you just wrote or changed an EF Core LINQ
+        query. LINQ that compiles and runs fine in memory can still fail at runtime with an EF Core
+        translation error. Before you finish, validate the query against the real EF Core model by
+        running the CLI:
+
+        - `dotnet-efcore-mcp cli preview-query-sql` - translate the query and see the SQL without touching the database.
+        - `dotnet-efcore-mcp cli run-query` - execute it read-only against the configured connection.
+        - `dotnet-efcore-mcp cli get-entity-schema` / `search-schema` - confirm entity, navigation, and property names.
+
+        Pass `--assembly <path-to-built-dll>` and `--connection <name>`, or run `cli load-assembly` and
+        `cli swap-connection` once to remember them. Run `dotnet-efcore-mcp cli --help` to list every operation.
+        """;
+
     private const string EntityReminderText =
         """
         Schema discovery reminder (dotnet-efcore-mcp): you are reading EF Core entity source to work
@@ -45,6 +60,19 @@ public sealed class HookReminder
         - `search_schema` - find entities and properties by name.
         - `get_entity_schema` - full shape of a single entity, including navigations and keys.
         - `list_entities` - enumerate the entities a DbContext exposes.
+        """;
+
+    private const string CliEntityReminderText =
+        """
+        Schema discovery reminder (dotnet-efcore-mcp): you are reading EF Core entity source to work
+        out the model. The dotnet-efcore-mcp CLI answers this directly from the compiled EF Core
+        model, including relationships and database column types that the source does not show:
+
+        - `dotnet-efcore-mcp cli search-schema` - find entities and properties by name.
+        - `dotnet-efcore-mcp cli get-entity-schema` - full shape of a single entity, including navigations and keys.
+        - `dotnet-efcore-mcp cli list-entities` - enumerate the entities a DbContext exposes.
+
+        Pass `--assembly <path-to-built-dll>`, or run `cli load-assembly` once to remember it.
         """;
 
     private readonly HookSessionStore _store;
@@ -78,10 +106,11 @@ public sealed class HookReminder
 
         var state = _store.Load(call.SessionId);
 
-        // Using the MCP server is the behavior the reminder exists to produce, so it clears the
+        // Using the MCP server or CLI is the behavior the reminder exists to produce, so it clears the
         // backlog and the cooldown: the agent has already validated against the real model.
-        if (kind is ToolCallKind.EfCoreMcpToolUse)
+        if (kind is ToolCallKind.EfCoreMcpToolUse or ToolCallKind.EfCoreCliToolUse)
         {
+            state.UsesCli = kind is ToolCallKind.EfCoreCliToolUse;
             state.PendingLinqWrites = 0;
             state.PendingEntityReads = 0;
             state.LastReminderAt = null;
@@ -108,7 +137,7 @@ public sealed class HookReminder
         }
 
         state.LastReminderAt = now;
-        if (reminder == LinqReminderText)
+        if (reminder == LinqReminderText || reminder == CliLinqReminderText)
         {
             state.PendingLinqWrites = 0;
         }
@@ -153,10 +182,12 @@ public sealed class HookReminder
         // LINQ validation is the primary goal, so it wins whenever both are pending.
         if (state.PendingLinqWrites >= LinqWriteThreshold)
         {
-            return LinqReminderText;
+            return state.UsesCli ? CliLinqReminderText : LinqReminderText;
         }
 
-        return state.PendingEntityReads >= EntityReadThreshold ? EntityReminderText : null;
+        return state.PendingEntityReads >= EntityReadThreshold
+            ? state.UsesCli ? CliEntityReminderText : EntityReminderText
+            : null;
     }
 
     /// <summary>

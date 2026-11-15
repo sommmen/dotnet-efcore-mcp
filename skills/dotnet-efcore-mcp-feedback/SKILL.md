@@ -2,11 +2,11 @@
 name: dotnet-efcore-mcp-feedback
 description: >-
   File a self-contained GitHub issue against sommmen/dotnet-efcore-mcp when the
-  dotnet-efcore-mcp MCP server behaves badly, is confusing, blocks you, or just
+  dotnet-efcore-mcp MCP server or CLI behaves badly, is confusing, blocks you, or just
   feels awkward to use. Use this skill whenever a user says something like
   "report this", "file feedback", "that EF Core MCP tool is broken",
   "preview_query_sql keeps failing", "run_query gave a useless error",
-  "load_assembly can't find my DbContext", "the MCP server docs are wrong", or
+  "load_assembly can't find my DbContext", "the MCP server or CLI docs are wrong", or
   expresses frustration with any dotnet-efcore-mcp tool, error message,
   configuration step, or install path — even when they do not explicitly ask for
   an issue to be filed. Also use it proactively after you hit a dotnet-efcore-mcp
@@ -17,7 +17,7 @@ description: >-
 
 # dotnet-efcore-mcp feedback
 
-Turn a frustrating encounter with the `dotnet-efcore-mcp` MCP server into a
+Turn a frustrating encounter with the `dotnet-efcore-mcp` MCP server or CLI into a
 GitHub issue a maintainer can act on months later, from a different machine,
 without ever seeing your repo.
 
