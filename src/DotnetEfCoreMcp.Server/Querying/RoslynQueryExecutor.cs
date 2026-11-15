@@ -217,7 +217,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         if (value is not IQueryable sequence)
         {
             if (request.Pagination is not null)
-                throw new QueryExecutionException("Cursor pagination requires a query returning a mapped entity type.");
+                throw new QueryExecutionException(CursorPaginationExecutor.ProjectionNotSupportedMessage);
             return new QueryResult(request.RootEntityName ?? "C#", 1, null, false, true, value, []);
         }
 
