@@ -52,6 +52,23 @@ public sealed class CliOperationTests : IDisposable
     }
 
     [Fact]
+    public async Task ConnectionFlag_ActivatesTheConnectionForOperationsWithoutAConnectionParameter()
+    {
+        var result = await _host.RunAsync(
+            "list_contexts", "--assembly", FixturePaths.SampleAppDllPath, "--connection", CliTestHost.ConnectionName, "--output", "json");
+
+        Assert.Equal(0, result.ExitCode);
+        using var document = JsonDocument.Parse(result.Output);
+        Assert.Contains($"connection '{CliTestHost.ConnectionName}'", document.RootElement.GetProperty("warnings")[0].GetString(), StringComparison.Ordinal);
+        Assert.Contains(
+            document.RootElement.GetProperty("contexts").EnumerateArray(),
+            context => context.GetProperty("name").GetString() == "SampleAppDbContext");
+
+        var session = await _host.RunAsync("session", "show");
+        Assert.DoesNotContain("activeConnection", session.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task KebabCaseOperationNames_AreAccepted()
     {
         var snake = await _host.RunAsync("list_contexts", "--assembly", FixturePaths.SampleAppDllPath);

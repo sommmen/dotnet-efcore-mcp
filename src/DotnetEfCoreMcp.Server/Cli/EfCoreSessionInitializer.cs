@@ -15,11 +15,35 @@ public sealed class EfCoreSessionInitializer(
     IConfiguration configuration,
     ILogger<EfCoreSessionInitializer> logger) : IAgentSessionInitializer
 {
+    /// <summary>Configuration key the CLI's <c>--connection</c> flag sets for the current command.</summary>
+    public const string ConnectionOverrideKey = "Cli:Connection";
+
     public ValueTask InitializeAsync(IAgentSession session, CancellationToken cancellationToken)
     {
         RestoreTargets(session);
         RestoreConnection(session);
+        ApplyConnectionOverride();
         return ValueTask.CompletedTask;
+    }
+
+    // Operations without a connectionName parameter (list_contexts) only see the active connection, so
+    // --connection must also activate it; it is not persisted, unlike swap_connection.
+    private void ApplyConnectionOverride()
+    {
+        var connection = configuration[ConnectionOverrideKey];
+        if (string.IsNullOrWhiteSpace(connection))
+        {
+            return;
+        }
+
+        try
+        {
+            connectionRegistry.SetActive(connection);
+        }
+        catch (Exception ex) when (ex is UnknownConnectionException or ProductionProtectedException)
+        {
+            logger.LogWarning("--connection {ConnectionName} was not made the active connection: {Reason}", connection, ex.Message);
+        }
     }
 
     private void RestoreTargets(IAgentSession session)

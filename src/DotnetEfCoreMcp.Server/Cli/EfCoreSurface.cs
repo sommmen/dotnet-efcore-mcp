@@ -47,7 +47,7 @@ public static class EfCoreSurface
         new("--assembly", ConfigKey: "TargetAssemblyPath", Description: "Compiled target project DLL to load. Fails the command when it cannot be loaded."),
         new("--workspace", InjectAs: "workspacePath", ConfigKey: "WorkspacePath", Description: "Directory to discover target assemblies in; also the default workspace-path of list-assembly-candidates. Defaults to the current directory when --assembly is not given."),
         new("--target", InjectAs: "targetName", Description: "Named target assembly to use."),
-        new("--connection", InjectAs: "connectionName", Description: "Logical connection name to use."),
+        new("--connection", InjectAs: "connectionName", ConfigKey: EfCoreSessionInitializer.ConnectionOverrideKey, Description: "Logical connection name to use; also the active connection for operations without a connection-name parameter, for this command only."),
         new(ConfigFlag, Description: "Configuration override as Key=Value, for example --config ToolOutput:Format=json. Repeatable."),
     ];
 
@@ -145,7 +145,7 @@ public static class EfCoreSurface
         {
             ["Logging:LogLevel:Default"] = "Warning",
         };
-        foreach (var (key, value) in flagValues.Where(static pair => pair.Key is "TargetAssemblyPath" or "WorkspacePath"))
+        foreach (var (key, value) in flagValues.Where(static pair => pair.Key is "TargetAssemblyPath" or "WorkspacePath" or EfCoreSessionInitializer.ConnectionOverrideKey))
         {
             overrides[key] = value;
         }
