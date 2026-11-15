@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using DotnetEfCoreMcp.Server.Cli;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 
 namespace DotnetEfCoreMcp.Server.Tests.Cli;
@@ -53,6 +54,8 @@ public sealed class CliProcessSmokeTests : IDisposable
     {
         var load = await RunAsync("load_assembly", "--assembly-path", FixturePaths.SampleAppDllPath);
         Assert.Equal(0, load.ExitCode);
+        Assert.True(File.Exists(Path.Combine(_stateRoot, "dotnet-efcore-mcp", "sessions", _host.SessionId + ".json")),
+            "The session must be written under the isolated state directory, never the real per-user one.");
 
         var query = await RunAsync(
             "run_query", "--connection", CliTestHost.ConnectionName, "--context-name", "SampleAppDbContext",
@@ -101,6 +104,8 @@ public sealed class CliProcessSmokeTests : IDisposable
         {
             startInfo.Environment.Remove(key);
         }
+
+        startInfo.Environment[EfCoreSurface.SessionStateDirectoryVariable] = _stateRoot;
 
         using var process = Process.Start(startInfo)!;
         var stdout = process.StandardOutput.ReadToEndAsync();

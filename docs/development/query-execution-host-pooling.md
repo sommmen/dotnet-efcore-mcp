@@ -10,8 +10,8 @@ Related: [Query execution](query-execution.md) · [Query execution alternatives]
 
 ## Summary
 
-Every out-of-process `run_query` call (`QueryExecution:Mode=OutOfProcess`, or `Auto`, which
-currently always resolves to out-of-process) costs **~1.6–2.1s** end to end on this dev machine.
+Every one-shot out-of-process `run_query` call (`QueryExecution:Mode=OutOfProcess`; `Auto` also
+resolved to this before it started preferring `Pooled` for the long-lived MCP server) costs **~1.6–2.1s** end to end on this dev machine.
 That is a real latency tax for interactive/agentic use, where an LLM may call `run_query`
 repeatedly in one session and would otherwise expect in-process-tool-call latency (5–100ms).
 

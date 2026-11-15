@@ -21,6 +21,10 @@ public sealed class AssemblyLoaderService
     /// entry is currently the default (this name, unless changed via <see cref="SelectDefault"/>).</summary>
     internal const string DefaultTargetName = "__default__";
 
+    /// <summary>The client-facing name of the target loaded without a <c>targetName</c>. Accepted wherever a
+    /// target name is, unless a target of that exact name was registered explicitly.</summary>
+    internal const string DefaultTargetAlias = "default";
+
     private readonly object _gate = new();
     private readonly IReadOnlyList<string> _allowedRoots;
     private readonly Dictionary<string, TargetEntry> _targets = new(StringComparer.Ordinal);
@@ -147,7 +151,7 @@ public sealed class AssemblyLoaderService
         string resolvedName;
         lock (_gate)
         {
-            resolvedName = string.IsNullOrWhiteSpace(targetName) ? _defaultTargetName : targetName;
+            resolvedName = string.IsNullOrWhiteSpace(targetName) ? _defaultTargetName : MapAlias(targetName);
             var previous = _targets.TryGetValue(resolvedName, out var previousEntry) ? previousEntry : null;
 
             var contextName = $"TargetAssembly_{Guid.NewGuid():N}";
@@ -330,6 +334,12 @@ public sealed class AssemblyLoaderService
         }
     }
 
+    /// <summary>Must be called while holding <see cref="_gate"/>.</summary>
+    private string MapAlias(string targetName) =>
+        string.Equals(targetName, DefaultTargetAlias, StringComparison.OrdinalIgnoreCase) && !_targets.ContainsKey(targetName)
+            ? DefaultTargetName
+            : targetName;
+
     /// <summary>Resolves the loaded assembly for <paramref name="targetName"/>.
     /// If <paramref name="targetName"/> is supplied but no such target is registered, throws
     /// <see cref="UnknownAssemblyTargetException"/> (which deliberately does not enumerate other
@@ -350,7 +360,7 @@ public sealed class AssemblyLoaderService
     {
         if (!string.IsNullOrWhiteSpace(targetName))
         {
-            if (_targets.TryGetValue(targetName, out var named))
+            if (_targets.TryGetValue(MapAlias(targetName), out var named))
             {
                 return named;
             }
@@ -393,12 +403,13 @@ public sealed class AssemblyLoaderService
 
         lock (_gate)
         {
-            if (!_targets.ContainsKey(targetName))
+            var resolvedName = MapAlias(targetName);
+            if (!_targets.ContainsKey(resolvedName))
             {
                 throw new UnknownAssemblyTargetException(targetName);
             }
 
-            _defaultTargetName = targetName;
+            _defaultTargetName = resolvedName;
         }
     }
 

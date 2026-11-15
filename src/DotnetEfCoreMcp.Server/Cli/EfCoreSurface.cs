@@ -36,6 +36,10 @@ public static class EfCoreSurface
 
     public const string CliVerb = "cli";
 
+    /// <summary>Overrides the per-user state root that holds CLI sessions. Windows ignores LOCALAPPDATA
+    /// overrides, so a spawned process can only be isolated through this variable.</summary>
+    internal const string SessionStateDirectoryVariable = "DOTNETEFCOREMCP_SESSION_STATE_DIR";
+
     private const string ConfigFlag = "--config";
 
     private static readonly CommandLineGlobalOption[] GlobalOptions =
@@ -86,7 +90,7 @@ public static class EfCoreSurface
         app.ConfigureSession(session =>
         {
             session.AppName = ExecutableName;
-            session.StateDirectory = options.SessionStateDirectory;
+            session.StateDirectory = options.SessionStateDirectory ?? Environment.GetEnvironmentVariable(SessionStateDirectoryVariable);
         });
 
         foreach (var global in GlobalOptions)

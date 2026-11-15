@@ -7,8 +7,18 @@ public sealed record QueryExecutionOptions
     /// generated when one is not configured; set this explicitly to preserve cursors across restarts.</summary>
     public string CursorSigningKey { get; init; } = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 
-    /// <summary>Where Roslyn queries execute. Auto safely selects an isolated process.</summary>
+    /// <summary>Where Roslyn queries execute. Auto always uses an isolated process: the pooled
+    /// persistent query hosts when the server is a long-lived host (MCP stdio), and a one-shot
+    /// query host per call for short-lived processes such as the CLI, where a pool would be torn
+    /// down immediately.</summary>
     public QueryExecutionMode Mode { get; init; } = QueryExecutionMode.Auto;
+
+    /// <summary>Resolves <see cref="QueryExecutionMode.Auto"/> to <see cref="QueryExecutionMode.Pooled"/> for
+    /// a long-lived host and <see cref="QueryExecutionMode.OutOfProcess"/> otherwise. Any other mode is
+    /// returned unchanged.</summary>
+    public QueryExecutionOptions ResolveAutoMode(bool longLivedHost) => Mode == QueryExecutionMode.Auto
+        ? this with { Mode = longLivedHost ? QueryExecutionMode.Pooled : QueryExecutionMode.OutOfProcess }
+        : this;
 
     /// <summary>Path to the query-host DLL. Required for out-of-process Roslyn execution.</summary>
     public string? OutOfProcessHostPath { get; init; }
