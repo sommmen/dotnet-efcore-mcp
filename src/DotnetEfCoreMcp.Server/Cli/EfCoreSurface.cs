@@ -115,10 +115,10 @@ public static class EfCoreSurface
         app.ConfigureCatalog((services, catalog) => catalog.AddMcpServerTools(
             typeof(EfCoreMcpTools).Assembly,
             targetFactory: type => services.GetRequiredService(type),
-            options =>
+            catalogOptions =>
             {
-                options.SafetyMapping = McpToolSafetyMapping.None;
-                options.ResolveTargetsFromServices = true;
+                catalogOptions.SafetyMapping = McpToolSafetyMapping.None;
+                catalogOptions.ResolveTargetsFromServices = true;
             }));
     }
 
@@ -170,7 +170,7 @@ public static class EfCoreSurface
                         configuration["QueryExecution:Mode"] = "Auto";
                     }
                 });
-            builder.Services.AddSingleton<IToolSurfaceHints>(ToolSurfaceHints.Cli);
+            builder.Services.AddSingleton(ToolSurfaceHints.Cli);
             builder.Services.AddSingleton<IAgentSessionInitializer, EfCoreSessionInitializer>();
             builder.Services.AddSingleton<EfCoreMcpTools>();
         });

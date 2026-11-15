@@ -119,7 +119,7 @@ public sealed class CliOperationTests : IDisposable
         const string query = "Customers.OrderBy(c => c.Id).Select(c => c.Name)";
         var tools = CreateTools();
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
-        var expected = await tools.RunQuery("SampleAppDbContext", query, CliTestHost.ConnectionName);
+        var expected = await tools.RunQuery("SampleAppDbContext", query, CliTestHost.ConnectionName, cancellationToken: TestContext.Current.CancellationToken);
 
         var result = await _host.RunAsync("run_query", "--assembly", FixturePaths.SampleAppDllPath, "--context-name", "SampleAppDbContext", "--query", query, "--connection", CliTestHost.ConnectionName);
 

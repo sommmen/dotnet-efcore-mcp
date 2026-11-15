@@ -53,7 +53,7 @@ public sealed class EfCoreMcpTools(
     IAgentSession? agentSession = null)
 {
     private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
-    private readonly IToolSurfaceHints surfaceHints = surfaceHints ?? ToolSurfaceHints.Mcp;
+    private readonly IToolSurfaceHints _surfaceHints = surfaceHints ?? ToolSurfaceHints.Mcp;
     private readonly SchemaComparer _schemaComparer = schemaComparer ?? new SchemaComparer(migrationsOptions, NullLogger<SchemaComparer>.Instance);
 
     internal EfCoreMcpTools(
@@ -1406,7 +1406,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             return assemblyLoader.Get(targetName)
-                ?? throw new McpException(surfaceHints.NoTargetLoaded);
+                ?? throw new McpException(_surfaceHints.NoTargetLoaded);
         }
         catch (UnknownAssemblyTargetException ex)
         {
@@ -1697,7 +1697,7 @@ public sealed class EfCoreMcpTools(
                 var active = connectionRegistry.ActiveConnection;
                 if (active is null)
                 {
-                    throw new McpException(surfaceHints.NoActiveConnection);
+                    throw new McpException(_surfaceHints.NoActiveConnection);
                 }
                 entry = active;
             }

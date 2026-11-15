@@ -3,7 +3,6 @@ using DotnetEfCoreMcp.Server.Cli;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
-using Microsoft.EntityFrameworkCore;
 
 namespace DotnetEfCoreMcp.Server.Tests.Cli;
 
