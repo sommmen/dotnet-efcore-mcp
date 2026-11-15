@@ -81,6 +81,17 @@
       ]
     },
     {
+      "description": "dotnet-agent-surface is a 0.1-preview library that hosts both the MCP server and the CLI, and its packages are pinned to one exact version. Bump the four packages together and review each one by hand; never automerge.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchDepNames": [
+        "/^DotNetAgentSurface\\./"
+      ],
+      "groupName": "dotnet-agent-surface",
+      "automerge": false
+    },
+    {
       "description": "Toon.DotNet is a leaf serialization helper; a breaking change surfaces as a compile error or a failing test.",
       "matchManagers": [
         "nuget"

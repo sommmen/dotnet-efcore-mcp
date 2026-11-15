@@ -18,6 +18,10 @@ public enum ToolCallKind
 
     /// <summary>A call to this MCP server, which satisfies the nudge and resets counters.</summary>
     EfCoreMcpToolUse,
+
+    /// <summary>A shell call to this tool's CLI (<c>dotnet-efcore-mcp cli &lt;query-operation&gt;</c>),
+    /// which satisfies the nudge like an MCP call and switches later reminders to CLI wording.</summary>
+    EfCoreCliToolUse,
 }
 
 /// <summary>
@@ -94,6 +98,11 @@ public static partial class ToolCallClassifier
             return ToolCallKind.EfCoreMcpToolUse;
         }
 
+        if (ShellTools.Contains(toolName) && IsEfCoreCliQueryCommand(call.GetInputText()))
+        {
+            return ToolCallKind.EfCoreCliToolUse;
+        }
+
         var filePath = call.GetFilePath();
 
         if (WriteTools.Contains(toolName))
@@ -167,6 +176,14 @@ public static partial class ToolCallClassifier
             or "get_schema" or "search_schema" or "get_entity_schema" or "list_entities";
     }
 
+    /// <summary>
+    /// Whether a shell command runs one of the query or schema operations through this tool's CLI, in
+    /// either snake_case or kebab-case, however the tool was launched (global/local tool, <c>dnx</c>,
+    /// <c>npx</c> or <c>dotnet &lt;dll&gt;</c>).
+    /// </summary>
+    internal static bool IsEfCoreCliQueryCommand(string? text) =>
+        !string.IsNullOrWhiteSpace(text) && CliQueryCommandRegex().IsMatch(text);
+
     private static bool IsEfCoreBuildCommand(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -224,6 +241,12 @@ public static partial class ToolCallClassifier
         return ExcludedPathFragments.Any(fragment =>
             normalized.Contains(fragment.Replace('\\', '/'), StringComparison.Ordinal));
     }
+
+    /// <summary>Matches <c>dotnet-efcore-mcp ... cli ... &lt;query-operation&gt;</c> within one shell command segment.</summary>
+    [GeneratedRegex(
+        @"(dotnet-efcore-mcp|dotnetefcoremcp\.server)[^|;&\r\n]*?(?<![\w-])cli(?![\w-])[^|;&\r\n]*?(?<![\w-])(run[_-]query|preview[_-]query[_-]sql|run[_-]sql[_-]query|get[_-]schema|search[_-]schema|get[_-]entity[_-]schema|list[_-]entities)(?![\w-])",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex CliQueryCommandRegex();
 
     /// <summary>Matches LINQ query-comprehension syntax, e.g. <c>from o in context.Orders</c>.</summary>
     [GeneratedRegex(@"\bfrom\s+\w+\s+in\s+", RegexOptions.CultureInvariant)]

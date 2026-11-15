@@ -6,7 +6,9 @@ Code: [`src/DotnetEfCoreMcp.Server/AssemblyLoading/AssemblyDiscoveryService.cs`]
 Tests: [`tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`](../../tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading)
 
 See also the [README "Visual Studio Code setup"](../../README.md#visual-studio-code-setup) section
-for user-facing `.vscode/mcp.json` configuration instructions.
+for user-facing `.vscode/mcp.json` configuration instructions. The same setup applies to the MCP server or the CLI
+(`dotnet-efcore-mcp cli ...`): `--workspace`/`WorkspacePath` discovery and `list_assembly_candidates` work on both, and
+the CLI discovers a target in the current directory when none is named.
 
 - [x] Document a first-class `.vscode/mcp.json` setup using the stdio transport and `${workspaceFolder}`
 - [x] Prompt for connection strings with a password-masked `${input:...}` variable so secrets are not committed

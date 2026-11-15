@@ -40,6 +40,11 @@
   <ItemGroup>
     <!-- MCP server SDK: hosting/DI integration package, stdio transport for this MVP. -->
     <PackageReference Include="ModelContextProtocol" />
+    <!-- One operation catalog serves both the MCP server and the plain CLI. -->
+    <PackageReference Include="DotNetAgentSurface.Core" />
+    <PackageReference Include="DotNetAgentSurface.Mcp" />
+    <PackageReference Include="DotNetAgentSurface.CommandLine" />
+    <PackageReference Include="DotNetAgentSurface.Hosting" />
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />

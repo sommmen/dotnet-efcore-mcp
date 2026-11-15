@@ -8,6 +8,10 @@ without writing app code.
 npx -y dotnet-efcore-mcp
 ```
 
+The same command also runs the plain CLI, with no MCP client needed: `npx -y dotnet-efcore-mcp cli --help`,
+`npx -y dotnet-efcore-mcp cli run-query --assembly ./bin/Debug/net10.0/MyApp.dll ...`. See the
+[Choose MCP or CLI](https://github.com/sommmen/dotnet-efcore-mcp#choose-mcp-or-cli) section of the repository README.
+
 This package contains no server code. It is a thin shim that ensures the
 [`DotnetEfCoreMcp.Server`](https://github.com/sommmen/dotnet-efcore-mcp) .NET global tool is
 installed at the matching version, then execs it. **The .NET 10 SDK must be on `PATH`.**
