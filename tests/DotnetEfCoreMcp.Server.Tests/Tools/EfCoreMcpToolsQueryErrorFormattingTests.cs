@@ -30,7 +30,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.ThisMethodDoesNotExist()"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.ThisMethodDoesNotExist()", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("could not be compiled", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Next step: Fix the reported compile error(s)", exception.Message, StringComparison.Ordinal);
@@ -114,7 +114,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         var exception = await Assert.ThrowsAsync<McpException>(
             () => tools.PreviewQuerySql(
                 "SampleAppDbContext",
-                "Customers.OrderBy(c => c.Id).AsEnumerable().Zip(Orders.OrderBy(o => o.Id).AsEnumerable(), (c, o) => new { c.Name, o.Amount })"));
+                "Customers.OrderBy(c => c.Id).AsEnumerable().Zip(Orders.OrderBy(o => o.Id).AsEnumerable(), (c, o) => new { c.Name, o.Amount })", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("is not an IQueryable and has no SQL to preview", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Next step: Rewrite the query", exception.Message, StringComparison.Ordinal);
@@ -134,7 +134,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         var exception = await Assert.ThrowsAsync<McpException>(
             () => tools.PreviewQuerySql(
                 "SampleAppDbContext",
-                "Customers.Where(c => c.Age >= 18)"));
+                "Customers.Where(c => c.Age >= 18)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("QueryExecution:OutOfProcessHostPath", exception.Message, StringComparison.Ordinal);
         Assert.Contains("server-side configuration problem", exception.Message, StringComparison.Ordinal);
@@ -151,7 +151,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("QueryExecution:OutOfProcessHostPath", exception.Message, StringComparison.Ordinal);
         Assert.Contains("server-side configuration problem", exception.Message, StringComparison.Ordinal);
@@ -171,7 +171,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         EnsureSchema(db);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Where(c => c.Name.Normalize() == \"x\").Take(1)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Where(c => c.Name.Normalize() == \"x\").Take(1)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("could not be translated", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Normalize", exception.Message, StringComparison.Ordinal);
@@ -190,7 +190,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         EnsureSchema(db);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Where(c => c.Name.Normalize() == \"x\").Take(1)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Where(c => c.Name.Normalize() == \"x\").Take(1)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("could not be translated", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Normalize", exception.Message, StringComparison.Ordinal);
@@ -213,7 +213,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         var exception = await Assert.ThrowsAsync<McpException>(
             () => tools.RunQuery(
                 "SampleAppDbContext",
-                "Customers.Select(c => new { c.Name, Amounts = c.Orders.Select(o => o.Amount).ToList() }).Distinct()"));
+                "Customers.Select(c => new { c.Name, Amounts = c.Orders.Select(o => o.Amount).ToList() }).Distinct()", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("Cause: InvalidOperationException:", exception.Message, StringComparison.Ordinal);
         Assert.Contains("projection containing a collection", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -233,7 +233,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
         EnsureSchema(db);
 
-        var json = await tools.RunQuery("SampleAppDbContext", "Customers.Take(3).Select(c => new { c.Id, c.Name })");
+        var json = await tools.RunQuery("SampleAppDbContext", "Customers.Take(3).Select(c => new { c.Id, c.Name })", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("could not be translated", json, StringComparison.OrdinalIgnoreCase);
     }

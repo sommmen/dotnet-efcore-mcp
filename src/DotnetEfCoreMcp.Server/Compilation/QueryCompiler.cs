@@ -10,9 +10,12 @@ namespace DotnetEfCoreMcp.Server.Compilation;
 
 public sealed class QueryCompiler(QueryCompilationOptions options)
 {
+    /// <param name="source">The generated user-query source to compile.</param>
+    /// <param name="target">The loaded target assembly the query is compiled against.</param>
     /// <param name="provider">The provider of the connection the query will run against, used to
     /// scope which EF Core provider surfaces enter the compilation's reference set. See
     /// <see cref="ProviderReferenceGroups"/>.</param>
+    /// <param name="cancellationToken">Cancels compilation.</param>
     internal async Task<CompiledQuery> CompileAsync(
         GeneratedUserQuerySource source,
         LoadedAssemblyHandle target,

@@ -5,6 +5,7 @@
          internal runtime dependency bundled inside the Server package, not published on its own. -->
     <IsPackable>false</IsPackable>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
     <!-- Shared NuGet package metadata for every packable project in this repo. -->
     <Authors>Dion Leurink</Authors>

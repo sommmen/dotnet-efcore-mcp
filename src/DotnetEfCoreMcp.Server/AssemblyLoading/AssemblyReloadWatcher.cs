@@ -45,6 +45,9 @@ public sealed class AssemblyReloadWatcher : IHostedService, IDisposable
     /// <summary>
     /// Overload taking an explicit debounce window.
     /// </summary>
+    /// <param name="assemblyLoader">Source of the loaded targets to watch.</param>
+    /// <param name="options">Assembly loader options.</param>
+    /// <param name="logger">Logger for reload diagnostics.</param>
     /// <param name="debounceDelay">
     /// Overrides <see cref="DefaultDebounceDelay"/>. Tests that assert on coalescing behavior widen
     /// this: the default 400 ms is tuned for MSBuild, but a test driving writes through a real

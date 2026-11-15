@@ -105,7 +105,7 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.StartsWith("run_query failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
         Assert.Contains("no such table", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -121,7 +121,7 @@ public sealed class EfCoreMcpToolsSchemaSelectionTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.StartsWith("run_query failed unexpectedly. Error reference: ", exception.Message, StringComparison.Ordinal);
         Assert.Contains("SqliteException", exception.Message, StringComparison.Ordinal);

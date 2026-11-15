@@ -41,7 +41,7 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
 
         // Give it a moment to prove it stays idle (no watcher/timer created, no exception) rather
         // than asserting a negative instantly.
-        await Task.Delay(100);
+        await Task.Delay(100, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(loader.Current);
 
@@ -63,7 +63,7 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
 
         // No reload should occur, so Current should stay the exact same handle instance well past
         // the debounce window.
-        await Task.Delay(800);
+        await Task.Delay(800, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Same(initialHandle, loader.Current);
 
         await watcher.StopAsync(CancellationToken.None);
@@ -118,7 +118,7 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
         for (var i = 0; i < 5; i++)
         {
             TouchFile(dllPath);
-            await Task.Delay(50);
+            await Task.Delay(50, cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var reloadedOnce = await WaitForConditionAsync(
@@ -127,7 +127,7 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
 
         // Give any further (unwanted) debounced reloads a chance to fire before asserting there was
         // only a single one for the whole burst.
-        await Task.Delay(debounce + TimeSpan.FromSeconds(1));
+        await Task.Delay(debounce + TimeSpan.FromSeconds(1), cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, Volatile.Read(ref reloadCount));
 
         await watcher.StopAsync(CancellationToken.None);
@@ -157,7 +157,7 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
         // timestamp backwards emits a real watcher event while preserving that condition.
         var loadedWriteTimeUtc = File.GetLastWriteTimeUtc(dllPath);
         File.SetLastWriteTimeUtc(dllPath, loadedWriteTimeUtc.AddSeconds(-1));
-        await Task.Delay(1000);
+        await Task.Delay(1000, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, Volatile.Read(ref reloadCount));
 
         // A genuinely newer version must still cause one more reload.
@@ -167,7 +167,7 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
             timeout: TimeSpan.FromSeconds(10));
         Assert.True(secondReloaded, "Expected a newer file version to trigger another automatic reload.");
 
-        await Task.Delay(1000);
+        await Task.Delay(1000, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, Volatile.Read(ref reloadCount));
 
         await watcher.StopAsync(CancellationToken.None);
@@ -190,7 +190,7 @@ public sealed class AssemblyReloadWatcherTests : IDisposable
 
         // Touching the now-stale first path must not trigger anything (nothing watches it anymore).
         TouchFile(firstPath);
-        await Task.Delay(800);
+        await Task.Delay(800, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Same(handleAfterSwitch, loader.Current);
 
         // Touching the newly loaded second path should now trigger an automatic reload.

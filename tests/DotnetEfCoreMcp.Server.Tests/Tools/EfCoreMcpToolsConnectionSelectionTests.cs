@@ -38,7 +38,7 @@ public sealed class EfCoreMcpToolsConnectionSelectionTests
         tools.SwapConnection("Beta");
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)"));
+            () => tools.RunQuery("SampleAppDbContext", "Customers.Select(c => c.Name)", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.DoesNotContain("Alpha", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("connectionName", exception.Message, StringComparison.Ordinal);

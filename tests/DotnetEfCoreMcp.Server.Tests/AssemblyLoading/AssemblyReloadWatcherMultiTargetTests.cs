@@ -109,7 +109,7 @@ public sealed class AssemblyReloadWatcherMultiTargetTests : IDisposable
         Assert.True(alphaReloaded, "Expected alpha (auto-reload explicitly overridden to true) to reload despite the server-wide default being disabled.");
 
         TouchFile(betaPath);
-        await Task.Delay(800);
+        await Task.Delay(800, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Same(initialBeta, loader.Get("beta"));
 
         await watcher.StopAsync(CancellationToken.None);

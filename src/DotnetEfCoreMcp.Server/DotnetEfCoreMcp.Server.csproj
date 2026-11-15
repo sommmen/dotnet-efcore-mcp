@@ -134,6 +134,9 @@
   <PropertyGroup>
     <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludeSkillsInPackage</TargetsForTfmSpecificContentInPackage>
     <SkillsSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\skills'))</SkillsSourceDir>
+    <!-- NU5111: the bundled skills ship helper scripts (e.g. collect_environment.ps1) as plain content
+         under tools/. NuGet only flags that they will not run as install scripts, which is intended. -->
+    <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>
 
   <Target Name="IncludeSkillsInPackage" Condition="Exists('$(SkillsSourceDir)')">

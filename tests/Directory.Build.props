@@ -6,6 +6,7 @@
        src/Directory.Build.props. -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
 </Project>

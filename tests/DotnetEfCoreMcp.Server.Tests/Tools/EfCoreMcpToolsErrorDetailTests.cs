@@ -113,7 +113,7 @@ public sealed class EfCoreMcpToolsErrorDetailTests
         tools.LoadAssembly(FixturePaths.SampleAppDllPath);
 
         var exception = await Assert.ThrowsAsync<McpException>(
-            () => tools.RunSqlQuery("SampleAppDbContext", "SELECT * FROM ThisTableDoesNotExist"));
+            () => tools.RunSqlQuery("SampleAppDbContext", "SELECT * FROM ThisTableDoesNotExist", cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("ThisTableDoesNotExist", exception.Message, StringComparison.Ordinal);
     }
