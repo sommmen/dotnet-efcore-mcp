@@ -26,10 +26,10 @@
     <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <PackageVersion Include="ModelContextProtocol" Version="2.3.1" />    <!-- dotnet-agent-surface is 0.1-preview: pin exact versions and bump them deliberately. -->
-    <PackageVersion Include="DotNetAgentSurface.Core" Version="[0.1.77-preview]" />
-    <PackageVersion Include="DotNetAgentSurface.Mcp" Version="[0.1.77-preview]" />
-    <PackageVersion Include="DotNetAgentSurface.CommandLine" Version="[0.1.77-preview]" />
-    <PackageVersion Include="DotNetAgentSurface.Hosting" Version="[0.1.77-preview]" />
+    <PackageVersion Include="DotNetAgentSurface.Core" Version="[0.1.84-preview]" />
+    <PackageVersion Include="DotNetAgentSurface.Mcp" Version="[0.1.84-preview]" />
+    <PackageVersion Include="DotNetAgentSurface.CommandLine" Version="[0.1.84-preview]" />
+    <PackageVersion Include="DotNetAgentSurface.Hosting" Version="[0.1.84-preview]" />
 
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- Update check only: NuGet's own version type, because prerelease ordering (0.2.0-preview

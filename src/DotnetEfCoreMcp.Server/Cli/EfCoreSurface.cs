@@ -91,7 +91,9 @@ public static class EfCoreSurface
         {
             session.AppName = ExecutableName;
             session.StateDirectory = options.SessionStateDirectory ?? Environment.GetEnvironmentVariable(SessionStateDirectoryVariable);
+            session.SensitiveKeys.Add(ToolSessionKeys.CursorKey);
         });
+        app.BindOutputFormat("ToolOutput:Format");
 
         foreach (var global in GlobalOptions)
         {
