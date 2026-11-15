@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ModelShapesApp</RootNamespace>
+    <!-- Model shapes whose names and drift were once mishandled: many-to-many join entities (shared
+         CLR type Dictionary<string, object>), a generic entity type, and a keyless view-mapped
+         entity that EfCore.SchemaCompare reports as NotChecked. Loaded as a compiled DLL, like the
+         other fixtures. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+</Project>

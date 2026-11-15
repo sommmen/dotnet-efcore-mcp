@@ -324,8 +324,12 @@
         "type": "object",
         "properties": {
           "workspacePath": {
-            "description": "Absolute path to the workspace or repository to inspect.",
-            "type": "string"
+            "description": "Absolute path to the workspace or repository to inspect. Omit to use the server's working directory (the CLI's --workspace, or the current directory).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           },
           "pathFilter": {
             "description": "Optional case-insensitive substring to filter candidates by their projectPath (e.g. a project or folder name). Omit to return all projects.",
@@ -340,10 +344,7 @@
             "type": "boolean",
             "default": false
           }
-        },
-        "required": [
-          "workspacePath"
-        ]
+        }
       }
     },
     {
@@ -414,7 +415,7 @@
     },
     {
       "name": "list_migrations",
-      "description": "Inspects Entity Framework Core migration state for a DbContext: which migrations are known to the migration assembly, which are applied (per __EFMigrationsHistory), and which are pending. Always available on every connection, including Production and ReadOnly connections, because it only reads __EFMigrationsHistory and migration metadata (no DDL/DML). When the target database is unreachable, databaseExists is false and every known migration is reported pending with appliedStateAvailable set to false rather than presenting metadata as applied state. Mirrors 'dotnet ef migrations list': migrations[] lists every known migration in order with applied (true/false, or null when applied state is unavailable); knownMigrationCount of 0 usually means the wrong migrationsAssembly; lastAppliedMigration is the anchor for generate_migration_script fromMigration; unknownAppliedMigrations are history rows the loaded code doesn't know (database ahead of or diverged from the code); pendingMigrations[].outOfOrder is true when a pending migration sorts before lastAppliedMigration; hasPendingModelChanges mirrors 'dotnet ef migrations has-pending-model-changes' (null when it can't be computed) and doesn't need the database. When a query fails with 'Invalid column name' / 'Invalid object name' / 'no such column' / 'no such table' / 'column ... does not exist', call list_migrations (and then compare_schema) for the failing connection to check whether the database is missing migrations.",
+      "description": "Inspects Entity Framework Core migration state for a DbContext: which migrations are known to the migration assembly, which are applied (per __EFMigrationsHistory), and which are pending. Always available on every connection, including Production and ReadOnly connections, because it only reads __EFMigrationsHistory and migration metadata (no DDL/DML). When the target database is unreachable, databaseExists is false and every known migration is reported pending with appliedStateAvailable set to false rather than presenting metadata as applied state. Mirrors 'dotnet ef migrations list': migrations[] lists every known migration in order with applied (true/false, or null when applied state is unavailable); knownMigrationCount of 0 usually means the wrong migrationsAssembly (a warning then says so; pass the DLL path of the project that holds the migrations); lastAppliedMigration is the anchor for generate_migration_script fromMigration; unknownAppliedMigrations are history rows the loaded code doesn't know (database ahead of or diverged from the code); pendingMigrations[].outOfOrder is true when a pending migration sorts before lastAppliedMigration; hasPendingModelChanges mirrors 'dotnet ef migrations has-pending-model-changes' (null when it can't be computed) and doesn't need the database. When a query fails with 'Invalid column name' / 'Invalid object name' / 'no such column' / 'no such table' / 'column ... does not exist', call list_migrations (and then compare_schema) for the failing connection to check whether the database is missing migrations. Long histories are summarized: appliedMigrations, migrations and unknownAppliedMigrations list only the latest entries (see the *Count fields and listsTruncated); pass fullLists to get every entry. pendingMigrations is always complete.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -437,6 +438,11 @@
               "null"
             ],
             "default": null
+          },
+          "fullLists": {
+            "description": "When true, returns every applied/known/unknown-applied migration instead of only the latest entries of each list. Omit unless you need the whole history.",
+            "type": "boolean",
+            "default": false
           }
         },
         "required": [

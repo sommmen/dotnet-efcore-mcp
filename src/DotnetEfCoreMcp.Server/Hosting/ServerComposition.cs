@@ -1,6 +1,7 @@
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Migrations;
 using DotnetEfCoreMcp.Server.Mutations;
 using DotnetEfCoreMcp.Server.Onboarding;
@@ -294,29 +295,7 @@ public static class ServerComposition
 
         if (string.IsNullOrWhiteSpace(configuredAssemblyPath) && !string.IsNullOrWhiteSpace(workspacePath))
         {
-            try
-            {
-                var discovered = services.GetRequiredService<AssemblyDiscoveryService>()
-                    .Discover(workspacePath);
-                configuredAssemblyPath = discovered.Count > 0 ? discovered[0].AssemblyPath : null;
-
-                if (configuredAssemblyPath is null)
-                {
-                    logger.LogInformation(
-                        "No target assemblies found under workspace {WorkspacePath}. Build a project or use load_assembly explicitly.",
-                        Path.GetFullPath(workspacePath));
-                }
-                else
-                {
-                    logger.LogInformation(
-                        "Automatically selected target assembly {AssemblyPath} from workspace {WorkspacePath}.",
-                        configuredAssemblyPath, Path.GetFullPath(workspacePath));
-                }
-            }
-            catch (AssemblyDiscoveryException ex)
-            {
-                logger.LogWarning(ex, "Could not discover target assemblies under workspace {WorkspacePath}.", workspacePath);
-            }
+            LoadFirstDiscoveredContextAssembly(services, workspacePath, logger);
         }
 
         if (!string.IsNullOrWhiteSpace(configuredAssemblyPath))
@@ -362,6 +341,56 @@ public static class ServerComposition
                 logger.LogWarning(ex, "Failed to load configured AssemblyLoader:Targets entry '{TargetName}' at startup ('{Path}'); use the load_assembly tool once the issue is resolved.", targetName, targetOptions.Path);
             }
         }
+    }
 
+    private const int MaxWorkspaceCandidatesToLoad = 10;
+
+    /// <summary>Loads the best-ranked assembly under <paramref name="workspacePath"/> that really contains a
+    /// DbContext. Discovery's metadata heuristic only ranks, so each plausible candidate is loaded and
+    /// scanned, and one that turns out to hold none is unloaded again rather than silently kept as the target.</summary>
+    private static void LoadFirstDiscoveredContextAssembly(IServiceProvider services, string workspacePath, ILogger logger)
+    {
+        IReadOnlyList<AssemblyCandidate> discovered;
+        try
+        {
+            discovered = services.GetRequiredService<AssemblyDiscoveryService>().Discover(workspacePath);
+        }
+        catch (AssemblyDiscoveryException ex)
+        {
+            logger.LogWarning(ex, "Could not discover target assemblies under workspace {WorkspacePath}.", workspacePath);
+            return;
+        }
+
+        var fullWorkspace = Path.GetFullPath(workspacePath);
+        if (discovered.Count == 0)
+        {
+            logger.LogInformation("No target assemblies found under workspace {WorkspacePath}. Build a project or use load_assembly explicitly.", fullWorkspace);
+            return;
+        }
+
+        var loader = services.GetRequiredService<AssemblyLoaderService>();
+        foreach (var candidate in discovered.Where(c => c.LikelyContainsDbContext).Take(MaxWorkspaceCandidatesToLoad))
+        {
+            try
+            {
+                var handle = loader.Load(candidate.AssemblyPath);
+                if (DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors.Count > 0)
+                {
+                    logger.LogInformation(
+                        "Automatically selected target assembly {AssemblyPath} from workspace {WorkspacePath}.", candidate.AssemblyPath, fullWorkspace);
+                    return;
+                }
+
+                loader.Unload();
+            }
+            catch (AssemblyLoadFailedException ex)
+            {
+                logger.LogInformation(ex, "Skipped candidate {AssemblyPath}: it could not be loaded.", candidate.AssemblyPath);
+            }
+        }
+
+        logger.LogWarning(
+            "None of the {Count} assemblies under workspace {WorkspacePath} contains a DbContext, so none was loaded. Pass --assembly <path-to-dll> (or call load_assembly) to choose one.",
+            discovered.Count, fullWorkspace);
     }
 }

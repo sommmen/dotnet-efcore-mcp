@@ -18,4 +18,9 @@ public sealed class MigrationsOptions
     /// <summary>Maximum number of entries <c>compare_schema</c> returns across all result buckets;
     /// further entries are dropped and <c>truncated</c> is set.</summary>
     public int MaxDriftEntries { get; init; } = 500;
+
+    /// <summary>Maximum number of entries each of <c>list_migrations</c>' <c>appliedMigrations</c>,
+    /// <c>migrations</c> and <c>unknownAppliedMigrations</c> lists returns (the latest ones) unless the
+    /// caller asks for the full lists. <c>pendingMigrations</c> is never capped.</summary>
+    public int MaxListedMigrations { get; init; } = 25;
 }

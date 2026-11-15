@@ -6,7 +6,7 @@ Code: [`src/DotnetEfCoreMcp.Server/Schema`](../../src/DotnetEfCoreMcp.Server/Sch
 Tests: [`tests/DotnetEfCoreMcp.Server.Tests/Schema`](../../tests/DotnetEfCoreMcp.Server.Tests/Schema)
 
 - [x] Build the EF Core model for a resolved `DbContext` instance (`context.Model`)
-- [x] Expose entity types, their CLR properties, and mapped column names/types
+- [x] Expose entity types, their CLR properties, and mapped column names/types. Entities are sorted by name; a shared-type entity (such as a many-to-many join table) is named by its EF entity name and a generic CLR type is shown as `Name<Arg>`, so every entity name is unique and addressable through `get_entity_schema`.
 - [x] Expose primary keys, foreign keys, and navigation properties (relationships)
 - [x] Expose owned types and inheritance hierarchies (TPH/TPT/TPC) where present
   - `EntityTypeSchema.IsOwned`, `BaseEntityName`, `DiscriminatorProperty`. Not exercised
@@ -78,7 +78,7 @@ connection names never share a cached schema even for the same `DbContext` type,
 ## P0 #9: policy-filtered schema discovery
 
 The per-connection `AccessPolicy` (see [Connection management](./connections.md)) is applied
-before any schema response is formed. `list_contexts` returns only contexts reachable for the
+before any schema response is formed. `list_contexts` reports `hiddenByAccessPolicy` (with a warning naming the connection) for contexts it leaves out, and returns only contexts reachable for the
 active connection. `get_schema`, `get_entity_schema`, and `search_schema` first authorize the
 requested context (`EnsureContextReachable`), then route the cached `SchemaDto` through a
 freshly-constructed `ConnectionSchemaAccessPolicy` (implementing `ISchemaAccessPolicy`) that

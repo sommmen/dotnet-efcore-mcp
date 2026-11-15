@@ -9,6 +9,9 @@ public interface IToolSurfaceHints
 
     /// <summary>Error for a tool call that needs a connection when none is active or given.</summary>
     string NoActiveConnection { get; }
+
+    /// <summary>Advice appended to warnings about the active connection (for example one whose access policy hides a context).</summary>
+    string SwitchConnectionHint { get; }
 }
 
 /// <summary>The built-in <see cref="IToolSurfaceHints"/> implementations.</summary>
@@ -27,6 +30,9 @@ public static class ToolSurfaceHints
 
         public string NoActiveConnection =>
             "No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections; call reload_connections if one you configured is missing from it.)";
+
+        public string SwitchConnectionHint =>
+            "Call swap_connection (or list_connections to see the options) to use a connection that belongs to this application.";
     }
 
     private sealed class CliHints : IToolSurfaceHints
@@ -38,5 +44,8 @@ public static class ToolSurfaceHints
         public string NoActiveConnection =>
             "No connection is active yet. Pass --connection <name>, or run `swap_connection --connection-name <name>` once to remember one for this session. " +
             "(Connections available via list_connections.)";
+
+        public string SwitchConnectionHint =>
+            "Pass --connection <name> (see list-connections) to use a connection that belongs to this application.";
     }
 }

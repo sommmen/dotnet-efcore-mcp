@@ -41,7 +41,7 @@ public static class EfCoreSurface
     private static readonly CommandLineGlobalOption[] GlobalOptions =
     [
         new("--assembly", ConfigKey: "TargetAssemblyPath", Description: "Compiled target project DLL to load. Fails the command when it cannot be loaded."),
-        new("--workspace", ConfigKey: "WorkspacePath", Description: "Directory to discover target assemblies in. Defaults to the current directory when --assembly is not given."),
+        new("--workspace", InjectAs: "workspacePath", ConfigKey: "WorkspacePath", Description: "Directory to discover target assemblies in; also the default workspace-path of list-assembly-candidates. Defaults to the current directory when --assembly is not given."),
         new("--target", InjectAs: "targetName", Description: "Named target assembly to use."),
         new("--connection", InjectAs: "connectionName", Description: "Logical connection name to use."),
         new(ConfigFlag, Description: "Configuration override as Key=Value, for example --config ToolOutput:Format=json. Repeatable."),

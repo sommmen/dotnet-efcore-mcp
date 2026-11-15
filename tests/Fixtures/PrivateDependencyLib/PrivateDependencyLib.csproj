@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PrivateDependencyLib</RootNamespace>
+    <!-- A dependency that exists only beside PrivateDepMigrationsApp (like Sentry beside a web API):
+         never referenced by the DbContext assembly, so it can only be found in that folder. -->
+  </PropertyGroup>
+
+</Project>

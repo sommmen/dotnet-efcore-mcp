@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PrivateDepMigrationsApp</RootNamespace>
+    <!-- Migrations for SplitContextApp.SplitDbContext, in a project whose own output folder holds a
+         dependency (PrivateDependencyLib) that neither the DbContext assembly nor its folder has -
+         the shape of a web API project carrying migrations for a DAL context. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SplitContextApp\SplitContextApp.csproj" />
+    <ProjectReference Include="..\PrivateDependencyLib\PrivateDependencyLib.csproj" />
+  </ItemGroup>
+
+</Project>

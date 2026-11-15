@@ -248,7 +248,7 @@ public sealed class AssemblyLoaderService
                     // rather than escaping as an unhandled exception to the tool caller.
                     throw new AssemblyLoadFailedException(
                         $"Migrations assembly '{migrationsAssembly}' could not be resolved as a dependency of the currently loaded target assembly ('{handle.AssemblyPath}'). " +
-                        "If it is not a project or package reference of the loaded assembly, pass its compiled DLL path instead.",
+                        $"If it is not a project or package reference of the loaded assembly, pass the path to its built DLL instead (for example <project folder>/bin/Debug/<tfm>/{migrationsAssembly}.dll).",
                         ex);
                 }
 
@@ -263,7 +263,7 @@ public sealed class AssemblyLoaderService
                 {
                     throw new AssemblyLoadFailedException(
                         $"Migrations assembly '{migrationsAssembly}' resolved to an assembly outside the loaded target's assembly context ('{handle.AssemblyPath}'). " +
-                        "This typically means it is not actually a dependency of the loaded target assembly. Pass its compiled DLL path instead, or add it as a real dependency of the target.");
+                        $"This typically means it is not actually a dependency of the loaded target assembly. Pass the path to its built DLL instead (for example <project folder>/bin/Debug/<tfm>/{migrationsAssembly}.dll), or add it as a real dependency of the target.");
                 }
 
                 return resolved;

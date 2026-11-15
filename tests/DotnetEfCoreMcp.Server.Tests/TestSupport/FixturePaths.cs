@@ -58,6 +58,13 @@ public static class FixturePaths
     /// in <c>OPG.AuthApi</c>.</summary>
     public static string SplitMigrationsAppDllPath => GetFixtureDllPath("SplitMigrationsApp", "SplitMigrationsApp.dll");
 
+    /// <summary>Many-to-many join entities (shared CLR type), a generic entity and a keyless view entity.</summary>
+    public static string ModelShapesAppDllPath => GetFixtureDllPath("ModelShapesApp", "ModelShapesApp.dll");
+
+    /// <summary>Migrations for <c>SplitContextApp.SplitDbContext</c> in a project whose own output folder holds
+    /// a dependency (<c>PrivateDependencyLib</c>) that the DbContext assembly's folder does not.</summary>
+    public static string PrivateDepMigrationsAppDllPath => GetFixtureDllPath("PrivateDepMigrationsApp", "PrivateDepMigrationsApp.dll");
+
     private static string GetFixtureDllPath(string fixtureName, string assemblyFileName)
     {
         foreach (var config in new[] { "Debug", "Release" })

@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Tests.TestSupport;
 
 namespace DotnetEfCoreMcp.Server.Tests.AssemblyLoading;
 
@@ -72,6 +73,65 @@ public sealed class AssemblyDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
+    public void Discover_FlagsContextDerivingFromGenericBaseInAnotherAssembly()
+    {
+        WriteProject("Data/IdentityApp.csproj");
+        CopyDirectory(Path.GetDirectoryName(FixturePaths.IdentityAppDllPath)!, Path.Combine(_workspace, "Data", "bin", "Debug", "net10.0"));
+        WriteProject("Tools/Tools.csproj");
+        WriteDllWithType("Tools/bin/Debug/net10.0/Tools.dll", "Tools.Program", baseTypeName: null);
+
+        var candidates = _service.Discover(_workspace);
+
+        Assert.True(candidates[0].LikelyContainsDbContext);
+        Assert.EndsWith("IdentityApp.dll", candidates[0].AssemblyPath);
+        Assert.False(candidates[1].LikelyContainsDbContext);
+    }
+
+    [Fact]
+    public void Discover_DoesNotFlagTypeDerivingFromUnrelatedTypeNamedDbContext()
+    {
+        WriteProject("Fake/Fake.csproj");
+        WriteDllWithLookalikeDbContext("Fake/bin/Debug/net10.0/Fake.dll");
+
+        var candidate = Assert.Single(_service.Discover(_workspace));
+
+        Assert.False(candidate.LikelyContainsDbContext);
+    }
+
+    [Fact]
+    public void Discover_RanksTestProjectsBehindApplicationAssembliesThatContainDbContext()
+    {
+        WriteProject("Data.Tests/Data.Tests.csproj");
+        WriteProject("Data/Data.csproj");
+        WriteProject("Plain/Plain.csproj");
+        WriteDllWithType("Data.Tests/bin/Debug/net8.0/Data.Tests.dll", "Data.Tests.TestDbContext", baseTypeName: "Microsoft.EntityFrameworkCore.DbContext");
+        WriteDllWithType("Data/bin/Debug/net8.0/Data.dll", "Data.MyDbContext", baseTypeName: "Microsoft.EntityFrameworkCore.DbContext");
+        WriteDllWithType("Plain/bin/Debug/net8.0/Plain.dll", "Plain.Program", baseTypeName: null);
+        File.SetLastWriteTimeUtc(Path.Combine(_workspace, "Data.Tests", "bin", "Debug", "net8.0", "Data.Tests.dll"), new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var candidates = _service.Discover(_workspace);
+
+        Assert.Equal(["Data.dll", "Data.Tests.dll", "Plain.dll"], candidates.Select(c => Path.GetFileName(c.AssemblyPath)));
+        Assert.True(candidates[0].IsPreferred);
+        Assert.True(candidates[1].IsTestProject);
+        Assert.False(candidates[0].IsTestProject);
+    }
+
+    [Fact]
+    public void Discover_TreatsProjectReferencingATestFrameworkAsATestProject()
+    {
+        WriteProjectXml("Checks/Checks.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>");
+        WriteProject("Data/Data.csproj");
+        WriteDllWithType("Checks/bin/Debug/net8.0/Checks.dll", "Checks.Fixture", baseTypeName: "Microsoft.EntityFrameworkCore.DbContext");
+        WriteDllWithType("Data/bin/Debug/net8.0/Data.dll", "Data.MyDbContext", baseTypeName: "Microsoft.EntityFrameworkCore.DbContext");
+
+        var candidates = _service.Discover(_workspace);
+
+        Assert.EndsWith("Data.dll", candidates[0].AssemblyPath);
+        Assert.True(candidates[1].IsTestProject);
+    }
+
+    [Fact]
     public void Discover_RejectsMissingWorkspace()
     {
         Directory.Delete(_workspace, recursive: true);
@@ -88,6 +148,39 @@ public sealed class AssemblyDiscoveryServiceTests : IDisposable
         File.WriteAllText(path, assemblyName is null
             ? "<Project Sdk=\"Microsoft.NET.Sdk\" />"
             : $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>{assemblyName}</AssemblyName></PropertyGroup></Project>");
+    }
+
+    private void WriteProjectXml(string relativePath, string xml)
+    {
+        var path = Path.Combine(_workspace, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, xml);
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+        }
+    }
+
+    /// <summary>Writes an assembly with a type deriving from another type of the same assembly that is merely named DbContext.</summary>
+    private void WriteDllWithLookalikeDbContext(string relativePath)
+    {
+        var path = Path.Combine(_workspace, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        var assemblyName = new AssemblyName(Path.GetFileNameWithoutExtension(path));
+        var assemblyBuilder = new PersistedAssemblyBuilder(assemblyName, typeof(object).Assembly);
+        var moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName.Name!);
+        var lookalike = moduleBuilder.DefineType("Other.DbContext", TypeAttributes.Public | TypeAttributes.Class, typeof(object));
+        lookalike.CreateType();
+        moduleBuilder.DefineType("Fake.Repository", TypeAttributes.Public | TypeAttributes.Class, lookalike).CreateType();
+
+        using var stream = File.Create(path);
+        assemblyBuilder.Save(stream);
     }
 
     private void WriteDll(string relativePath, DateTime lastWriteTimeUtc)

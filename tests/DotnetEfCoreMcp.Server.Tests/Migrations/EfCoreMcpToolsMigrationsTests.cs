@@ -93,6 +93,31 @@ public sealed class EfCoreMcpToolsMigrationsTests : IDisposable
     }
 
     [Fact]
+    public async Task ListMigrations_WithLongHistory_SummarizesListsUnlessFullListsIsRequested()
+    {
+        await MigrateDatabaseAsync();
+        var tools = CreateTools(new MigrationsOptions { MaxListedMigrations = 1 });
+
+        var summary = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
+        var full = await tools.ListMigrations("SampleAppDbContext", "MigrationsTests", fullLists: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        using var summaryDocument = JsonDocument.Parse(summary);
+        var root = summaryDocument.RootElement;
+        Assert.True(root.GetProperty("listsTruncated").GetBoolean());
+        Assert.Equal(2, root.GetProperty("appliedMigrationCount").GetInt32());
+        Assert.Equal(2, root.GetProperty("knownMigrationCount").GetInt32());
+        var applied = Assert.Single(root.GetProperty("appliedMigrations").EnumerateArray());
+        Assert.EndsWith("_AddCustomerEmail", applied.GetProperty("MigrationId").GetString(), StringComparison.Ordinal);
+        Assert.Single(root.GetProperty("migrations").EnumerateArray());
+        Assert.Contains("fullLists", root.GetProperty("warnings")[0].GetString(), StringComparison.Ordinal);
+
+        using var fullDocument = JsonDocument.Parse(full);
+        Assert.False(fullDocument.RootElement.GetProperty("listsTruncated").GetBoolean());
+        Assert.Equal(2, fullDocument.RootElement.GetProperty("appliedMigrations").GetArrayLength());
+        Assert.Equal(2, fullDocument.RootElement.GetProperty("migrations").GetArrayLength());
+    }
+
+    [Fact]
     public async Task ListMigrations_WithProductionConnection_ReportsAppliedAndPending()
     {
         var tools = CreateTools(environment: EnvironmentType.Production);
