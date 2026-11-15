@@ -21,8 +21,8 @@ public sealed class AssemblyLoaderService
     /// entry is currently the default (this name, unless changed via <see cref="SelectDefault"/>).</summary>
     internal const string DefaultTargetName = "__default__";
 
-    /// <summary>The client-facing name of the target loaded without a <c>targetName</c>. Accepted wherever a
-    /// target name is, unless a target of that exact name was registered explicitly.</summary>
+    /// <summary>The client-facing name of the target loaded without a <c>targetName</c>. Accepted when selecting or
+    /// resolving a target, unless a target of that exact name exists; loading under this name registers a separate target.</summary>
     internal const string DefaultTargetAlias = "default";
 
     private readonly object _gate = new();
@@ -151,7 +151,7 @@ public sealed class AssemblyLoaderService
         string resolvedName;
         lock (_gate)
         {
-            resolvedName = string.IsNullOrWhiteSpace(targetName) ? _defaultTargetName : MapAlias(targetName);
+            resolvedName = string.IsNullOrWhiteSpace(targetName) ? _defaultTargetName : targetName;
             var previous = _targets.TryGetValue(resolvedName, out var previousEntry) ? previousEntry : null;
 
             var contextName = $"TargetAssembly_{Guid.NewGuid():N}";
