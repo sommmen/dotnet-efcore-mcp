@@ -29,7 +29,7 @@ public static class SchemaBuilder
         // a catch-all to paper over the expected failure (which would also hide real bugs).
         var isRelational = context.Database.IsRelational();
 
-        foreach (var entityType in model.GetEntityTypes())
+        foreach (var entityType in model.GetEntityTypes().OrderBy(EntityName, StringComparer.OrdinalIgnoreCase).ThenBy(EntityName, StringComparer.Ordinal))
         {
             var primaryKey = entityType.FindPrimaryKey();
 
@@ -62,7 +62,7 @@ public static class SchemaBuilder
             var foreignKeys = entityType.GetForeignKeys()
                 .Select(fk => new ForeignKeySchema(
                     Properties: fk.Properties.Select(p => p.Name).ToList(),
-                    PrincipalEntity: fk.PrincipalEntityType.ClrType.Name,
+                    PrincipalEntity: EntityName(fk.PrincipalEntityType),
                     PrincipalProperties: fk.PrincipalKey.Properties.Select(p => p.Name).ToList(),
                     DependentToPrincipalNavigation: fk.DependentToPrincipal?.Name,
                     PrincipalToDependentNavigation: fk.PrincipalToDependent?.Name,
@@ -75,7 +75,7 @@ public static class SchemaBuilder
             var navigations = entityType.GetNavigations()
                 .Select(n => new NavigationSchema(
                     Name: n.Name,
-                    TargetEntity: n.TargetEntityType.ClrType.Name,
+                    TargetEntity: EntityName(n.TargetEntityType),
                     IsCollection: n.IsCollection,
                     IsOnDependent: n.IsOnDependent,
                     IsEagerLoaded: n.IsEagerLoaded,
@@ -93,15 +93,15 @@ public static class SchemaBuilder
             var indexes = indexList.Count > 0 ? indexList : null;
 
             entities.Add(new EntityTypeSchema(
-                Name: entityType.ClrType.Name,
-                ClrFullName: entityType.ClrType.FullName,
+                Name: EntityName(entityType),
+                ClrFullName: FormatClrFullName(entityType.ClrType),
                 TableName: TryGetTableName(entityType),
                 Properties: properties,
                 PrimaryKeyProperties: primaryKeyProperties,
                 ForeignKeys: foreignKeys,
                 Navigations: navigations,
                 IsOwned: entityType.IsOwned(),
-                BaseEntityName: entityType.BaseType?.ClrType.Name,
+                BaseEntityName: entityType.BaseType is { } baseType ? EntityName(baseType) : null,
                 DiscriminatorProperty: entityType.FindDiscriminatorProperty()?.Name,
                 Schema: isRelational ? entityType.GetSchema() : null,
                 ViewName: isRelational ? entityType.GetViewName() : null,
@@ -112,6 +112,29 @@ public static class SchemaBuilder
         }
 
         return new SchemaDto(context.GetType().Name, entities);
+    }
+
+    /// <summary>The name callers use for an entity: the EF entity name for a shared-type entity (many
+    /// share one CLR type such as <c>Dictionary&lt;string, object&gt;</c>), a readable generic name for
+    /// a generic CLR type, and the CLR type name otherwise.</summary>
+    public static string EntityName(Microsoft.EntityFrameworkCore.Metadata.IReadOnlyTypeBase entityType) =>
+        entityType.HasSharedClrType ? entityType.Name
+        : entityType.ClrType.IsGenericType ? FormatClrTypeName(entityType.ClrType)
+        : entityType.ClrType.Name;
+
+    // Type.FullName of a constructed generic embeds every argument assembly-qualified, which runs to hundreds of characters.
+    private static string? FormatClrFullName(Type type)
+    {
+        if (!type.IsGenericType)
+            return type.FullName;
+
+        var definitionName = type.GetGenericTypeDefinition().FullName;
+        if (definitionName is null)
+            return type.FullName;
+
+        var genericArguments = string.Join(", ", type.GetGenericArguments().Select(a => FormatClrFullName(a) ?? a.Name));
+        // Arity markers are stripped everywhere so a nested type keeps its "+Inner" suffix.
+        return $"{System.Text.RegularExpressions.Regex.Replace(definitionName, @"`\d+", string.Empty)}<{genericArguments}>";
     }
 
     // Table/column/store-type metadata comes from the relational annotation extensions

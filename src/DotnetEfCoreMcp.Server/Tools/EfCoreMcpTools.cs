@@ -112,13 +112,15 @@ public sealed class EfCoreMcpTools(
         "against each candidate's projectPath) to narrow results to a specific area of the workspace, e.g. " +
         "pathFilter: \"MyApp.Data\" instead of grepping the full output.")]
     public string ListAssemblyCandidates(
-        [Description("Absolute path to the workspace or repository to inspect.")] string workspacePath,
+        [Description("Absolute path to the workspace or repository to inspect. Omit to use the server's working directory (the CLI's --workspace, or the current directory).")] string? workspacePath = null,
         [Description("Optional case-insensitive substring to filter candidates by their projectPath (e.g. a project or folder name). Omit to return all projects.")] string? pathFilter = null,
         [Description("When false (default), only one representative candidate per project is returned (the preferred build, or the best match if pathFilter narrows to that project), with otherBuildsOfThisProject noting how many other Configuration/TFM builds exist. Set to true to list every build of every project individually.")] bool includeAllBuilds = false)
         => Execute("list_assembly_candidates", () => ListAssemblyCandidatesCore(workspacePath, pathFilter, includeAllBuilds));
 
-    private string ListAssemblyCandidatesCore(string workspacePath, string? pathFilter, bool includeAllBuilds)
+    private string ListAssemblyCandidatesCore(string? workspacePath, string? pathFilter, bool includeAllBuilds)
     {
+        if (string.IsNullOrWhiteSpace(workspacePath) && ReferenceEquals(_surfaceHints, ToolSurfaceHints.Cli))
+            workspacePath = Directory.GetCurrentDirectory();
         RequireArgument(workspacePath, "workspacePath");
         try
         {
@@ -277,6 +279,14 @@ public sealed class EfCoreMcpTools(
             ? scan.Descriptors
             : scan.Descriptors.Where(c => activeConnection.AccessPolicy.IsContextReachable(c.FullName)).ToArray();
 
+        var hiddenByAccessPolicy = scan.Descriptors.Count - visibleDescriptors.Count;
+        if (hiddenByAccessPolicy > 0 && activeConnection is not null)
+        {
+            warnings.Add(
+                $"{hiddenByAccessPolicy} of {scan.Descriptors.Count} discovered context(s) are hidden by the access policy of the active connection '{activeConnection.Name}'. " +
+                $"{_surfaceHints.SwitchConnectionHint}");
+        }
+
         return resultFormatter.Format(new
         {
             assemblyPath = handle.AssemblyPath,
@@ -287,6 +297,7 @@ public sealed class EfCoreMcpTools(
                 fullName = c.FullName,
                 constructionKind = c.ConstructionKind.ToString(),
             }),
+            hiddenByAccessPolicy,
             warnings = warnings.Count > 0 ? warnings : null,
         });
     }
@@ -689,22 +700,25 @@ public sealed class EfCoreMcpTools(
         "with appliedStateAvailable set to false rather than presenting metadata as applied state. Mirrors " +
         "'dotnet ef migrations list': migrations[] lists every known migration in order with applied " +
         "(true/false, or null when applied state is unavailable); knownMigrationCount of 0 usually means the " +
-        "wrong migrationsAssembly; lastAppliedMigration is the anchor for generate_migration_script " +
+        "wrong migrationsAssembly (a warning then says so; pass the DLL path of the project that holds the migrations); lastAppliedMigration is the anchor for generate_migration_script " +
         "fromMigration; unknownAppliedMigrations are history rows the loaded code doesn't know (database ahead " +
         "of or diverged from the code); pendingMigrations[].outOfOrder is true when a pending migration sorts " +
         "before lastAppliedMigration; hasPendingModelChanges mirrors 'dotnet ef migrations " +
         "has-pending-model-changes' (null when it can't be computed) and doesn't need the database. When a " +
         "query fails with 'Invalid column name' / 'Invalid object name' / 'no such column' / 'no such table' / " +
         "'column ... does not exist', call list_migrations (and then compare_schema) for the failing connection " +
-        "to check whether the database is missing migrations.")]
+        "to check whether the database is missing migrations. Long histories are summarized: appliedMigrations, migrations and " +
+        "unknownAppliedMigrations list only the latest entries (see the *Count fields and listsTruncated); pass fullLists to get every entry. " +
+        "pendingMigrations is always complete.")]
     public Task<string> ListMigrations(
         [Description("CLR type name of the DbContext, as returned by list_contexts.")] string contextName,
         [Description("Logical connection name from the server's connection registry. Omit to use the active connection selected by swap_connection.")] string? connectionName = null,
         [Description("Simple name or DLL path of the assembly containing the migrations, when they live in a different assembly than the DbContext type. Omit when migrations are in the same assembly as the DbContext (the default). A simple name is resolved as a dependency of the currently loaded target assembly; a path is loaded explicitly, subject to the same AssemblyLoader:AllowedRoots restriction as load_assembly.")] string? migrationsAssembly = null,
+        [Description("When true, returns every applied/known/unknown-applied migration instead of only the latest entries of each list. Omit unless you need the whole history.")] bool fullLists = false,
         CancellationToken cancellationToken = default)
-        => ExecuteAsync("list_migrations", () => ListMigrationsCore(contextName, connectionName, migrationsAssembly, cancellationToken));
+        => ExecuteAsync("list_migrations", () => ListMigrationsCore(contextName, connectionName, migrationsAssembly, fullLists, cancellationToken));
 
-    private async Task<string> ListMigrationsCore(string contextName, string? connectionName, string? migrationsAssembly, CancellationToken cancellationToken)
+    private async Task<string> ListMigrationsCore(string contextName, string? connectionName, string? migrationsAssembly, bool fullLists, CancellationToken cancellationToken)
     {
         var entry = ResolveConnection(connectionName);
         var contextType = ResolveContextType(contextName, entry);
@@ -714,25 +728,62 @@ public sealed class EfCoreMcpTools(
         try
         {
             var result = await migrationInspector.InspectAsync(context, entry, provider, cancellationToken);
+            var warnings = BuildMigrationWarnings(result, migrationsAssembly);
+            var limit = fullLists ? int.MaxValue : Math.Max(1, migrationsOptions.MaxListedMigrations);
+            var listsTruncated = result.AppliedMigrations.Count > limit || result.Migrations.Count > limit || result.UnknownAppliedMigrations.Count > limit;
+            if (listsTruncated)
+            {
+                warnings.Add($"appliedMigrations, migrations and unknownAppliedMigrations show only their latest {limit} entries; the *Count fields give the totals. Pass fullLists to list every entry.");
+            }
+
             return resultFormatter.Format(new
             {
                 contextName = contextType.Name,
                 connectionName = entry.Name,
-                appliedMigrations = result.AppliedMigrations,
+                appliedMigrations = TakeLast(result.AppliedMigrations, limit),
                 pendingMigrations = result.PendingMigrations,
                 databaseExists = result.DatabaseExists,
                 appliedStateAvailable = result.AppliedStateAvailable,
-                migrations = result.Migrations,
+                migrations = TakeLast(result.Migrations, limit),
                 knownMigrationCount = result.KnownMigrationCount,
+                appliedMigrationCount = result.AppliedMigrations.Count,
+                unknownAppliedMigrationCount = result.UnknownAppliedMigrations.Count,
                 lastAppliedMigration = result.LastAppliedMigration,
-                unknownAppliedMigrations = result.UnknownAppliedMigrations,
+                unknownAppliedMigrations = TakeLast(result.UnknownAppliedMigrations, limit),
+                listsTruncated,
                 hasPendingModelChanges = result.HasPendingModelChanges,
+                warnings = warnings.Count > 0 ? warnings : null,
             });
         }
         catch (MigrationInspectionException ex)
         {
             throw new McpException(FormatSubsystemError(ex));
         }
+    }
+
+    private static IReadOnlyList<T> TakeLast<T>(IReadOnlyList<T> items, int limit) =>
+        items.Count <= limit ? items : items.Skip(items.Count - limit).ToList();
+
+    private static List<string> BuildMigrationWarnings(MigrationsInspectionResult result, string? migrationsAssembly)
+    {
+        var warnings = new List<string>();
+        if (result.KnownMigrationCount == 0)
+        {
+            var current = string.IsNullOrWhiteSpace(migrationsAssembly) ? "the context's own assembly" : $"migrationsAssembly '{migrationsAssembly}'";
+            var consequence = result.UnknownAppliedMigrations.Count > 0
+                ? "so every applied migration shows as unknown and nothing can be reported pending. The migrations probably live in a different project"
+                : "so nothing can be reported pending. If you expected migrations, they probably live in a different project";
+            warnings.Add(
+                $"No migrations were found in {current}, {consequence}: pass migrationsAssembly as the path to that project's built DLL " +
+                "(for example <repo>/src/<Project>/bin/Debug/<tfm>/<Project>.dll, which also works for a sibling project that is not a dependency of the loaded assembly).");
+        }
+        else if (result.UnknownAppliedMigrations.Count > 0)
+        {
+            warnings.Add(
+                $"{result.UnknownAppliedMigrations.Count} applied migration(s) are unknown to the loaded code: the database is ahead of, or diverged from, this build (or migrationsAssembly points at a different set of migrations).");
+        }
+
+        return warnings;
     }
 
     [McpServerTool(Name = "describe_migration"), Description(
@@ -1248,7 +1299,7 @@ public sealed class EfCoreMcpTools(
     private static string DisplayTargetName(string targetName) =>
         targetName == AssemblyLoaderService.DefaultTargetName ? AssemblyLoaderService.DefaultTargetAlias : targetName;
 
-    private static void RequireArgument(string? value, string parameterName)
+    private static void RequireArgument([System.Diagnostics.CodeAnalysis.NotNull] string? value, string parameterName)
     {
         if (string.IsNullOrWhiteSpace(value))
             throw new McpException($"{parameterName} is required.");
@@ -1404,6 +1455,13 @@ public sealed class EfCoreMcpTools(
     /// vetted diagnostic hint instead.</summary>
     private static string? DescribeIfAssemblyIdentitySplit(Exception exception)
     {
+        if (FindMissingFile(exception) is { } missingFile)
+        {
+            return $"The target could not find the dependency '{missingFile}' next to the assembly it was loaded from. " +
+                "Build the project that owns it (so its output folder contains its dependencies), then call load_assembly again " +
+                "or pass migrationsAssembly as the DLL path of that project's own build output. The file is simply missing; reloading the same build will not help.";
+        }
+
         if (exception is not (MissingFieldException or MissingMethodException or TypeLoadException
             or TypeInitializationException or FileLoadException))
         {
@@ -1421,6 +1479,32 @@ public sealed class EfCoreMcpTools(
             "SharedFrameworkAssemblyNames.Value in the MCP server itself; retrying or " +
             "reloading the assembly will not help.";
     }
+
+    private static string? FindMissingFile(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is FileNotFoundException { FileName: { Length: > 0 } fileName } notFound
+                && IsAssemblyResolutionFailure(notFound, fileName))
+            {
+                try
+                {
+                    return new System.Reflection.AssemblyName(fileName).Name ?? fileName;
+                }
+                catch (Exception ex) when (ex is ArgumentException or FileLoadException)
+                {
+                    return fileName;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // The runtime reports an unresolved dependency with an assembly display name ("X, Version=...") and a "Could not load file or assembly" message; a missing config or data file is neither.
+    private static bool IsAssemblyResolutionFailure(FileNotFoundException exception, string fileName) =>
+        fileName.Contains(", Version=", StringComparison.Ordinal)
+        || exception.Message.StartsWith("Could not load file or assembly", StringComparison.Ordinal);
 
     private LoadedAssemblyHandle RequireLoadedAssembly(string? targetName = null)
     {

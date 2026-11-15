@@ -1,4 +1,7 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.Schema;
 using EfSchemaCompare;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -86,7 +89,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
 
         var tablesByEntity = MapTablesByEntity(context.Model);
         var queryMappedEntities = FindQueryMappedEntities(context.Model);
-        var entities = WithoutComparisonNoise(Flatten(logs, context.Model))
+        var entities = WithoutComparisonNoise(Flatten(logs, context.Model), FindComputedColumns(context.Model))
             .Where(e => e.Entry.Entity is null || !queryMappedEntities.Contains(e.Entry.Entity))
             .Where(e => IsVisible(e, request, tablesByEntity))
             .Where(e => MatchesTableFilter(e.Table, request.Tables))
@@ -206,6 +209,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
 
     private static IEnumerable<FlatEntry> Flatten(IEnumerable<CompareLog> logs, IModel model)
     {
+        var entityNames = MapEntityNames(model);
         foreach (var log in logs)
         {
             switch (log.Type)
@@ -218,14 +222,10 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
                     }
 
                     break;
-                case CompareType.Entity when log.State == CompareState.NotInDatabase && log.Expected is not null:
-                    yield return new FlatEntry(log.State, new SchemaDriftEntry { Kind = "Table", Table = log.Expected, Entity = log.Name });
-                    break;
-                // Entity-level Different logs duplicate the PrimaryKey child's constraint-name check.
-                case CompareType.Entity when log.State == CompareState.Ok && log.Expected is not null:
-                    foreach (var child in log.SubLogs.Where(IsReportable))
+                case CompareType.Entity:
+                    foreach (var child in FlattenEntity(log, model, entityNames))
                     {
-                        yield return new FlatEntry(child.State, ProjectEntityChild(child, log.Name, log.Expected, model));
+                        yield return child;
                     }
 
                     break;
@@ -242,11 +242,90 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
         }
     }
 
-    /// <summary>Drops differences that aren't drift: column types differing only in case, and the pair
+    // EfCore.SchemaCompare nests every entity that follows a NotChecked one (keyless or view-mapped) beneath
+    // that entity's log, so entity logs are walked recursively; stopping at a NotChecked entity hides all of them.
+    private static IEnumerable<FlatEntry> FlattenEntity(CompareLog log, IModel model, IReadOnlyDictionary<(string ClrName, string Table), string> entityNames)
+    {
+        if (log.State == CompareState.NotInDatabase && log.Expected is not null)
+        {
+            yield return new FlatEntry(log.State, new SchemaDriftEntry { Kind = "Table", Table = log.Expected, Entity = ResolveEntityName(entityNames, log.Name, log.Expected) });
+        }
+        // Entity-level Different logs duplicate the PrimaryKey child's constraint-name check.
+        else if (log.State == CompareState.Ok && log.Expected is not null)
+        {
+            var entityName = ResolveEntityName(entityNames, log.Name, log.Expected);
+            foreach (var child in log.SubLogs.Where(sub => sub.Type != CompareType.Entity && IsReportable(sub)))
+            {
+                yield return new FlatEntry(child.State, ProjectEntityChild(child, entityName, log.Expected, model));
+            }
+        }
+
+        foreach (var nested in log.SubLogs.Where(sub => sub.Type == CompareType.Entity))
+        {
+            foreach (var entry in FlattenEntity(nested, model, entityNames))
+            {
+                yield return entry;
+            }
+        }
+    }
+
+    private static string ResolveEntityName(IReadOnlyDictionary<(string ClrName, string Table), string> entityNames, string clrName, string table) =>
+        entityNames.TryGetValue((clrName, table), out var name) ? name : clrName;
+
+    /// <summary>(CLR type name, table) to the entity name callers see, so shared-type and generic
+    /// entities are reported under their EF entity name instead of the CLR type name they share.</summary>
+    private static Dictionary<(string ClrName, string Table), string> MapEntityNames(IModel model)
+    {
+        var map = new Dictionary<(string, string), string>();
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            if (TableOf(entityType) is { } table)
+            {
+                map.TryAdd((entityType.ClrType.Name, table), SchemaBuilder.EntityName(entityType));
+            }
+        }
+
+        return map;
+    }
+
+    private static string? TableOf(IEntityType entityType)
+    {
+        var name = entityType.GetTableName() ?? entityType.GetViewName();
+        if (name is null)
+        {
+            return null;
+        }
+
+        var schema = entityType.GetTableName() is not null ? entityType.GetSchema() : entityType.GetViewSchema();
+        return schema is null ? name : $"{schema}.{name}";
+    }
+
+    private static HashSet<(string Table, string Column)> FindComputedColumns(IModel model)
+    {
+        var computed = new HashSet<(string, string)>();
+        foreach (var entityType in model.GetEntityTypes().Where(t => !IsQueryMapped(t)))
+        {
+            if (TableOf(entityType) is not { } table || entityType.GetTableName() is not { } tableName)
+            {
+                continue;
+            }
+
+            var storeObject = StoreObjectIdentifier.Table(tableName, entityType.GetSchema());
+            foreach (var property in entityType.GetProperties().Where(p => p.GetComputedColumnSql(storeObject) is not null))
+            {
+                computed.Add((table, property.GetColumnName(storeObject) ?? property.Name));
+            }
+        }
+
+        return computed;
+    }
+    /// <summary>Drops differences that aren't drift: column types differing only in case, the pair
     /// EF Core's own <c>AddColumn</c> leaves behind when it adds a non-nullable column with a database
     /// default to fill existing rows (a <c>DefaultValueSql</c> the model doesn't declare, and the
-    /// resulting <c>ValueGenerated</c> Never/OnAdd mismatch on the same column).</summary>
-    internal static IEnumerable<FlatEntry> WithoutComparisonNoise(IEnumerable<FlatEntry> entries)
+    /// resulting <c>ValueGenerated</c> Never/OnAdd mismatch on the same column), SQL expressions the
+    /// database merely reformatted, client-only delete behaviors the database cannot record, and the
+    /// nullability the catalog reports for computed columns.</summary>
+    internal static IEnumerable<FlatEntry> WithoutComparisonNoise(IEnumerable<FlatEntry> entries, IReadOnlySet<(string Table, string Column)>? computedColumns = null)
     {
         var list = entries.ToList();
         var defaultedColumns = list
@@ -256,17 +335,112 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
             .Select(e => (e.Entry.Table, e.Entry.Column))
             .ToHashSet();
 
-        return list.Where(e => !IsCaseOnlyTypeDifference(e) && !(e.State == CompareState.Different
-            && defaultedColumns.Contains((e.Entry.Table, e.Entry.Column))
-            && (e.Entry.Attribute == nameof(CompareAttributes.DefaultValueSql)
-                || (e.Entry.Attribute == nameof(CompareAttributes.ValueGenerated) && e.Entry.Expected == "Never" && e.Entry.Found == "OnAdd"))));
+        return list.Where(e => !IsEquivalentDifference(e) && !(e.State == CompareState.Different
+            && ((e.Entry.Attribute == nameof(CompareAttributes.Nullability) && computedColumns is not null && e.Entry.Column is not null && computedColumns.Contains((e.Entry.Table, e.Entry.Column)))
+                || (defaultedColumns.Contains((e.Entry.Table, e.Entry.Column))
+                    && (e.Entry.Attribute == nameof(CompareAttributes.DefaultValueSql)
+                        || (e.Entry.Attribute == nameof(CompareAttributes.ValueGenerated) && e.Entry.Expected == "Never" && e.Entry.Found == "OnAdd"))))));
     }
 
-    private static bool IsCaseOnlyTypeDifference(FlatEntry entry) =>
-        entry.State == CompareState.Different
-        && entry.Entry.Attribute == nameof(CompareAttributes.ColumnType)
-        && string.Equals(entry.Entry.Expected, entry.Entry.Found, StringComparison.OrdinalIgnoreCase);
+    private static bool IsEquivalentDifference(FlatEntry entry)
+    {
+        if (entry.State != CompareState.Different)
+        {
+            return false;
+        }
 
+        var expected = entry.Entry.Expected;
+        var found = entry.Entry.Found;
+        return entry.Entry.Attribute switch
+        {
+            nameof(CompareAttributes.ColumnType) => string.Equals(expected, found, StringComparison.OrdinalIgnoreCase),
+            nameof(CompareAttributes.DefaultValueSql) or nameof(CompareAttributes.ComputedColumnSql) =>
+                expected is not null && found is not null && SqlExpressionsMatch(expected, found),
+            // The catalog cannot represent these model-only behaviors; the database stores NO ACTION for them.
+            nameof(CompareAttributes.DeleteBehavior) =>
+                expected is "ClientCascade" or "ClientSetNull" or "ClientNoAction" && found == "NoAction",
+            _ => false,
+        };
+    }
+
+    /// <summary>Whether two SQL expressions are the same once the formatting a database applies when it
+    /// stores one (quoting, case, redundant parentheses, <c>CAST</c> rewritten as <c>CONVERT</c>,
+    /// <c>YEAR</c>/<c>MONTH</c>/<c>DAY</c> rewritten as <c>DATEPART</c>, float literal notation) is
+    /// removed. The expressions are compared as normalized text, not parsed.</summary>
+    internal static bool SqlExpressionsMatch(string expected, string found)
+    {
+        var left = NormalizeSql(expected);
+        var right = NormalizeSql(found);
+        if (left == right)
+        {
+            return true;
+        }
+
+        // EfCore.SchemaCompare trims one leading and one trailing parenthesis off the stored expression, which unbalances
+        // it when the stored form was ([a]+x)+y. Only then is precedence ignored.
+        if (!AreParenthesesBalanced(right) && StripParentheses(left) == StripParentheses(right))
+        {
+            return true;
+        }
+
+        return double.TryParse(left, NumberStyles.Float, CultureInfo.InvariantCulture, out var leftNumber)
+            && double.TryParse(right, NumberStyles.Float, CultureInfo.InvariantCulture, out var rightNumber)
+            && leftNumber == rightNumber;
+    }
+
+    private static string NormalizeSql(string sql)
+    {
+        var text = Regex.Replace(sql.ToLowerInvariant(), @"[\[\]""`]", string.Empty);
+        text = Regex.Replace(text, @"cast\s*\(([^()]+?)\s+as\s+([a-z0-9_]+(?:\(\s*\d+(?:\s*,\s*\d+)?\s*\))?)\s*\)", "convert($2,$1)");
+        text = Regex.Replace(text, @"datepart\s*\(\s*(year|month|day)\s*,", "$1(");
+        string previous;
+        do
+        {
+            previous = text;
+            // A parenthesized lone literal ((0), ('x'), (1.5)) carries no meaning. The lookbehind keeps a function call's own parentheses.
+            text = Regex.Replace(text, @"(?<![a-z0-9_])\(\s*((?:-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)|(?:n?'[^']*'))\s*\)", "$1");
+        }
+        while (text != previous);
+
+        text = Regex.Replace(text, @"\s+", string.Empty);
+        while (text.Length > 1 && text[0] == '(' && text[^1] == ')' && AreOuterParenthesesPaired(text))
+        {
+            text = text[1..^1];
+        }
+
+        return text;
+    }
+    private static string StripParentheses(string text) => text.Replace("(", string.Empty).Replace(")", string.Empty);
+
+    private static bool AreParenthesesBalanced(string text)
+    {
+        var depth = 0;
+        foreach (var character in text)
+        {
+            depth += character == '(' ? 1 : character == ')' ? -1 : 0;
+            if (depth < 0)
+            {
+                return false;
+            }
+        }
+
+        return depth == 0;
+    }
+
+    private static bool AreOuterParenthesesPaired(string text)
+    {
+        var depth = 0;
+        for (var index = 0; index < text.Length - 1; index++)
+        {
+            depth += text[index] == '(' ? 1 : text[index] == ')' ? -1 : 0;
+            if (depth == 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
     private static bool IsReportable(CompareLog log) =>
         log.State is CompareState.Different or CompareState.NotInDatabase or CompareState.ExtraInDatabase;
 
@@ -309,7 +483,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
         var (schema, name) = SplitTable(table);
         var storeObject = StoreObjectIdentifier.Table(name, schema);
         return model.GetEntityTypes()
-            .Where(t => t.ClrType.Name == entity)
+            .Where(t => SchemaBuilder.EntityName(t) == entity || t.ClrType.Name == entity)
             .Select(t => t.FindProperty(property))
             .Select(p => p?.GetColumnName(storeObject) ?? p?.GetColumnName())
             .FirstOrDefault(c => c is not null);
@@ -320,7 +494,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
     private static HashSet<string> FindQueryMappedEntities(IModel model) =>
         model.GetEntityTypes()
             .Where(IsQueryMapped)
-            .Select(t => t.ClrType.Name)
+            .SelectMany(t => new[] { t.ClrType.Name, SchemaBuilder.EntityName(t) })
             .ToHashSet(StringComparer.Ordinal);
 
     private static bool IsQueryMapped(IEntityType entityType) =>
@@ -343,7 +517,7 @@ public sealed class SchemaComparer(MigrationsOptions options, ILogger<SchemaComp
             }
 
             var schema = entityType.GetTableName() is not null ? entityType.GetSchema() : entityType.GetViewSchema();
-            map.TryAdd(entityType.ClrType.Name, schema is null ? name : $"{schema}.{name}");
+            map.TryAdd(SchemaBuilder.EntityName(entityType), schema is null ? name : $"{schema}.{name}");
         }
 
         return map;

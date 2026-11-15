@@ -88,6 +88,9 @@ Returns:
   "knownMigrationCount": 2,
   "lastAppliedMigration": "20240101000000_InitialCreate",
   "unknownAppliedMigrations": [],
+  "appliedMigrationCount": 1,
+  "unknownAppliedMigrationCount": 0,
+  "listsTruncated": false,
   "hasPendingModelChanges": false
 }
 ```
@@ -101,9 +104,11 @@ The result mirrors `dotnet ef migrations list` and `dotnet ef migrations has-pen
 | `lastAppliedMigration` | last of `GetAppliedMigrationsAsync()` | The last history row in order; omitted when nothing is applied or applied state is unavailable. The anchor for `generate_migration_script fromMigration`. |
 | `unknownAppliedMigrations` | applied − known | History rows the loaded code doesn't know: the database is ahead of, or diverged from, the code. |
 | `pendingMigrations[].outOfOrder` | none | `true` when a pending migration ID sorts (ordinally) before `lastAppliedMigration`, such as a migration merged from an older branch. |
+| `appliedMigrationCount`, `unknownAppliedMigrationCount`, `listsTruncated` | none | Totals for the capped lists. `appliedMigrations`, `migrations` and `unknownAppliedMigrations` show only the latest `Migrations:MaxListedMigrations` entries (default 25) unless `fullLists` is true; `pendingMigrations` is never capped. |
+| `warnings[]` | none | Present when `knownMigrationCount` is `0` (the migrations probably live in another project: pass `migrationsAssembly` as the path to that project's built DLL), when applied migrations are unknown to the loaded code, or when lists were capped. |
 | `hasPendingModelChanges` | `Database.HasPendingModelChanges()` | The model differs from the latest snapshot. Needs no database; omitted (null) when it can't be computed. |
 
-- The migration assembly supplies the known migration IDs in EF Core's migration ordering.
+- The migration assembly supplies the known migration IDs in EF Core's migration ordering. A `migrationsAssembly` given as a DLL path is loaded with its own folder and `.deps.json` on the dependency probing path, so dependencies that exist only beside it (for example an error-reporting SDK in a web API project) resolve; a missing file is named in the error.
   When the target database is reachable, `IHistoryRepository` reads applied IDs from
   `__EFMigrationsHistory`; `pendingMigrations` is the ordered difference. The response must
   make unavailable applied state explicit rather than presenting metadata as applied state.
@@ -201,6 +206,7 @@ Returns:
   omitted when history can't be read. A missing `introducedBy` means no migration creates the
   object: a model change without a migration (compare `hasPendingModelChanges`).
 - Entities denied by the connection's access policy are never reported.
+- Differences the database cannot represent are not reported: reformatted `DefaultValueSql`/`ComputedColumnSql` (case, quoting, redundant parentheses, `CAST` as `CONVERT`, `MONTH()` as `DATEPART`, float literal notation), client-only delete behaviors (`ClientCascade`, `ClientSetNull`, `ClientNoAction`) against `NoAction`, and nullability of computed columns. Entities that follow a keyless or view-mapped entity are still compared. Shared-type entities (many-to-many join tables) are reported under their EF entity name.
 - Output is capped at `Migrations:MaxDriftEntries` entries in total (default 500), filled in
   `notInDatabase`, `different`, `extraInDatabase` order; `truncated: true` when capped.
 - The library is synchronous, so it runs on a worker task. The tool stops waiting after the

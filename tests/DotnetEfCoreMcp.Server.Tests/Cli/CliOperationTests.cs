@@ -245,6 +245,54 @@ public sealed class CliOperationTests : IDisposable
     }
 
     [Fact]
+    public async Task ListAssemblyCandidates_UsesTheWorkspaceFlagAsItsWorkspacePath()
+    {
+        using var workspace = BuildWorkspace(("Data", FixturePaths.SampleAppDllPath), ("Plain", FixturePaths.NoContextAppDllPath));
+
+        var result = await _host.RunAsync("list-assembly-candidates", "--workspace", workspace.Path, "--config", "ToolOutput:Format=json");
+
+        Assert.Equal(0, result.ExitCode);
+        using var document = JsonDocument.Parse(result.Output);
+        Assert.Equal(Path.GetFullPath(workspace.Path), document.RootElement.GetProperty("workspacePath").GetString());
+        var first = document.RootElement.GetProperty("candidates")[0];
+        Assert.EndsWith("SampleApp.dll", first.GetProperty("assemblyPath").GetString(), StringComparison.Ordinal);
+        Assert.True(first.GetProperty("likelyContainsDbContext").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ListAssemblyCandidates_WithoutAnyWorkspaceInput_DefaultsToTheCurrentDirectory()
+    {
+        var result = await _host.RunAsync("list-assembly-candidates", "--config", "ToolOutput:Format=json");
+
+        Assert.Equal(0, result.ExitCode);
+        using var document = JsonDocument.Parse(result.Output);
+        Assert.Equal(Directory.GetCurrentDirectory(), document.RootElement.GetProperty("workspacePath").GetString());
+    }
+
+    [Fact]
+    public async Task WorkspaceDiscovery_LoadsTheAssemblyThatContainsADbContext()
+    {
+        using var workspace = BuildWorkspace(("Plain", FixturePaths.NoContextAppDllPath), ("Data", FixturePaths.SampleAppDllPath));
+
+        var result = await _host.RunAsync("list_contexts", "--workspace", workspace.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("SampleAppDbContext", result.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WorkspaceDiscovery_WhenNoAssemblyContainsADbContext_FailsWithAHintInsteadOfLoadingOne()
+    {
+        using var workspace = BuildWorkspace(("Plain", FixturePaths.NoContextAppDllPath));
+
+        var result = await _host.RunAsync("list_contexts", "--workspace", workspace.Path);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("--assembly", result.Error, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, result.Output);
+    }
+
+    [Fact]
     public void MissingConnection_UsesCliWordingInsteadOfMcpToolNames()
     {
         var tools = CreateTools(connections: false, hints: ToolSurfaceHints.Cli);
@@ -274,6 +322,41 @@ public sealed class CliOperationTests : IDisposable
         Assert.Equal(
             "No connection is active yet. Call swap_connection, or pass an explicit connectionName. (Connections available via list_connections; call reload_connections if one you configured is missing from it.)",
             ToolSurfaceHints.Mcp.NoActiveConnection);
+    }
+
+    private static TempWorkspace BuildWorkspace(params (string Project, string SourceDll)[] projects)
+    {
+        var workspace = new TempWorkspace();
+        foreach (var (project, sourceDll) in projects)
+        {
+            File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(workspace.Path, project)).FullName, project + ".csproj"),
+                $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>{Path.GetFileNameWithoutExtension(sourceDll)}</AssemblyName></PropertyGroup></Project>");
+            var output = Directory.CreateDirectory(Path.Combine(workspace.Path, project, "bin", "Debug", "net10.0")).FullName;
+            foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(sourceDll)!))
+            {
+                File.Copy(file, Path.Combine(output, Path.GetFileName(file)));
+            }
+        }
+
+        return workspace;
+    }
+
+    private sealed class TempWorkspace : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(AppContext.BaseDirectory, "TestData", "workspace-" + Guid.NewGuid().ToString("N"));
+
+        public TempWorkspace() => Directory.CreateDirectory(Path);
+
+        public void Dispose()
+        {
+            try
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 
     private EfCoreMcpTools CreateTools(bool connections = true, IToolSurfaceHints? hints = null)

@@ -471,4 +471,75 @@ public sealed class SplitAssemblyMigrationDiscoveryTests : IDisposable
         var dbFilePath = _db.ConnectionString["Data Source=".Length..];
         Assert.False(File.Exists(dbFilePath));
     }
-}
+
+    [Fact]
+    public async Task DescribeMigration_WithMigrationsAssemblyWhoseDependencyExistsOnlyInItsOwnFolder_Succeeds()
+    {
+        var tools = CreateTools();
+        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(FixturePaths.SplitContextAppDllPath)!, "PrivateDependencyLib.dll")));
+
+        var json = await tools.DescribeMigration("SplitDbContext", "InitialCreate", "MigrationsTests", FixturePaths.PrivateDepMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal("20260905000000_InitialCreate", document.RootElement.GetProperty("migrationId").GetString());
+    }
+
+    [Fact]
+    public async Task ListMigrations_WithMigrationsAssemblyWhoseDependencyExistsOnlyInItsOwnFolder_ReportsThePendingMigration()
+    {
+        var tools = CreateTools();
+
+        var json = await tools.ListMigrations("SplitDbContext", "MigrationsTests", FixturePaths.PrivateDepMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(1, document.RootElement.GetProperty("pendingMigrations").GetArrayLength());
+        Assert.False(document.RootElement.TryGetProperty("warnings", out _));
+    }
+
+    [Fact]
+    public async Task GenerateMigrationScript_WithMigrationsAssemblyWhoseDependencyExistsOnlyInItsOwnFolder_Succeeds()
+    {
+        var tools = CreateTools();
+
+        var json = await tools.GenerateMigrationScript("SplitDbContext", "MigrationsTests", idempotent: false, migrationsAssembly: FixturePaths.PrivateDepMigrationsAppDllPath, cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Contains("Widgets", document.RootElement.GetProperty("sql").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListMigrations_WithoutMigrationsAssembly_WarnsThatNothingWasFoundAndHowToPointAtTheRightAssembly()
+    {
+        var tools = CreateTools();
+
+        var json = await tools.ListMigrations("SplitDbContext", "MigrationsTests", cancellationToken: TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(0, document.RootElement.GetProperty("knownMigrationCount").GetInt32());
+        var warning = Assert.Single(document.RootElement.GetProperty("warnings").EnumerateArray()).GetString();
+        Assert.Contains("migrationsAssembly", warning, StringComparison.Ordinal);
+        Assert.Contains(".dll", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListMigrations_WithSimpleNameThatIsNotADependency_SuggestsTheDllPath()
+    {
+        var tools = CreateTools();
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.ListMigrations("SplitDbContext", "MigrationsTests", "SomeWebApi", cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("SomeWebApi.dll", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MissingDependencyError_NamesTheMissingFileInsteadOfBlamingTypeIdentity()
+    {
+        var failure = new TypeInitializationException("<Module>", new FileNotFoundException("Could not load file or assembly 'Sentry, Version=6.12.1.0'.", "Sentry, Version=6.12.1.0, Culture=neutral, PublicKeyToken=fba2ec45388e2af0"));
+
+        var message = EfCoreMcpTools.FormatUnexpectedToolFailure("describe_migration", failure, "ref");
+
+        Assert.Contains("'Sentry'", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("type-identity", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("SharedFrameworkAssemblyNames", message, StringComparison.Ordinal);
+    }}

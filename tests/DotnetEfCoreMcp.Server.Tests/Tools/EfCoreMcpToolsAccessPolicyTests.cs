@@ -39,6 +39,35 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
     }
 
     [Fact]
+    public void ListContexts_ReportsContextsHiddenByThePolicyWithAWarningNamingTheConnection()
+    {
+        var tools = CreateTools(allowContexts: ["SampleApp.SampleAppDbContext"]);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        using var document = JsonDocument.Parse(tools.ListContexts());
+        var root = document.RootElement;
+
+        var hidden = root.GetProperty("hiddenByAccessPolicy").GetInt32();
+        Assert.True(hidden > 0);
+        var warning = Assert.Single(root.GetProperty("warnings").EnumerateArray(), w => w.GetString()!.Contains("access policy", StringComparison.Ordinal)).GetString()!;
+        Assert.Contains("swap_connection", warning, StringComparison.Ordinal);
+        Assert.Contains(hidden.ToString(), warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ListContexts_WhenNothingIsHidden_ReportsZeroAndNoWarning()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+        var tools = CreateToolsWithConfiguration(configuration);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+
+        using var document = JsonDocument.Parse(tools.ListContexts());
+
+        Assert.Equal(0, document.RootElement.GetProperty("hiddenByAccessPolicy").GetInt32());
+        Assert.False(document.RootElement.TryGetProperty("warnings", out var warnings) && warnings.ValueKind != JsonValueKind.Null);
+    }
+
+    [Fact]
     public void ListContexts_WithNoActiveConnection_DoesNotFilterAndDoesNotThrow()
     {
         // No Connections: section at all means no active connection - list_contexts must still

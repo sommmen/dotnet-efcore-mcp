@@ -16,6 +16,11 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     private readonly AssemblyDependencyResolver _resolver;
     private readonly TargetDependencyProbe _probe;
 
+    // Resolvers for assemblies added next to the main target (a migrations assembly in another
+    // project): such an assembly's own dependencies sit in its output folder and .deps.json, which
+    // the main target's resolver knows nothing about. Searched after the main target's.
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(AssemblyDependencyResolver Resolver, TargetDependencyProbe Probe)> _additionalResolvers = new();
+
     // Every path this context has itself loaded from disk (the main assembly plus any
     // non-shared dependency resolved via _resolver/_probe). Populated only by
     // LoadAssemblyFromStream, so it always reflects exactly what was loaded *into this context*
@@ -37,9 +42,14 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     // from Load(), which the runtime can re-enter on multiple threads.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _sharedAssemblyVersionWarnings = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly string _mainAssemblyPath;
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _additionalDirectories = new();
+
     public TargetAssemblyLoadContext(string mainAssemblyPath, string name)
         : base(name, isCollectible: true)
     {
+        _mainAssemblyPath = mainAssemblyPath;
         _resolver = new AssemblyDependencyResolver(mainAssemblyPath);
         _probe = TargetDependencyProbe.Create(mainAssemblyPath);
     }
@@ -50,7 +60,15 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     /// partially resolvable target explains itself instead of failing opaquely at type-load
     /// time.</summary>
     public IReadOnlyList<string> DependencyDiagnostics =>
-        [.. _probe.Diagnostics, .. _sharedAssemblyVersionWarnings.Values];
+        [.. _probe.Diagnostics, .. _additionalResolvers.SelectMany(pair => pair.Probe.Diagnostics), .. _sharedAssemblyVersionWarnings.Values];
+
+    /// <summary>The directories this context probes for dependencies by file name: the main target's
+    /// own folder, then the folder of every additional assembly loaded beside it. Used to say where a
+    /// missing dependency was looked for.</summary>
+    public IReadOnlyList<string> ProbedDirectories =>
+        [.. new[] { Path.GetDirectoryName(_mainAssemblyPath)! }
+            .Concat(_additionalDirectories.ToArray())
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>File-system paths of every assembly actually loaded into this context so far (the
     /// main target assembly plus any non-shared dependency resolved for it), in no particular
@@ -137,7 +155,21 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
             }
         }
 
+        RegisterAdditionalDependencies(assemblyPath);
         return LoadAssemblyFromStream(assemblyPath);
+    }
+
+    private void RegisterAdditionalDependencies(string assemblyPath)
+    {
+        var directory = Path.GetDirectoryName(assemblyPath)!;
+        if (string.Equals(directory, Path.GetDirectoryName(_mainAssemblyPath), PathComparison)
+            || _additionalDirectories.Contains(directory, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        _additionalDirectories.Enqueue(directory);
+        _additionalResolvers.Enqueue((new AssemblyDependencyResolver(assemblyPath), TargetDependencyProbe.Create(assemblyPath)));
     }
 
     protected override Assembly? Load(AssemblyName assemblyName)
@@ -206,7 +238,7 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
             return null;
         }
 
-        return _resolver.ResolveAssemblyToPath(assemblyName) ?? _probe.ResolveAssembly(assemblyName);
+        return ResolvePath(assemblyName);
     }
 
     /// <summary>Whether this target's own <c>.deps.json</c> describes <paramref name="simpleName"/>.
@@ -232,8 +264,28 @@ internal sealed class TargetAssemblyLoadContext : AssemblyLoadContext
     /// default context.</summary>
     private Assembly? ResolveFromTarget(AssemblyName assemblyName)
     {
-        var assemblyPath = _resolver.ResolveAssemblyToPath(assemblyName) ?? _probe.ResolveAssembly(assemblyName);
+        var assemblyPath = ResolvePath(assemblyName);
         return assemblyPath is not null ? LoadAssemblyFromStream(assemblyPath) : null;
+    }
+
+    private string? ResolvePath(AssemblyName assemblyName)
+    {
+        var path = _resolver.ResolveAssemblyToPath(assemblyName) ?? _probe.ResolveAssembly(assemblyName);
+        if (path is not null)
+        {
+            return path;
+        }
+
+        foreach (var (resolver, probe) in _additionalResolvers)
+        {
+            path = resolver.ResolveAssemblyToPath(assemblyName) ?? probe.ResolveAssembly(assemblyName);
+            if (path is not null)
+            {
+                return path;
+            }
+        }
+
+        return null;
     }
 
     protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)

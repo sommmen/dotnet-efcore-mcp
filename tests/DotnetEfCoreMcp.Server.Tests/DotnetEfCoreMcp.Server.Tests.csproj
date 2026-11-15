@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -43,6 +43,9 @@
     <None Include="..\Fixtures\IdentityApp\IdentityApp.csproj" />
     <None Include="..\Fixtures\SplitContextApp\SplitContextApp.csproj" />
     <None Include="..\Fixtures\SplitMigrationsApp\SplitMigrationsApp.csproj" />
+    <None Include="..\Fixtures\ModelShapesApp\ModelShapesApp.csproj" />
+    <None Include="..\Fixtures\PrivateDependencyLib\PrivateDependencyLib.csproj" />
+    <None Include="..\Fixtures\PrivateDepMigrationsApp\PrivateDepMigrationsApp.csproj" />
   </ItemGroup>
 
   <Target Name="BuildFixtureAssemblies" BeforeTargets="Build">
@@ -54,6 +57,8 @@
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\NewerEfCoreApp\NewerEfCoreApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\SplitContextApp\SplitContextApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
     <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\SplitMigrationsApp\SplitMigrationsApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\ModelShapesApp\ModelShapesApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\Fixtures\PrivateDepMigrationsApp\PrivateDepMigrationsApp.csproj&quot; -c $(Configuration) --nologo -v quiet" />
   </Target>
 
 </Project>

@@ -144,7 +144,7 @@ The MCP path is the same code in the same order, just moved. `McpServerShutdownT
    | Global flag | Maps to |
    | --- | --- |
    | `--assembly <dll>` | `TargetAssemblyPath` |
-   | `--workspace <dir>` | `WorkspacePath`; it defaults to the current directory when neither flag is given (see risks: discovery cost and `discovered[0]` choice) |
+   | `--workspace <dir>` | `WorkspacePath`, and the default `workspacePath` of `list_assembly_candidates`; it defaults to the current directory when neither flag is given. Preload loads the first ranked candidate that really contains a DbContext (at most 10 are tried), and warns instead of loading an arbitrary assembly when none does |
    | `--target <name>` | injected as the `targetName` input, **only** for operations that declare it (the adapter rejects unknown flags) |
    | `--connection <name>` | injected as the `connectionName` input, only for operations that declare it |
    | `--config Key=Value` | any configuration key, for example `ToolOutput:Format=json` |
