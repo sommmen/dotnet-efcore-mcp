@@ -21,8 +21,8 @@ public sealed class AssemblyLoaderService
     /// entry is currently the default (this name, unless changed via <see cref="SelectDefault"/>).</summary>
     internal const string DefaultTargetName = "__default__";
 
-    /// <summary>The client-facing name of the target loaded without a <c>targetName</c>. Accepted when selecting or
-    /// resolving a target, unless a target of that exact name exists; loading under this name registers a separate target.</summary>
+    /// <summary>The client-facing name of the target loaded without a <c>targetName</c>. Reserved: it resolves to
+    /// the implicit target wherever a target name is accepted, so no target can be registered under it.</summary>
     internal const string DefaultTargetAlias = "default";
 
     private readonly object _gate = new();
@@ -109,6 +109,12 @@ public sealed class AssemblyLoaderService
     private LoadedAssemblyHandle LoadCore(string assemblyPath, string? targetName, IReadOnlyList<string>? additionalAllowedRoots, bool? autoReloadOverride)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyPath);
+
+        if (targetName is not null && IsDefaultAlias(targetName))
+        {
+            throw new AssemblyLoadFailedException(
+                $"'{targetName}' is reserved for the target loaded without a targetName. Omit targetName to load or replace that target, or choose another name.");
+        }
 
         var fullPath = Path.GetFullPath(assemblyPath);
         ValidateAllowedRoots(fullPath, additionalAllowedRoots);
@@ -334,11 +340,10 @@ public sealed class AssemblyLoaderService
         }
     }
 
-    /// <summary>Must be called while holding <see cref="_gate"/>.</summary>
-    private string MapAlias(string targetName) =>
-        string.Equals(targetName, DefaultTargetAlias, StringComparison.OrdinalIgnoreCase) && !_targets.ContainsKey(targetName)
-            ? DefaultTargetName
-            : targetName;
+    private static bool IsDefaultAlias(string targetName) =>
+        string.Equals(targetName, DefaultTargetAlias, StringComparison.OrdinalIgnoreCase);
+
+    private static string MapAlias(string targetName) => IsDefaultAlias(targetName) ? DefaultTargetName : targetName;
 
     /// <summary>Resolves the loaded assembly for <paramref name="targetName"/>.
     /// If <paramref name="targetName"/> is supplied but no such target is registered, throws

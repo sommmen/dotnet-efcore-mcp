@@ -211,21 +211,21 @@ public sealed class EfCoreMcpToolsE2EFindingsTests
     }
 
     [Fact]
-    public void AssemblyLoader_DefaultAlias_ResolvesToTheImplicitTargetUntilATargetIsExplicitlyNamedDefault()
+    public void AssemblyLoader_DefaultAlias_ResolvesToTheImplicitTargetAndCannotBeRegisteredAsAName()
     {
         var service = new AssemblyLoaderService();
         var implicitTarget = service.Load(FixturePaths.SampleAppDllPath);
 
         Assert.Same(implicitTarget, service.Get("default"));
+        Assert.Same(implicitTarget, service.Get("Default"));
 
-        var explicitTarget = service.Load(FixturePaths.NoContextAppDllPath, "default");
+        var exception = Assert.Throws<AssemblyLoadFailedException>(
+            () => service.Load(FixturePaths.NoContextAppDllPath, "default"));
 
-        Assert.NotSame(implicitTarget, explicitTarget);
-        Assert.Equal(2, service.ListTargets().Count);
+        Assert.Contains("reserved", exception.Message, StringComparison.Ordinal);
         Assert.Same(implicitTarget, service.Get());
-        Assert.Same(explicitTarget, service.Get("default"));
+        Assert.Single(service.ListTargets());
     }
-
     private static void EnsureSchemaWithCustomers(SqliteTestDatabase db, int count)
     {
         var handle = new AssemblyLoaderService().Load(FixturePaths.SampleAppDllPath);
