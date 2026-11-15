@@ -1,5 +1,7 @@
+using DotNetAgentSurface.Core;
 using DotNetAgentSurface.Hosting;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -9,11 +11,14 @@ namespace DotnetEfCoreMcp.Server.Hosting;
 /// ahead of every other hosted service so targets are loaded before the reload watcher and the transport
 /// start. It also runs for CLI invocations, where an explicit <c>--assembly</c> that cannot be loaded
 /// fails the command instead of only being logged.</summary>
+/// <param name="implicitWorkspacePath">Workspace to discover in when nothing else names a target and the
+/// session remembers none. The CLI passes the current directory.</param>
 public sealed class TargetPreloadService(
     IServiceProvider services,
     IConfiguration configuration,
     ILoggerFactory loggerFactory,
-    bool failOnConfiguredAssemblyError = false) : ICliHostedService
+    bool failOnConfiguredAssemblyError = false,
+    string? implicitWorkspacePath = null) : ICliHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -21,7 +26,7 @@ public sealed class TargetPreloadService(
         {
             ServerComposition.PreloadTargets(
                 services,
-                configuration,
+                ApplyImplicitWorkspace(),
                 loggerFactory.CreateLogger("Program"),
                 failOnConfiguredAssemblyError);
         }
@@ -34,4 +39,27 @@ public sealed class TargetPreloadService(
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private IConfiguration ApplyImplicitWorkspace()
+    {
+        if (string.IsNullOrWhiteSpace(implicitWorkspacePath)
+            || !string.IsNullOrWhiteSpace(configuration["TargetAssemblyPath"])
+            || !string.IsNullOrWhiteSpace(configuration["WorkspacePath"])
+            || configuration.GetSection("AssemblyLoader:Targets").GetChildren().Any())
+        {
+            return configuration;
+        }
+
+        // A target remembered by an earlier load_assembly beats guessing from the working directory.
+        var session = services.GetService(typeof(IAgentSession)) as IAgentSession;
+        if (session?.Get<Dictionary<string, string>>(ToolSessionKeys.Targets) is { Count: > 0 })
+        {
+            return configuration;
+        }
+
+        return new ConfigurationBuilder()
+            .AddConfiguration(configuration)
+            .AddInMemoryCollection([new KeyValuePair<string, string?>("WorkspacePath", implicitWorkspacePath)])
+            .Build();
+    }
 }

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using DotNetAgentSurface.Core;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
@@ -48,7 +49,8 @@ public sealed class EfCoreMcpTools(
     OnboardingOptions? onboardingOptions = null,
     UpdateNotificationService? updateNotifications = null,
     SchemaComparer? schemaComparer = null,
-    IToolSurfaceHints? surfaceHints = null)
+    IToolSurfaceHints? surfaceHints = null,
+    IAgentSession? agentSession = null)
 {
     private readonly OnboardingOptions onboardingOptions = onboardingOptions ?? new OnboardingOptions();
     private readonly IToolSurfaceHints surfaceHints = surfaceHints ?? ToolSurfaceHints.Mcp;
@@ -208,6 +210,10 @@ public sealed class EfCoreMcpTools(
         try
         {
             var handle = assemblyLoader.Load(assemblyPath, targetName);
+            ToolSessionState.RecordTarget(
+                agentSession,
+                string.IsNullOrWhiteSpace(targetName) ? assemblyLoader.CurrentDefaultTargetName : targetName,
+                handle.AssemblyPath);
             var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
             var warnings = BuildScanWarnings(scan, handle);
             logger.LogInformation(
@@ -984,6 +990,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             connectionRegistry.SetActive(connectionName, allowProduction);
+            ToolSessionState.RecordActiveConnection(agentSession, connectionName, allowProduction);
             return resultFormatter.Format(new
             {
                 activeConnection = connectionRegistry.ActiveConnectionName,
@@ -1214,6 +1221,7 @@ public sealed class EfCoreMcpTools(
         try
         {
             assemblyLoader.SelectDefault(targetName);
+            ToolSessionState.RecordDefaultTarget(agentSession, targetName);
             return resultFormatter.Format(new
             {
                 defaultTargetName = targetName,

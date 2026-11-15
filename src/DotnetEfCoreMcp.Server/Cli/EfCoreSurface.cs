@@ -128,7 +128,6 @@ public static class EfCoreSurface
         var globals = GlobalOptions.Append(new CommandLineGlobalOption("--session")).ToArray();
         var flagValues = OperationCommandLineAdapter.ReadConfigurationValues(cliArgs, globals);
         var explicitAssembly = flagValues.ContainsKey("TargetAssemblyPath");
-        var explicitWorkspace = flagValues.ContainsKey("WorkspacePath");
 
         var start = OperationCommandLineAdapter.FindCommandStart(cliArgs, globals);
         var command = start < cliArgs.Length ? cliArgs[start] : null;
@@ -154,22 +153,16 @@ public static class EfCoreSurface
         {
             if (runsOperation)
             {
-                builder.Services.AddSingleton<IHostedService>(services => CreatePreloadService(services, failOnConfiguredAssemblyError: explicitAssembly));
+                builder.Services.AddSingleton<IHostedService>(services => CreatePreloadService(services, failOnConfiguredAssemblyError: explicitAssembly, Directory.GetCurrentDirectory()));
             }
 
             ServerComposition.AddEfCoreServices(
                 builder,
                 includeHostedServices: false,
+                cursorSigningKeyFactory: services => ToolSessionState.GetOrCreateCursorKey(services.GetRequiredService<IAgentSession>()),
                 overrideConfiguration: configuration =>
                 {
                     configuration.AddInMemoryCollection(overrides);
-                    if (!explicitAssembly && !explicitWorkspace
-                        && string.IsNullOrWhiteSpace(configuration["TargetAssemblyPath"])
-                        && string.IsNullOrWhiteSpace(configuration["WorkspacePath"])
-                        && !configuration.GetSection("AssemblyLoader:Targets").GetChildren().Any())
-                    {
-                        configuration["WorkspacePath"] = Directory.GetCurrentDirectory();
-                    }
 
                     // A pool would spawn a persistent worker only to tear it down when the process exits.
                     if (string.Equals(configuration["QueryExecution:Mode"], "Pooled", StringComparison.OrdinalIgnoreCase))
@@ -178,16 +171,18 @@ public static class EfCoreSurface
                     }
                 });
             builder.Services.AddSingleton<IToolSurfaceHints>(ToolSurfaceHints.Cli);
+            builder.Services.AddSingleton<IAgentSessionInitializer, EfCoreSessionInitializer>();
             builder.Services.AddSingleton<EfCoreMcpTools>();
         });
     }
 
-    private static TargetPreloadService CreatePreloadService(IServiceProvider services, bool failOnConfiguredAssemblyError) =>
+    private static TargetPreloadService CreatePreloadService(IServiceProvider services, bool failOnConfiguredAssemblyError, string? implicitWorkspacePath = null) =>
         new(
             services,
             services.GetRequiredService<IConfiguration>(),
             services.GetRequiredService<ILoggerFactory>(),
-            failOnConfiguredAssemblyError);
+            failOnConfiguredAssemblyError,
+            implicitWorkspacePath);
 
     private static bool TryExtractConfigOverrides(
         string[] args,
