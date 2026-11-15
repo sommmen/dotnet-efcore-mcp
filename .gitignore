@@ -200,7 +200,6 @@ PublishScripts/
 *.snupkg
 # The packages folder can be ignored because of Package Restore
 **/[Pp]ackages/*
-!src/Front-end/projects/operations/src/app/modules/packages/**
 # except build/, which is used as an MSBuild target.
 !**/[Pp]ackages/build/
 # Uncomment if necessary however generally it will be regenerated when needed
@@ -376,33 +375,13 @@ FodyWeavers.xsd
 *.sqlite-wal
 *.sqlite
 *.sqlite-shm
-src/Back-end/Applications/Api/OPG.Platform.Api.Commerce/uploads/
-src/Back-end/Applications/Api/OPG.Platform.Api.Management/uploads/
-
-# Old
-src/Back-end/Applications/Api/OPG.Platform.Api.Management/media/
-# Newer
-src/Back-end/Applications/Api/media
-
-# Produced by sync job to find legacy blocks.
-src/Back-end/Applications/Api/OPG.Platform.Api.Management/blocks
-/.dotnet-home/.dotnet
 
 # Copilot Orchestrator temporary files
 .worktrees/
 .orchestrator/
 .copilot-cli/
 .github/instructions/orchestrator-*.instructions.md
-.copilot-build/
-.dotnet/
-/.codex-build
-/.dotnet
-/.codex-build/api
-.codex
 
-tmp/
-src/Back-end/.github/copilot-instructions.md
-.maintenance
 # Commit Serena's project config; ignore its machine-local index and memories.
 .serena/*
 !.serena/project.yml
