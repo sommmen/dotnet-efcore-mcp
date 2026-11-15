@@ -2,3 +2,18 @@
 
 # Keep source files consistent across Windows and WSL.
 * text=auto eol=lf
+
+# Windows scripts keep CRLF since cmd.exe requires it.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files must never be normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.dll binary
+*.exe binary

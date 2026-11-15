@@ -33,8 +33,12 @@
     builds `tests/Fixtures/SampleApp` so tests can load its real compiled DLL.
 - [x] Add CI workflow (build + test) if/when this repo gets a CI pipeline
   - Implemented in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml): restores,
-    builds (`Release`), and runs `dotnet test` against `dotnet-efcore-mcp.slnx` on push/PR
-    to `main`, on `merge_group`, and via manual `workflow_dispatch`.
+    builds (`Release`), and runs `dotnet test --report-gh` (GitHub annotations and run
+    summary) against `dotnet-efcore-mcp.slnx` on push/PR to `main`, on `merge_group`, and
+    via manual `workflow_dispatch`.
+  - [`.github/workflows/pr-title-lint.yml`](../../.github/workflows/pr-title-lint.yml) checks
+    that PR titles follow Conventional Commits, since squash merges turn the title into the
+    commit on `main`. It is not a required check.
 - [x] Keep .NET's invariant globalization mode **disabled** for the server
   (`<InvariantGlobalization>false</InvariantGlobalization>` in
   `src/DotnetEfCoreMcp.Server/DotnetEfCoreMcp.Server.csproj`)

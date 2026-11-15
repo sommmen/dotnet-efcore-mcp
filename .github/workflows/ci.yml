@@ -35,7 +35,7 @@ jobs:
         run: dotnet build dotnet-efcore-mcp.slnx --no-restore --configuration Release
 
       - name: Run tests
-        run: dotnet test dotnet-efcore-mcp.slnx --no-build --no-restore --configuration Release --verbosity normal
+        run: dotnet test dotnet-efcore-mcp.slnx --no-build --no-restore --configuration Release --verbosity normal --report-gh
 
       - name: Validate packaging
         # Packs (without publishing) on every PR/push so packaging regressions - e.g. a

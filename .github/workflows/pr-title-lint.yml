@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Lint PR title
+
+# With squash merges the PR title becomes the commit subject on the default branch,
+# so this is the check that keeps history conventional. `edited` matters: without it a
+# title corrected after a failure never re-runs and the check stays red.
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const pattern = /^(?:build|chore|ci|docs|feat|fix|perf|ref|refactor|revert|style|test)(?:\(.+\))?!?: .{4,}(?<![.\s])$/;
+
+            if (pattern.test(title)) {
+              core.info(`PR title OK: "${title}"`);
+              return;
+            }
+
+            core.setFailed(
+              `Invalid PR title: "${title}". Use "feat(scope): subject" or "fix: subject". ` +
+              "See https://www.conventionalcommits.org/en/v1.0.0/"
+            );
