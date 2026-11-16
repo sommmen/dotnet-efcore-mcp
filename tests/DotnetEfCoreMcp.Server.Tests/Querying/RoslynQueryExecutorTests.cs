@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Reflection;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
 using DotnetEfCoreMcp.Server.Compilation;
@@ -299,6 +300,37 @@ public sealed class RoslynQueryExecutorTests : IDisposable
             && command.Contains("LIMIT", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task ExecuteAsync_StructuredInclude_CollectionChildQueryIsRestrictedToReturnedParents()
+    {
+        var commands = new List<string>();
+        using var listener = new SqlCommandDiagnosticListener(commands);
+        var result = await CreateExecutor(maxIncludedCollectionItems: 2).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id).Take(1)", Include = ["Orders"] },
+            CancellationToken.None);
+
+        Assert.Equal(1, result.RowCount);
+        var child = Assert.Single(commands, command => command.Contains("FROM \"Orders\"", StringComparison.OrdinalIgnoreCase)
+            && command.Contains("ROW_NUMBER", StringComparison.OrdinalIgnoreCase));
+        Assert.Matches(@"(?is)ROW_NUMBER\(\).*WHERE ""o"".""CustomerId"" IN \(\s*SELECT.*FROM ""Customers""", child);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StructuredInclude_NestedCollectionChildQueriesAreRestrictedToReturnedParents()
+    {
+        var commands = new List<string>();
+        using var listener = new SqlCommandDiagnosticListener(commands);
+        var result = await CreateExecutor(maxIncludedCollectionItems: 2).ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.OrderBy(c => c.Id).Take(1)", Include = ["Orders.OrderLines"] },
+            CancellationToken.None);
+
+        var orders = Assert.IsAssignableFrom<System.Collections.IEnumerable>(result.Rows[0]["Orders"]).Cast<IReadOnlyDictionary<string, object?>>().ToList();
+        Assert.Equal(2, orders.Count);
+        Assert.All(orders, order => Assert.True(((System.Collections.IEnumerable)order["OrderLines"]!).Cast<object>().Any()));
+        Assert.Contains(commands, command => Regex.IsMatch(command, @"(?is)FROM ""OrderLines"" AS ""(\w+)""\s+WHERE ""\1"".""OrderId"" IN \(\s*SELECT.*JOIN ""Orders"""));
+    }
     [Fact]
     public async Task ExecuteAsync_ParameterlessOnConfiguringContext_OverridesHardcodedConnectionString()
     {

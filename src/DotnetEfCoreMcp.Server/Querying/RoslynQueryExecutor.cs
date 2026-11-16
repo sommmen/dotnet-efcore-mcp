@@ -54,7 +54,10 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
 
         try
         {
-            var (includedSequence, _) = IncludeQueryProcessor.Apply(sequence, invocation.Context, request.Include, executionOptions);
+            var parentPage = request.Include is { Count: > 0 } && request.Pagination is null
+                ? QueryExecutor.BuildParentPage(sequence, QueryExecutor.GetEffectiveTake(sequence.Expression, executionOptions), invocation.Context)
+                : null;
+            var (includedSequence, _) = IncludeQueryProcessor.Apply(sequence, invocation.Context, request.Include, executionOptions, parentPage);
             var sql = includedSequence.ToQueryString();
             return new QuerySqlPreviewResult(request.RootEntityName ?? "C#", sql);
         }
@@ -221,9 +224,12 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
             return new QueryResult(request.RootEntityName ?? "C#", 1, null, false, true, value, []);
         }
 
-        var (includedSequence, includePlan) = IncludeQueryProcessor.Apply(sequence, context, request.Include, executionOptions);
-        sequence = includedSequence;
         var effectiveTake = QueryExecutor.GetEffectiveTake(sequence.Expression, executionOptions);
+        var parentPage = request.Include is { Count: > 0 } && request.Pagination is null
+            ? QueryExecutor.BuildParentPage(sequence, effectiveTake, context)
+            : null;
+        var (includedSequence, includePlan) = IncludeQueryProcessor.Apply(sequence, context, request.Include, executionOptions, parentPage);
+        sequence = includedSequence;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(commandTimeoutSeconds) + executionOptions.CancellationMargin);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try

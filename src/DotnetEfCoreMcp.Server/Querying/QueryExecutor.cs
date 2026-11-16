@@ -168,6 +168,22 @@ public static class QueryExecutor
         return (values, hasMoreRows);
     }
 
+    /// <summary>The query as <see cref="MaterializeWithContinuationAsync"/> will page it, before any include is
+    /// composed. Used to restrict capped collection includes to the parents actually returned; when the page
+    /// cannot be reproduced exactly, the uncapped query is returned, which is a safe superset of its parents.</summary>
+    internal static IQueryable BuildParentPage(IQueryable sequence, int effectiveTake, DbContext context)
+    {
+        var explicitTake = TakeFinder.FindTerminalTake(sequence.Expression);
+        if (effectiveTake == 0 || explicitTake is not null && explicitTake <= effectiveTake) return sequence;
+
+        var withoutExistingTake = TakeRemover.RemovePagePipelineTakes(sequence.Expression);
+        var ordered = ImplicitRowCapOrdering.Apply(withoutExistingTake, context.Model);
+        if (ordered is null) return sequence.Provider.CreateQuery(withoutExistingTake);
+        return sequence.Provider.CreateQuery(Expression.Call(
+            typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], ordered,
+            Expression.Constant(effectiveTake + 1)));
+    }
+
     private static async Task<List<object?>> StreamPageUntypedAsync(IQueryable query, int take, CancellationToken cancellationToken)
     {
         var task = (Task<List<object?>>)StreamPageMethod.MakeGenericMethod(query.ElementType).Invoke(null, [query, take, cancellationToken])!;
