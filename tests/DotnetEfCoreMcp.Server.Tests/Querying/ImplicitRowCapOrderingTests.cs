@@ -125,6 +125,39 @@ public sealed class ImplicitRowCapOrderingTests : IDisposable
         Assert.NotEmpty(result.Rows);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_GroupByScalarKey_SucceedsAgainstContextThatThrowsOnUnorderedRowLimit()
+    {
+        var result = await CreateExecutor().ExecuteAsync(
+            _handle, _throwingContextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.GroupBy(c => c.Age > 20).Select(g => new { Adult = g.Key, Count = g.Count() })" },
+            CancellationToken.None);
+
+        Assert.Equal(2, result.RowCount);
+        Assert.Equal([1, 2], result.Rows.Select(row => Convert.ToInt32(row["Count"])).OrderBy(count => count));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_GroupByAnonymousKey_SucceedsAgainstContextThatThrowsOnUnorderedRowLimit()
+    {
+        var result = await CreateExecutor().ExecuteAsync(
+            _handle, _throwingContextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.GroupBy(c => new { c.Age, Adult = c.Age > 20 }).Select(g => new { g.Key.Age, g.Key.Adult, Count = g.Count() })" },
+            CancellationToken.None);
+
+        Assert.Equal(3, result.RowCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_GroupByWithKeyThatCannotBeOrdered_StillReturnsItsRows()
+    {
+        var result = await CreateExecutor().ExecuteAsync(
+            _handle, _throwingContextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.GroupBy(c => c.Age > 20).Select(g => g.Count())" }, CancellationToken.None);
+
+        Assert.Equal(2, result.RowCount);
+    }
+
     /// <summary>A row limit the caller wrote themselves stays their own: the server neither reorders it
     /// nor hides the context's configured failure, which plain EF Core raises identically for the same
     /// query. The surfaced error names the escalated warning so the cause is diagnosable.</summary>

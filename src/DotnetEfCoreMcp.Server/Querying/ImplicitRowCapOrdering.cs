@@ -16,8 +16,8 @@ namespace DotnetEfCoreMcp.Server.Querying;
 ///
 /// <para>Ordering is best-effort and deliberately silent when it cannot be applied: a query already
 /// carrying its own ordering keeps it untouched, a projection is ordered by the mapped source
-/// underneath it, a key-less sequence of scalars is ordered by the scalar value, and anything else
-/// (anonymous types, groupings, set operations) is left exactly as it was rather than being
+/// underneath it, a key-less sequence of scalars is ordered by the scalar value, a grouping by its key, and anything else
+/// (set operations) is left exactly as it was rather than being
 /// rejected - the cap must never turn an otherwise-valid query into a failure.</para></summary>
 internal static class ImplicitRowCapOrdering
 {
@@ -48,6 +48,11 @@ internal static class ImplicitRowCapOrdering
             }
         }
 
+        if (ordered is null && projections.Count > 0 && OrderByGroupingKey(source) is { } orderedGroups)
+            ordered = orderedGroups;
+        else if (ordered is null && OrderByGroupingKey(expression) is { } orderedGroupsNoProjection)
+            return orderedGroupsNoProjection;
+
         if (ordered is null)
         {
             // Nothing mapped left to order by (an aggregate, a set operation, a Distinct that erased
@@ -63,6 +68,39 @@ internal static class ImplicitRowCapOrdering
         }
 
         return ordered;
+    }
+
+    /// <summary>Orders a sequence of groupings by its key - the scalar itself, or each scalar member of
+    /// a composite (anonymous) key - or returns <c>null</c> when no part of the key is orderable.</summary>
+    private static Expression? OrderByGroupingKey(Expression expression)
+    {
+        var elementType = GetQueryableElementType(expression);
+        if (elementType is not { IsGenericType: true } || elementType.GetGenericTypeDefinition() != typeof(IGrouping<,>))
+            return null;
+
+        var keyType = elementType.GetGenericArguments()[0];
+        var keyProperty = elementType.GetProperty(nameof(IGrouping<,>.Key))!;
+
+        var keyParts = IsOrderableScalar(keyType)
+            ? [(Func<ParameterExpression, Expression>)(group => Expression.Property(group, keyProperty))]
+            : keyType.GetProperties()
+                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0 && IsOrderableScalar(p.PropertyType))
+                .Select(p => (Func<ParameterExpression, Expression>)(group => Expression.Property(Expression.Property(group, keyProperty), p)))
+                .ToArray();
+
+        Expression ordered = expression;
+        var applied = 0;
+        foreach (var keyPart in keyParts)
+        {
+            var parameter = Expression.Parameter(elementType, "group");
+            var selector = Expression.Lambda(keyPart(parameter), parameter);
+            var method = applied == 0 ? nameof(Queryable.OrderBy) : nameof(Queryable.ThenBy);
+            ordered = Expression.Call(typeof(Queryable), method, [elementType, selector.ReturnType],
+                ordered, Expression.Quote(selector));
+            applied++;
+        }
+
+        return applied == 0 ? null : ordered;
     }
 
     /// <summary>Orders a sequence of scalars by the scalar value itself - the only ordering available
