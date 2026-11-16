@@ -194,8 +194,10 @@ Tests: [`Connections/ConnectionAccessPolicyTests.cs`](../../tests/DotnetEfCoreMc
     that one entity visible without granting blanket access to the rest of the context.
 - [x] Enforce before context construction and query parsing
   - `EfCoreMcpTools.ResolveConnection` calls `AccessPolicy.EnsureResolvable` against the
-    discovered `DbContext`/entity model on every connection resolution (misconfigured policy
-    surfaces as `ConnectionRegistryConfigurationException`, distinct from a runtime denial).
+    discovered `DbContext`/entity model of the requested target, or the default target when omitted,
+    on every connection resolution. An assembly with no discovered contexts reports that discovery
+    failure; otherwise a misconfigured policy surfaces as `ConnectionRegistryConfigurationException`,
+    distinct from a runtime denial.
   - `EnsureContextReachable`/`EnsureEntityAllowed` gate `GetSchema`, `GetEntitySchema`,
     `SearchSchema`, `RunQuery` (root `DbSet` name plus any additional public `DbSet` roots
     referenced by the Roslyn query),

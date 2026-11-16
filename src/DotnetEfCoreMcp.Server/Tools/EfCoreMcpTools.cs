@@ -321,7 +321,7 @@ public sealed class EfCoreMcpTools(
         if (pageSize < 1 || pageSize > 100)
             throw new McpException("`pageSize` must be between 1 and 100.");
 
-        var entry = ResolveConnection(connectionName);
+        var entry = ResolveConnection(connectionName, targetName);
         var contextType = ResolveContextType(contextName, entry, targetName);
         EnsureContextReachable(contextType, entry);
 
@@ -371,7 +371,7 @@ public sealed class EfCoreMcpTools(
 
     private string ListEntitiesCore(string? contextName, string? connectionName, string? targetName)
     {
-        var entry = ResolveConnection(connectionName);
+        var entry = ResolveConnection(connectionName, targetName);
         var contextType = ResolveContextType(contextName, entry, targetName);
         EnsureContextReachable(contextType, entry);
         var schema = new Schema.ConnectionSchemaAccessPolicy(entry.AccessPolicy, contextType.FullName)
@@ -402,7 +402,7 @@ public sealed class EfCoreMcpTools(
         if (string.IsNullOrWhiteSpace(entityName))
             throw new McpException("`entityName` must not be empty.");
 
-        var entry = ResolveConnection(connectionName);
+        var entry = ResolveConnection(connectionName, targetName);
         var contextType = ResolveContextType(contextName, entry, targetName);
         EnsureContextReachable(contextType, entry);
         var schema = GetOrBuildSchema(contextType, entry);
@@ -453,7 +453,7 @@ public sealed class EfCoreMcpTools(
         if (effectiveMaxResults < 1 || effectiveMaxResults > Schema.SchemaSlicer.MaxSearchResults)
             throw new McpException($"`maxResults` must be between 1 and {Schema.SchemaSlicer.MaxSearchResults}.");
 
-        var entry = ResolveConnection(connectionName);
+        var entry = ResolveConnection(connectionName, targetName);
         var contextType = ResolveContextType(contextName, entry, targetName);
         EnsureContextReachable(contextType, entry);
         var schema = GetOrBuildSchema(contextType, entry);
@@ -502,7 +502,7 @@ public sealed class EfCoreMcpTools(
 
     private async Task<string> RunQueryCore(string contextName, string query, string? connectionName, string? targetName, IReadOnlyList<string>? include, QueryPagination? pagination, CancellationToken cancellationToken)
     {
-        var entry = ResolveConnection(connectionName);
+        var entry = ResolveConnection(connectionName, targetName);
         var contextType = ResolveContextType(contextName, entry, targetName);
 
         // Entity-level access policy (P0 #9) is enforced here because the Roslyn engine constructs its
@@ -592,7 +592,7 @@ public sealed class EfCoreMcpTools(
 
     private async Task<string> PreviewQuerySqlCore(string contextName, string query, string? connectionName, string? targetName, IReadOnlyList<string>? include, CancellationToken cancellationToken)
     {
-        var entry = ResolveConnection(connectionName);
+        var entry = ResolveConnection(connectionName, targetName);
         var contextType = ResolveContextType(contextName, entry, targetName);
 
         // Shares the exact same access-policy/validation pipeline as run_query (see RunQueryCore):
@@ -660,7 +660,7 @@ public sealed class EfCoreMcpTools(
                 "read-only LINQ-style querying) already covers your need before enabling raw SQL.");
         }
 
-        var entry = ResolveConnection(connectionName);
+        var entry = ResolveConnection(connectionName, targetName);
         var contextType = ResolveContextType(contextName, entry, targetName);
         if (entry.IsProduction)
         {
@@ -1837,7 +1837,7 @@ public sealed class EfCoreMcpTools(
         return warnings;
     }
 
-    private ConnectionRegistryEntry ResolveConnection(string? connectionName)
+    private ConnectionRegistryEntry ResolveConnection(string? connectionName, string? targetName = null)
     {
         ConnectionRegistryEntry entry;
         try
@@ -1861,17 +1861,15 @@ public sealed class EfCoreMcpTools(
             throw new McpException(ex.Message);
         }
 
-        // AccessPolicy selectors can only be checked against the actual discovered model once a
-        // target assembly is loaded (see ConnectionRegistry.LoadAccessPolicy); every tool that
-        // resolves a connection to use it does so through here, so this is the single place that
-        // enforces "reject invalid policy before serving the connection" for that deferred check.
-        var handle = assemblyLoader.Current;
+        var handle = string.IsNullOrWhiteSpace(targetName) ? assemblyLoader.Current : RequireLoadedAssembly(targetName);
         if (handle is not null)
         {
             var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
+            if (scan.Descriptors.Count == 0)
+                throw new McpException("No DbContexts were found in the loaded target assembly. Check load_assembly and list_contexts for type loading warnings.");
+
             entry.AccessPolicy.EnsureResolvable(entry.Name, scan.Descriptors);
         }
-
         return entry;
     }
 
