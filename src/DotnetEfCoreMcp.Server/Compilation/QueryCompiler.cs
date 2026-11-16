@@ -72,7 +72,17 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
                 .Take(10)
                 .ToArray();
             var attribution = errors.Any(IsReferenceSetDiagnostic) ? " " + ReferenceSetFailureMarker : string.Empty;
-            throw new QueryExecutionException($"The C# query could not be compiled: {string.Join(" ", messages)}{attribution}");
+            var hasUnknownRoot = errors.Any(d => d.Id == "CS0103"
+                && d.Location.IsInSource
+                && d.Location.GetLineSpan().StartLinePosition.Line >= source.QueryHeaderLineCount
+                && syntaxTree.GetRoot(cancellationToken).FindNode(d.Location.SourceSpan) is IdentifierNameSyntax identifier
+                && identifier.Parent is MemberAccessExpressionSyntax member
+                && member.Expression == identifier
+                && !identifier.Ancestors().OfType<AnonymousFunctionExpressionSyntax>().Any());
+            var dbSets = hasUnknownRoot && source.DbSetPropertyNames.Count > 0
+                ? $" Available DbSet properties: {string.Join(", ", source.DbSetPropertyNames.Select(name => $"`{name}`"))}."
+                : string.Empty;
+            throw new QueryExecutionException($"The C# query could not be compiled: {string.Join(" ", messages)}{attribution}{dbSets}");
         }
 
         EnsureNoSandboxedNamespaceUsage(compilation, syntaxTree, source);

@@ -64,6 +64,36 @@ public sealed class QueryCompilerTests
         Assert.Contains("Line 1:", ex.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("Orderz.Take(1)")]
+    [InlineData("var result = Orderz.Take(1); return result;")]
+    public async Task CompileAsync_UnknownQueryRoot_ListsAvailableDbSets(string query)
+    {
+        var (contextType, handle) = LoadSampleAppDbContext();
+        var source = UserQuerySourceGenerator.Generate(contextType, query, "unknownroot");
+        var compiler = new QueryCompiler(new QueryCompilationOptions());
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
+
+        Assert.Contains("Available DbSet properties:", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("`Orders`", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("`Customers`", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompileAsync_UnknownNameInLambda_DoesNotSuggestQueryRoots()
+    {
+        var (contextType, handle) = LoadSampleAppDbContext();
+        var source = UserQuerySourceGenerator.Generate(contextType, "Orders.Where(o => missing.Value == 1)", "unknownlambda");
+        var compiler = new QueryCompiler(new QueryCompilationOptions());
+
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(
+            () => compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None));
+
+        Assert.DoesNotContain("Available DbSet properties:", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task CompileAsync_BindingError_ThrowsQueryExecutionException()
     {

@@ -58,7 +58,8 @@ Summarized from the attached notes (`linqpad-query-context.md`) plus linqpad.net
 3. It loads the compiled assembly, instantiates `UserQuery`, and invokes the entry point. Because
    `UserQuery` *inherits* from `YourDbContext`, unqualified identifiers like `Orders` resolve via
    normal C# member lookup to `this.Orders` — no injection, no parser, no allowlist: it's just
-   inheritance and real overload resolution.
+   inheritance and real overload resolution. When a query uses an unknown unqualified root in a
+   member access, compilation errors list the context's available public DbSet property names.
 4. `GetType()` inside the query returns `UserQuery`, not `YourDbContext` — a directly observable
    side effect of the inheritance trick that we should keep in mind (see
    [Behavioral parity notes](#behavioral-parity-notes)).
