@@ -158,7 +158,7 @@ public static class QueryExecutor
             {
                 values = await MaterializeUntypedAsync(page, cancellationToken).ConfigureAwait(false);
             }
-            catch (InvalidOperationException) when (!cancellationToken.IsCancellationRequested)
+            catch (InvalidOperationException) when (!ReferenceEquals(ordered, withoutExistingTake) && !cancellationToken.IsCancellationRequested)
             {
                 values = await StreamPageUntypedAsync(sequence, effectiveTake, cancellationToken).ConfigureAwait(false);
             }
