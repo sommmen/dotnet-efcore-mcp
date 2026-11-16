@@ -25,7 +25,9 @@ internal static class IncludeQueryProcessor
                      m.GetParameters()[1].ParameterType.IsGenericType &&
                      m.GetParameters()[1].ParameterType.GetGenericTypeDefinition() == typeof(Expression<>));
 
-    public static (IQueryable Query, IncludePlan? Plan) Apply(IQueryable query, DbContext context, IReadOnlyList<string>? includePaths, QueryExecutionOptions options)
+    // parentPage is the root query as it will actually be paged; it restricts each capped collection to the
+    // returned parents' keys and is omitted when that page is not known up front (cursor pagination).
+    public static (IQueryable Query, IncludePlan? Plan) Apply(IQueryable query, DbContext context, IReadOnlyList<string>? includePaths, QueryExecutionOptions options, IQueryable? parentPage = null)
     {
         if (includePaths is not { Count: > 0 }) return (query, null);
         if (options.MaxIncludeDepth <= 0) throw new QueryExecutionException("The server-configured MaxIncludeDepth value must be positive.");
@@ -70,7 +72,7 @@ internal static class IncludeQueryProcessor
             throw new QueryExecutionException("Include paths must not contain duplicates.");
 
         IQueryable composed = query;
-        foreach (var path in parsed) composed = ApplyPath(composed, path, options.MaxIncludedCollectionItems);
+        foreach (var path in parsed) composed = ApplyPath(composed, parentPage, path, options.MaxIncludedCollectionItems);
 
         if (parsed.Any(path => path.Navigations.Any(navigation => navigation.IsCollection)))
             composed = ApplySplitQuery(composed);
@@ -81,14 +83,18 @@ internal static class IncludeQueryProcessor
     public static Dictionary<string, object?> Project(object entity, IncludePlan plan)
         => ProjectEntity(entity, plan.RootType, plan.Paths.Select(p => p.Navigations).ToArray());
 
-    private static IQueryable ApplyPath(IQueryable query, IncludePath path, int cap)
+    private static IQueryable ApplyPath(IQueryable query, IQueryable? parentPage, IncludePath path, int cap)
     {
         object current = query;
         var rootType = query.ElementType;
         for (var i = 0; i < path.Navigations.Count; i++)
         {
             var navigation = path.Navigations[i];
-            var lambda = BuildNavigationLambda(i == 0 ? rootType : path.Navigations[i - 1].TargetEntityType.ClrType, navigation, cap);
+            var lambda = BuildNavigationLambda(
+                i == 0 ? rootType : path.Navigations[i - 1].TargetEntityType.ClrType,
+                navigation,
+                cap,
+                BuildParentKeyFilter(parentPage, path.Navigations, i));
             if (i == 0)
             {
                 current = IncludeMethod.MakeGenericMethod(rootType, lambda.ReturnType).Invoke(null, [current, lambda])!;
@@ -116,7 +122,54 @@ internal static class IncludeQueryProcessor
             return previousIsCollection == (prior.IsGenericType && prior.GetGenericTypeDefinition() == typeof(IEnumerable<>));
         });
 
-    private static LambdaExpression BuildNavigationLambda(Type declaringType, INavigationBase navigation, int cap)
+    // EF translates a capped collection include as ROW_NUMBER() OVER (PARTITION BY fk ...) over the whole child
+    // table before joining to the parents, so each child query scans every child row unless it is first
+    // restricted to the keys of the parents actually returned (issue #144).
+    private static Func<Expression, Expression>? BuildParentKeyFilter(IQueryable? parentPage, IReadOnlyList<INavigationBase> navigations, int level)
+    {
+        if (parentPage is null) return null;
+        if (navigations[level] is not INavigation { IsCollection: true, IsOnDependent: false, ForeignKey: { Properties.Count: 1, PrincipalKey.Properties.Count: 1 } foreignKey }) return null;
+        var foreignKeyProperty = foreignKey.Properties[0].PropertyInfo;
+        var principalKeyProperty = foreignKey.PrincipalKey.Properties[0].PropertyInfo;
+        if (foreignKeyProperty is null || principalKeyProperty is null) return null;
+        var keyType = foreignKeyProperty.PropertyType;
+        if (principalKeyProperty.PropertyType != keyType) return null;
+
+        var source = parentPage;
+        for (var i = 0; i < level; i++)
+        {
+            var navigation = navigations[i];
+            var from = source.ElementType;
+            var to = navigation.TargetEntityType.ClrType;
+            var parameter = Expression.Parameter(from, "p");
+            Expression access = Expression.Property(parameter, navigation.PropertyInfo!);
+            if (navigation.IsCollection)
+            {
+                var selector = Expression.Lambda(typeof(Func<,>).MakeGenericType(from, typeof(IEnumerable<>).MakeGenericType(to)), access, parameter);
+                source = (IQueryable)QueryableSelectMany.MakeGenericMethod(from, to).Invoke(null, [source, selector])!;
+            }
+            else
+            {
+                source = (IQueryable)QueryableSelect.MakeGenericMethod(from, to).Invoke(null, [source, Expression.Lambda(access, parameter)])!;
+            }
+        }
+
+        var keyParameter = Expression.Parameter(source.ElementType, "k");
+        var keySelector = Expression.Lambda(Expression.Property(keyParameter, principalKeyProperty), keyParameter);
+        var parentKeys = (IQueryable)QueryableSelect.MakeGenericMethod(source.ElementType, keyType).Invoke(null, [source, keySelector])!;
+        // The query's expression tree, not the IQueryable itself: a constant IQueryable is evaluated by EF in a
+        // separate round-trip and inlined as literal keys instead of being translated as an IN subquery.
+        return child => Expression.Call(typeof(Queryable), nameof(Queryable.Contains), [keyType], parentKeys.Expression, Expression.Property(child, foreignKeyProperty));
+    }
+
+    private static readonly MethodInfo QueryableSelect = typeof(Queryable).GetMethods()
+        .Single(m => m.Name == nameof(Queryable.Select) && m.GetParameters()[1].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 2);
+
+    private static readonly MethodInfo QueryableSelectMany = typeof(Queryable).GetMethods()
+        .Single(m => m.Name == nameof(Queryable.SelectMany) && m.GetParameters().Length == 2
+                     && m.GetParameters()[1].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 2);
+
+    private static LambdaExpression BuildNavigationLambda(Type declaringType, INavigationBase navigation, int cap, Func<Expression, Expression>? parentKeyFilter)
     {
         var parameter = Expression.Parameter(declaringType, "e");
         Expression body = Expression.Property(parameter, navigation.PropertyInfo!);
@@ -126,6 +179,12 @@ internal static class IncludeQueryProcessor
             var primaryKey = navigation.TargetEntityType.FindPrimaryKey()
                 ?? throw new QueryExecutionException($"Included collection '{navigation.Name}' must have a primary key for deterministic ordering.");
             var keyParameter = Expression.Parameter(elementType, "x");
+            if (parentKeyFilter is not null)
+            {
+                var filterParameter = Expression.Parameter(elementType, "f");
+                body = Expression.Call(typeof(Enumerable), nameof(Enumerable.Where), [elementType], body,
+                    Expression.Lambda(parentKeyFilter(filterParameter), filterParameter));
+            }
             for (var i = 0; i < primaryKey.Properties.Count; i++)
             {
                 var property = primaryKey.Properties[i];

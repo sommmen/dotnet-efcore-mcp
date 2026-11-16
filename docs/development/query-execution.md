@@ -360,6 +360,16 @@ provider-translatable filtered include with a deterministic primary-key ordering
 queries use split-query execution to retain the per-parent bound without N+1 queries. Reference
 navigations remain regular includes.
 
+EF translates a capped collection include as `ROW_NUMBER() OVER (PARTITION BY <fk> ORDER BY <pk>)` over
+the child table, evaluated before the join back to the parents. Without a filter that scans every child row
+on each call, which made a two-row page cost seconds per collection on large child tables (issue #144). Each
+capped collection is therefore also filtered with `<fk> IN (<keys of the parents being returned>)`, built
+from the same page (ordering and `Take`) that `run_query` materializes, so the window function only sees the
+children of the returned parents. Nested collection levels filter by the keys reached through the preceding
+navigations. The filter is applied for single-column foreign keys on collection navigations; other shapes keep the
+unfiltered cap, and cursor-paginated requests do not use it. A collection loaded through a hand-written
+`Select`/`Take` projection in the query text is not rewritten.
+
 The cap applies independently to every parent, requested branch, and nested collection level. A value
 of `0` produces an empty included collection. Root `skip`/`take`, no-tracking execution, cancellation,
 timeout handling, and safe scalar projection are unchanged. The response is never made compliant by
