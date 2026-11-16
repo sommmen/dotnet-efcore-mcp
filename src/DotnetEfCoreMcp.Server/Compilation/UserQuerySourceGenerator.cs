@@ -112,7 +112,8 @@ internal static class UserQuerySourceGenerator
             builder.ToString(),
             $"{GeneratedNamespace}.{className}",
             queryStartLine - 1,
-            statementMode);
+            statementMode,
+            GetDbSetPropertyNames(contextType).Order(StringComparer.Ordinal).ToArray());
     }
 
     /// <summary>Generates a query for a <see cref="DbContextConstructorShape.DesignTimeFactory"/>
@@ -179,7 +180,8 @@ internal static class UserQuerySourceGenerator
             builder.ToString(),
             $"{GeneratedNamespace}.{className}",
             queryStartLine - 1,
-            statementMode);
+            statementMode,
+            GetDbSetPropertyNames(contextType).Order(StringComparer.Ordinal).ToArray());
     }
 
     private static void AppendConstructor(
@@ -355,4 +357,5 @@ internal sealed record GeneratedUserQuerySource(
     string Source,
     string TypeName,
     int QueryHeaderLineCount,
-    bool IsStatementMode);
+    bool IsStatementMode,
+    IReadOnlyList<string> DbSetPropertyNames);
