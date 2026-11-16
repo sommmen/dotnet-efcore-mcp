@@ -10,6 +10,7 @@ namespace DotnetEfCoreMcp.Server.Querying;
 public static class QueryExecutor
 {
     private static readonly MethodInfo MaterializeMethod = typeof(QueryExecutor).GetMethod(nameof(MaterializeAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
+    private static readonly MethodInfo StreamPageMethod = typeof(QueryExecutor).GetMethod(nameof(StreamPageAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
     /// <summary>Trims and validates a raw LINQPad-style query and extracts the leading DbSet property
     /// name it is rooted at. Made <c>internal</c> (rather than <c>private</c>) so
@@ -142,14 +143,46 @@ public static class QueryExecutor
         }
 
         var withoutExistingTake = TakeRemover.RemovePagePipelineTakes(sequence.Expression);
-        withoutExistingTake = ImplicitRowCapOrdering.Apply(withoutExistingTake, context.Model);
-        var page = sequence.Provider.CreateQuery(Expression.Call(
-            typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], withoutExistingTake,
-            Expression.Constant(effectiveTake + 1)));
-        var values = await MaterializeUntypedAsync(page, cancellationToken).ConfigureAwait(false);
+        var ordered = ImplicitRowCapOrdering.Apply(withoutExistingTake, context.Model);
+        List<object?> values;
+        if (ordered is null)
+        {
+            values = await StreamPageUntypedAsync(sequence, effectiveTake, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var page = sequence.Provider.CreateQuery(Expression.Call(
+                typeof(Queryable), nameof(Queryable.Take), [sequence.ElementType], ordered,
+                Expression.Constant(effectiveTake + 1)));
+            try
+            {
+                values = await MaterializeUntypedAsync(page, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException) when (!ReferenceEquals(ordered, withoutExistingTake) && !cancellationToken.IsCancellationRequested)
+            {
+                values = await StreamPageUntypedAsync(sequence, effectiveTake, cancellationToken).ConfigureAwait(false);
+            }
+        }
         var hasMoreRows = values.Count > effectiveTake;
         if (hasMoreRows) values.RemoveAt(values.Count - 1);
         return (values, hasMoreRows);
+    }
+
+    private static async Task<List<object?>> StreamPageUntypedAsync(IQueryable query, int take, CancellationToken cancellationToken)
+    {
+        var task = (Task<List<object?>>)StreamPageMethod.MakeGenericMethod(query.ElementType).Invoke(null, [query, take, cancellationToken])!;
+        return await task.ConfigureAwait(false);
+    }
+
+    private static async Task<List<object?>> StreamPageAsync<T>(IQueryable query, int take, CancellationToken cancellationToken)
+    {
+        var values = new List<object?>();
+        await foreach (var value in ((IQueryable<T>)query).AsAsyncEnumerable().WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            values.Add(value);
+            if (values.Count > take) break;
+        }
+        return values;
     }
 
     private static async Task<List<object?>> MaterializeAsync<T>(IQueryable query, CancellationToken cancellationToken)
