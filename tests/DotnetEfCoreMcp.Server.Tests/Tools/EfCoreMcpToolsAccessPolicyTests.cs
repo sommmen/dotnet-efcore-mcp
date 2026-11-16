@@ -330,6 +330,44 @@ public sealed class EfCoreMcpToolsAccessPolicyTests
     }
 
     [Fact]
+    public async Task RunQuery_NamedTarget_ValidatesPolicyAgainstRequestedAssembly()
+    {
+        var tools = CreateTools(allowContexts: ["SampleApp.SampleAppDbContext"]);
+        tools.LoadAssembly(FixturePaths.NoContextAppDllPath);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath, targetName: "second");
+
+        var result = await tools.RunQuery("SampleAppDbContext", "Orders.Take(0)", targetName: "second", cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("rows", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetSchema_NamedTargetWithUnresolvableSelector_RejectsPolicy()
+    {
+        var tools = CreateTools(allowContexts: ["SampleApp.SampleAppDbContext"]);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        tools.LoadAssembly(FixturePaths.IdentityAppDllPath, targetName: "second");
+
+        var exception = Assert.Throws<McpException>(() => tools.GetSchema("IdentityAppDbContext", targetName: "second"));
+
+        Assert.Contains("does not resolve", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetSchema_TargetWithoutContexts_ReportsDiscoveryFailure()
+    {
+        var tools = CreateTools(allowContexts: ["SampleApp.SampleAppDbContext"]);
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        tools.LoadAssembly(FixturePaths.NoContextAppDllPath, targetName: "empty");
+
+        var exception = Assert.Throws<McpException>(() => tools.GetSchema("SampleAppDbContext", targetName: "empty"));
+
+        Assert.Contains("No DbContexts were found", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("type loading warnings", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("does not resolve", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ToolConstruction_ConnectionsSectionMissingAccessPolicy_DoesNotThrowDuringActivation()
     {
         // Regression test for the "generic MCP-framework error on every tool call" bug: this
