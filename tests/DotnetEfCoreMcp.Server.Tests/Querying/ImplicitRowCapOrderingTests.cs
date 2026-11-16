@@ -158,6 +158,21 @@ public sealed class ImplicitRowCapOrderingTests : IDisposable
         Assert.Equal(2, result.RowCount);
     }
 
+    [Theory]
+    [InlineData("Customers.GroupBy(c => c).Select(g => new { g.Key.Name, Count = g.Count() })")]
+    [InlineData("Customers.GroupBy(c => new { Adult = c.Age > 20, Nested = new { c.Name } }).Select(g => new { g.Key.Adult, g.Key.Nested.Name, Count = g.Count() })")]
+    public async Task ExecuteAsync_GroupByEntityKey_StreamsBoundedResults(string query)
+    {
+        var executor = CreateExecutor(1);
+        var preview = await executor.PreviewSqlAsync(_handle, _throwingContextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None);
+        Assert.DoesNotContain("LIMIT", preview.Sql, StringComparison.OrdinalIgnoreCase);
+        var result = await executor.ExecuteAsync(_handle, _throwingContextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None);
+        Assert.Single(result.Rows);
+        Assert.True(result.HasMoreRows);
+    }
+
     /// <summary>A row limit the caller wrote themselves stays their own: the server neither reorders it
     /// nor hides the context's configured failure, which plain EF Core raises identically for the same
     /// query. The surfaced error names the escalated warning so the cause is diagnosable.</summary>

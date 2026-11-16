@@ -278,6 +278,14 @@ present, is treated solely as a sentinel: it
 sets `hasMoreRows` and is discarded before projection, so only the requested window is returned. The
 sentinel probe is never executed for `effectiveTake == 0`: `take: 0` returns `rows: []`, `rowCount: 0`,
 and `hasMoreRows: false` without materializing or querying the database, even when matching rows exist.
+When a deterministic ordering cannot be constructed, or the provider rejects the injected ordering,
+execution instead streams the original query and stops after the sentinel. This bounds rows materialized
+by the server, but does not impose a SQL row limit: the database may still process more rows. The
+unordered result is not stable for pagination; callers should supply a translatable `OrderBy` when
+stable pages are needed. Caller-written limits remain in the original query. For example, SQLite EF
+Core 10 translates grouping by a `Customer` entity without a cap, but the previously injected ordering
+on its unmapped `DisplayLabel` fails translation; streaming preserves that valid query.
+
 Take clamping, cancellation/timeout behavior, and bounded projection are unaffected. Focused executor
 tests cover empty results, exact-take results, an extra row (over-limit), clamped takes, skipped
 windows, and `take: 0`.

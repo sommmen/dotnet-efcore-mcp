@@ -21,7 +21,7 @@ namespace DotnetEfCoreMcp.Server.Querying;
 /// rejected - the cap must never turn an otherwise-valid query into a failure.</para></summary>
 internal static class ImplicitRowCapOrdering
 {
-    public static Expression Apply(Expression expression, IModel model)
+    public static Expression? Apply(Expression expression, IModel model)
     {
         if (ContainsOrdering(expression))
             return expression;
@@ -58,7 +58,7 @@ internal static class ImplicitRowCapOrdering
             // Nothing mapped left to order by (an aggregate, a set operation, a Distinct that erased
             // the key). A scalar element orders deterministically by its own value; anything else is
             // left alone rather than risking an untranslatable ordering.
-            return OrderByScalarElement(expression) ?? expression;
+            return OrderByScalarElement(expression);
         }
 
         while (projections.Count > 0)
@@ -71,7 +71,7 @@ internal static class ImplicitRowCapOrdering
     }
 
     /// <summary>Orders a sequence of groupings by its key - the scalar itself, or each scalar member of
-    /// a composite (anonymous) key - or returns <c>null</c> when no part of the key is orderable.</summary>
+    /// a composite (anonymous) key - or returns <c>null</c> when any part cannot be ordered.</summary>
     private static Expression? OrderByGroupingKey(Expression expression)
     {
         var elementType = GetQueryableElementType(expression);
@@ -80,6 +80,10 @@ internal static class ImplicitRowCapOrdering
 
         var keyType = elementType.GetGenericArguments()[0];
         var keyProperty = elementType.GetProperty(nameof(IGrouping<,>.Key))!;
+
+        var properties = keyType.GetProperties().Where(p => p.CanRead && p.GetIndexParameters().Length == 0).ToArray();
+        if (!IsOrderableScalar(keyType) && (properties.Length == 0 || properties.Any(p => !IsOrderableScalar(p.PropertyType))))
+            return null;
 
         var keyParts = IsOrderableScalar(keyType)
             ? [(Func<ParameterExpression, Expression>)(group => Expression.Property(group, keyProperty))]
