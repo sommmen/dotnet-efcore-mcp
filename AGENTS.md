@@ -11,6 +11,29 @@ schema discovery and LINQ-style querying (read-only by default) to an MCP
 client. See [DEVELOPMENT.md](./DEVELOPMENT.md) for current feature status and
 module guides.
 
+## Related repositories
+
+These are separate public .NET projects by the same author, usually cloned side
+by side; for cross-repo questions first check the sibling folders next to this
+repository's checkout. If they are not there, read them on GitHub.
+
+- **dotnet-efcore-mcp** (this repo) — MCP server that queries an existing EF
+  Core application's database by reflecting over its `DbContext`.
+  <https://github.com/sommmen/dotnet-efcore-mcp>
+- **dotnet-agent-surface** — library that exposes an application's operations
+  through an MCP server, a CLI and generated agent skills from one catalog.
+  Consumed here as the `DotNetAgentSurface.*` NuGet packages.
+  <https://github.com/sommmen/dotnet-agent-surface>
+- **Anvilboard** — local-first, single-process issue tracker and dashboard
+  backed by one SQLite file. Also builds its agent-facing surfaces on
+  `dotnet-agent-surface`. <https://github.com/sommmen/Anvilboard>
+- **Sanare** — schema-driven, self-healing .NET scraping library built on the
+  Microsoft Agent Framework. Independent of the other projects.
+  <https://github.com/sommmen/Sanare>
+- **lightr** — C# API client for the Lightr handwritten-card SAAS, generated
+  from its OpenAPI document. Independent of the other projects.
+  <https://github.com/sommmen/lightr>
+
 ## Commit conventions
 
 Use Conventional Commits for every commit message and pull request title:
