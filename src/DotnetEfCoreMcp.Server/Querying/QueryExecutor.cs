@@ -239,7 +239,7 @@ public static class QueryExecutor
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
             if (node.Method.DeclaringType == typeof(Queryable) && node.Method.Name == nameof(Queryable.Distinct))
-                return node.Update(node.Object, [Visit(RemoveDiscardedOrdering(node.Arguments[0])), .. node.Arguments.Skip(1).Select(argument => Visit(argument)!)]);
+                return node.Update(node.Object, [Visit(RemoveDiscardedOrdering(node.Arguments[0])), .. node.Arguments.Skip(1).Select(argument => Visit(argument))]);
 
             return base.VisitMethodCall(node);
         }
