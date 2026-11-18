@@ -60,6 +60,8 @@ Summarized from the attached notes (`linqpad-query-context.md`) plus linqpad.net
    normal C# member lookup to `this.Orders` — no injection, no parser, no allowlist: it's just
    inheritance and real overload resolution. When a query uses an unknown unqualified root in a
    member access, compilation errors list the context's available public DbSet property names.
+   Unknown entity members list EF model properties and navigations and refer to `get_entity_schema`
+   when model metadata is available.
 4. `GetType()` inside the query returns `UserQuery`, not `YourDbContext` — a directly observable
    side effect of the inheritance trick that we should keep in mind (see
    [Behavioral parity notes](#behavioral-parity-notes)).

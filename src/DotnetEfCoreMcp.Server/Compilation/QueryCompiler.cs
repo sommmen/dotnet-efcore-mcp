@@ -5,6 +5,7 @@ using DotnetEfCoreMcp.Server.Querying;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.EntityFrameworkCore;
 
 namespace DotnetEfCoreMcp.Server.Compilation;
 
@@ -16,11 +17,13 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
     /// scope which EF Core provider surfaces enter the compilation's reference set. See
     /// <see cref="ProviderReferenceGroups"/>.</param>
     /// <param name="cancellationToken">Cancels compilation.</param>
+    /// <param name="modelFactory">Optionally retrieves model metadata for diagnostic hints.</param>
     internal async Task<CompiledQuery> CompileAsync(
         GeneratedUserQuerySource source,
         LoadedAssemblyHandle target,
         DatabaseProvider? provider,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<Microsoft.EntityFrameworkCore.Metadata.IModel>? modelFactory = null)
     {
         if (options.CompileTimeoutSeconds <= 0)
         {
@@ -33,7 +36,7 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
 
         try
         {
-            return await Task.Run(() => Compile(source, target, provider, linkedCancellationToken), linkedCancellationToken).ConfigureAwait(false);
+            return await Task.Run(() => Compile(source, target, provider, linkedCancellationToken, modelFactory), linkedCancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
         {
@@ -45,7 +48,8 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         GeneratedUserQuerySource source,
         LoadedAssemblyHandle target,
         DatabaseProvider? provider,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<Microsoft.EntityFrameworkCore.Metadata.IModel>? modelFactory)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var syntaxTree = CSharpSyntaxTree.ParseText(source.Source, CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.Latest));
@@ -82,12 +86,50 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
             var dbSets = hasUnknownRoot && source.DbSetPropertyNames.Count > 0
                 ? $" Available DbSet properties: {string.Join(", ", source.DbSetPropertyNames.Select(name => $"`{name}`"))}."
                 : string.Empty;
-            throw new QueryExecutionException($"The C# query could not be compiled: {string.Join(" ", messages)}{attribution}{dbSets}");
+            var memberHints = GetEntityMemberHints(errors, compilation, syntaxTree, source, modelFactory, cancellationToken);
+            throw new QueryExecutionException($"The C# query could not be compiled: {string.Join(" ", messages)}{attribution}{dbSets}{memberHints}");
         }
 
         EnsureNoSandboxedNamespaceUsage(compilation, syntaxTree, source);
 
         return new CompiledQuery(pe.ToArray(), pdb.ToArray());
+    }
+
+    private static string GetEntityMemberHints(Diagnostic[] errors, CSharpCompilation compilation, SyntaxTree tree,
+        GeneratedUserQuerySource source, Func<Microsoft.EntityFrameworkCore.Metadata.IModel>? modelFactory, CancellationToken cancellationToken)
+    {
+        if (modelFactory is null || !errors.Any(d => d.Id == "CS1061")) return string.Empty;
+
+        try
+        {
+            var semanticModel = compilation.GetSemanticModel(tree);
+            var root = tree.GetRoot(cancellationToken);
+            var model = modelFactory();
+            var hints = new List<string>();
+            foreach (var error in errors.Where(d => d.Id == "CS1061" && d.Location.IsInSource
+                && d.Location.GetLineSpan().StartLinePosition.Line >= source.QueryHeaderLineCount))
+            {
+                var node = root.FindNode(error.Location.SourceSpan);
+                var member = node.AncestorsAndSelf().OfType<MemberAccessExpressionSyntax>().FirstOrDefault();
+                if (member is null) continue;
+                var type = semanticModel.GetTypeInfo(member.Expression, cancellationToken).Type as INamedTypeSymbol;
+                if (type is null) continue;
+                var fullName = type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
+                var entities = model.GetEntityTypes().Where(e => e.ClrType.FullName?.Replace('+', '.') == fullName).ToArray();
+                if (entities.Length != 1) continue;
+                var entity = entities[0];
+                var names = entity.GetProperties().Select(p => p.Name)
+                    .Concat(entity.GetNavigations().Select(n => n.Name))
+                    .Concat(entity.GetSkipNavigations().Select(n => n.Name))
+                    .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
+                hints.Add($" '{type.Name}' has no property '{member.Name.Identifier.ValueText}'. Available: {string.Join(", ", names)} (see get_entity_schema).");
+            }
+            return string.Concat(hints.Distinct(StringComparer.Ordinal));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>Appended to a compile error caused by the server's own reference set rather than by

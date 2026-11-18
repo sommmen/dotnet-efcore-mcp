@@ -55,6 +55,29 @@ public sealed class RoslynQueryExecutorTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
+    [Theory]
+    [InlineData("Customers.OrderBy(c => c.Id).Select(c => new { c.Id, c.FullName })", "FullName")]
+    [InlineData("Customers.OrderBy(c => c.Id).Select(c => new { c.Id, Lines = c.OrderLines })", "OrderLines")]
+    public async Task ExecuteAsync_UnknownEntityMember_ListsModelMembers(string query, string member)
+    {
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None));
+
+        Assert.Contains($"'Customer' has no property '{member}'", ex.Message, StringComparison.Ordinal);
+        foreach (var name in new[] { "Id", "Name", "Age", "Email", "Orders", "get_entity_schema" })
+            Assert.Contains(name, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnknownNonEntityMember_DoesNotSuggestEntitySchema()
+    {
+        var ex = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateExecutor().ExecuteAsync(
+            _handle, _contextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Select(c => c.Name.Nonexistent)" }, CancellationToken.None));
+        Assert.DoesNotContain("see get_entity_schema", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ExecuteAsync_ExpressionQuery_UsesRootEntityName()
     {
