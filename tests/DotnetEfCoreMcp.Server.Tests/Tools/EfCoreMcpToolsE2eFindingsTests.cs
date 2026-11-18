@@ -111,6 +111,18 @@ public sealed class EfCoreMcpToolsE2EFindingsTests
         Assert.Contains("add an explicit OrderBy", message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void FormatQueryError_DistinctAfterOrderBy_SuggestsMovingTheOrdering()
+    {
+        var exception = new QueryExecutionException("Query failed.",
+            new InvalidOperationException("DistinctAfterOrderByWithoutRowLimitingOperatorWarning"));
+
+        var message = EfCoreMcpTools.FormatQueryErrorForTesting(exception);
+
+        Assert.Contains("OrderBy after Distinct", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("get_schema", message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("Include path segment 'Bogus' is not a navigation on 'Customer'.")]
     [InlineData("`query` must be a non-empty LINQ expression.")]
