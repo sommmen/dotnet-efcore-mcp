@@ -5,7 +5,6 @@ using DotnetEfCoreMcp.Server.Querying;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.EntityFrameworkCore;
 
 namespace DotnetEfCoreMcp.Server.Compilation;
 
