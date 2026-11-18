@@ -40,6 +40,17 @@ public sealed class ImplicitRowCapOrderingTests : IDisposable
         }
 
         context.SaveChanges();
+
+        var orderType = EntitySeeding.GetEntityClrType(context, "Order");
+        foreach (var (customerId, amount, day) in new[] { (1, 10m, 1), (1, 20m, 2), (2, 30m, 3) })
+        {
+            context.Add(EntitySeeding.CreateEntity(orderType, new Dictionary<string, object?>
+            {
+                ["CustomerId"] = customerId, ["Amount"] = amount, ["CreatedAtUtc"] = new DateTime(2024, 1, day, 0, 0, 0, DateTimeKind.Utc),
+            }));
+        }
+
+        context.SaveChanges();
     }
 
     public void Dispose() => _db.Dispose();
@@ -197,6 +208,20 @@ public sealed class ImplicitRowCapOrderingTests : IDisposable
 
         Assert.Contains("FROM \"Customers\"", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("LIMIT", result.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("Customers.SelectMany(c => c.Orders.Select(o => new { o.Amount, o.CreatedAtUtc })).Distinct()")]
+    [InlineData("Orders.Where(o => o.Amount > 0).OrderBy(o => o.Amount).Select(o => o.Amount).Distinct().Take(200)")]
+    [InlineData("Orders.Where(o => o.Amount > 0).OrderBy(o => o.Amount).Select(o => o.Amount).Distinct()")]
+    public async Task ExecuteAsync_DistinctShapesReportedInIssue157_ReturnACappedPage(string query)
+    {
+        var result = await CreateExecutor(1).ExecuteAsync(
+            _handle, _throwingContextType, _db.ToRegistryEntry(), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = query }, CancellationToken.None);
+
+        Assert.Single(result.Rows);
+        Assert.True(result.HasMoreRows);
     }
 
     private static RoslynQueryExecutor CreateExecutor(int maxTake = 200) => new(

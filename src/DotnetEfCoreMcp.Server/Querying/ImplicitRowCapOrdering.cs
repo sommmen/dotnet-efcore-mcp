@@ -174,6 +174,9 @@ internal static class ImplicitRowCapOrdering
     {
         while (expression is MethodCallExpression call && call.Method.DeclaringType == typeof(Queryable))
         {
+            if (call.Method.Name == nameof(Queryable.Distinct))
+                return false;
+
             if (call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending)
                 or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending))
             {

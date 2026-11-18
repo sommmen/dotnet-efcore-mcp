@@ -1715,6 +1715,11 @@ public sealed class EfCoreMcpTools(
     /// provider's own wording because EF does not expose distinct exception types for them.</summary>
     private static string ResolveCauseHint(string cause)
     {
+        if (cause.Contains("DistinctAfterOrderByWithoutRowLimitingOperatorWarning", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Apply OrderBy after Distinct, or remove the ordering before Distinct, then retry the query.";
+        }
+
         if (cause.Contains("RowLimitingOperationWithoutOrderByWarning", StringComparison.OrdinalIgnoreCase) ||
             (cause.Contains("Skip", StringComparison.OrdinalIgnoreCase) && cause.Contains("Take", StringComparison.OrdinalIgnoreCase)))
         {

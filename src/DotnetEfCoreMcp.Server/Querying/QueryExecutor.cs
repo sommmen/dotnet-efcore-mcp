@@ -145,6 +145,7 @@ public static class QueryExecutor
     {
         if (effectiveTake == 0) return ([], false);
 
+        sequence = sequence.Provider.CreateQuery(DistinctOrderingRewriter.Rewrite(sequence.Expression));
         var explicitTake = TakeFinder.FindTerminalTake(sequence.Expression);
         if (explicitTake is not null && explicitTake <= effectiveTake)
         {
@@ -230,6 +231,34 @@ public static class QueryExecutor
     }
 
     internal static bool IsScalar(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) || type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(Guid) || Nullable.GetUnderlyingType(type) is not null;
+
+    private sealed class DistinctOrderingRewriter : ExpressionVisitor
+    {
+        public static Expression Rewrite(Expression expression) => new DistinctOrderingRewriter().Visit(expression);
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.DeclaringType == typeof(Queryable) && node.Method.Name == nameof(Queryable.Distinct))
+                return node.Update(node.Object, [Visit(RemoveDiscardedOrdering(node.Arguments[0])), .. node.Arguments.Skip(1).Select(argument => Visit(argument))]);
+
+            return base.VisitMethodCall(node);
+        }
+
+        private static Expression RemoveDiscardedOrdering(Expression expression)
+        {
+            if (expression is not MethodCallExpression call || call.Method.DeclaringType != typeof(Queryable))
+                return expression;
+
+            if (call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending)
+                or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending))
+                return RemoveDiscardedOrdering(call.Arguments[0]);
+
+            if (call.Method.Name is nameof(Queryable.Select) or nameof(Queryable.Where))
+                return call.Update(call.Object, [RemoveDiscardedOrdering(call.Arguments[0]), .. call.Arguments.Skip(1)]);
+
+            return expression;
+        }
+    }
 
     private sealed class TakeFinder : ExpressionVisitor
     {
