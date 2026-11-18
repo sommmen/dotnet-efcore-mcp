@@ -3,6 +3,7 @@ using DotnetEfCoreMcp.Server.Compilation;
 using DotnetEfCoreMcp.Server.Connections;
 using DotnetEfCoreMcp.Server.DbContextDiscovery;
 using DotnetEfCoreMcp.Server.Querying;
+using DotnetEfCoreMcp.Server.Tools;
 using DotnetEfCoreMcp.Server.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
 
@@ -65,6 +66,50 @@ public sealed class PolicyEnforcementTests : IDisposable
         var ex = Assert.Throws<QueryExecutionException>(
             () => QueryExecutor.NormalizeAndGetRoot("{ return Customers.Where(c => c.Age > 18); }", 500));
         Assert.Contains("one expression only", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("Customers.Where(c => c.Age > 18 &amp;&amp; c.Name != null)", "&amp;")]
+    [InlineData("Customers.Where(c => c.Age &lt; 18)", "&lt;")]
+    [InlineData("Customers.Where(c => c.Age &gt; 18)", "&gt;")]
+    [InlineData("Customers.Where(c => c.Name == &quot;x&quot;)", "&quot;")]
+    [InlineData("Customers.Where(c => c.Name != &#39;x&#39;)", "&#39;")]
+    [InlineData("Customers.Where(c => c.Name != &#x27;x&#x27;)", "&#x27;")]
+    [InlineData("Customers.Where(c => c.Age > 18 &lt;)", "&lt;")]
+    public void NormalizeAndGetRoot_RejectsHtmlEntityEscapesWithSpecificMessage(string query, string entity)
+    {
+        var ex = Assert.Throws<QueryExecutionException>(() => QueryExecutor.NormalizeAndGetRoot(query, 500));
+        Assert.Contains($"HTML entity escape '{entity}'", ex.Message);
+        Assert.Contains("literal characters", ex.Message);
+        Assert.DoesNotContain("statement-mode", ex.Message);
+        Assert.DoesNotContain("get_schema", ex.Message);
+    }
+
+    [Fact]
+    public void NormalizeAndGetRoot_HtmlEntityCheckRunsBeforeStatementModeGuard()
+    {
+        var ex = Assert.Throws<QueryExecutionException>(
+            () => QueryExecutor.NormalizeAndGetRoot("var x = Customers; x.Where(c => c.Age &gt; 18 &amp;&amp; c.Id > 0);", 500));
+        Assert.Contains("HTML entity escape", ex.Message);
+    }
+
+    [Fact]
+    public void FormatQueryError_HtmlEntityEscapeHasNoSchemaHint()
+    {
+        var ex = Assert.Throws<QueryExecutionException>(
+            () => QueryExecutor.NormalizeAndGetRoot("Customers.Where(c => c.Age > 18 &amp;&amp; c.Name != null)", 500));
+        var formatted = EfCoreMcpTools.FormatQueryErrorForTesting(ex);
+        Assert.Contains("HTML entity escape '&amp;'", formatted);
+        Assert.DoesNotContain("get_schema", formatted);
+        Assert.DoesNotContain("Next step", formatted);
+    }
+
+    [Fact]
+    public void NormalizeAndGetRoot_AcceptsLiteralAmpersandAndSemicolonTerminator()
+    {
+        var (root, expr) = QueryExecutor.NormalizeAndGetRoot("Customers.Where(c => c.Age > 18 && c.Name != null);", 500);
+        Assert.Equal("Customers", root);
+        Assert.Equal("Customers.Where(c => c.Age > 18 && c.Name != null)", expr);
     }
 
 

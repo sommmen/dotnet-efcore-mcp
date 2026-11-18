@@ -22,6 +22,11 @@ public static class QueryExecutor
     /// queries are not supported for policy enforcement reasons; see P0 #9. The parsed root name is later
     /// validated by <see cref="TryGetDbSetEntityType"/> to ensure it actually refers to a DbSet property,
     /// preventing policy bypass via DbContext.Set&lt;T&gt;(), Database.ExecuteSqlRaw(), or other non-DbSet access.</summary>
+    private static readonly System.Text.RegularExpressions.Regex HtmlEntityEscapePattern = new(
+        "&(?:amp|lt|gt|quot|apos|#[0-9]+|#[xX][0-9A-Fa-f]+);",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(100));
+
     internal static (string Root, string Expression) NormalizeAndGetRoot(string? query, int maxQueryLength)
     {
         var value = query?.Trim();
@@ -29,6 +34,11 @@ public static class QueryExecutor
         if (value is { Length: > 0 } && value.Length > maxQueryLength)
             throw new QueryExecutionException("`query` exceeds the configured maximum length.");
         if (string.IsNullOrWhiteSpace(value)) throw new QueryExecutionException("`query` must be a non-empty LINQ expression.");
+        var entityEscape = HtmlEntityEscapePattern.Match(value);
+        if (entityEscape.Success)
+            throw new QueryExecutionException(
+                $"`query` contains the HTML entity escape '{entityEscape.Value}', which is not valid C# syntax. " +
+                "Send the literal characters instead (for example '&&' rather than '&amp;&amp;'), then retry.");
         if (value.EndsWith(';')) value = value[..^1].TrimEnd();
         if (value.Contains(';')) throw new QueryExecutionException("`query` must contain one expression only (statement-mode is not supported).");
         var match = System.Text.RegularExpressions.Regex.Match(value, "^(?<root>[A-Za-z_][A-Za-z0-9_]*)");
