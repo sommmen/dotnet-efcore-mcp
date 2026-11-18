@@ -35,7 +35,8 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
 
         try
         {
-            return await Task.Run(() => Compile(source, target, provider, linkedCancellationToken, modelFactory), linkedCancellationToken).ConfigureAwait(false);
+            return await Task.Run(() => Compile(source, target, provider, linkedCancellationToken, modelFactory), linkedCancellationToken)
+                .WaitAsync(linkedCancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
         {
@@ -113,8 +114,7 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
                 if (member is null) continue;
                 var type = semanticModel.GetTypeInfo(member.Expression, cancellationToken).Type as INamedTypeSymbol;
                 if (type is null) continue;
-                var fullName = type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
-                var entities = model.GetEntityTypes().Where(e => e.ClrType.FullName?.Replace('+', '.') == fullName).ToArray();
+                var entities = model.GetEntityTypes().Where(e => MatchesType(e.ClrType, type)).ToArray();
                 if (entities.Length != 1) continue;
                 var entity = entities[0];
                 var names = entity.GetProperties().Select(p => p.Name)
@@ -129,6 +129,32 @@ public sealed class QueryCompiler(QueryCompilationOptions options)
         {
             return string.Empty;
         }
+    }
+
+    private static bool MatchesType(Type runtimeType, ITypeSymbol symbol)
+    {
+        if (runtimeType.IsArray)
+            return symbol is IArrayTypeSymbol array && runtimeType.GetArrayRank() == array.Rank
+                && MatchesType(runtimeType.GetElementType()!, array.ElementType);
+        if (symbol is not INamedTypeSymbol named) return false;
+        var definition = runtimeType.IsGenericType ? runtimeType.GetGenericTypeDefinition() : runtimeType;
+        var metadataName = definition.FullName;
+        var symbolDefinition = named.OriginalDefinition;
+        var parts = new Stack<string>();
+        for (var current = symbolDefinition; current is not null; current = current.ContainingType)
+            parts.Push(current.MetadataName);
+        var symbolName = string.Join("+", parts);
+        if (!symbolDefinition.ContainingNamespace.IsGlobalNamespace)
+            symbolName = symbolDefinition.ContainingNamespace.ToDisplayString() + "." + symbolName;
+        if (!string.Equals(metadataName, symbolName, StringComparison.Ordinal)) return false;
+        var runtimeArguments = runtimeType.GetGenericArguments();
+        var symbolArguments = new List<ITypeSymbol>();
+        var containingTypes = new Stack<INamedTypeSymbol>();
+        for (var current = named; current is not null; current = current.ContainingType)
+            containingTypes.Push(current);
+        foreach (var current in containingTypes) symbolArguments.AddRange(current.TypeArguments);
+        return runtimeArguments.Length == symbolArguments.Count
+            && runtimeArguments.Zip(symbolArguments, MatchesType).All(match => match);
     }
 
     /// <summary>Appended to a compile error caused by the server's own reference set rather than by
