@@ -104,6 +104,7 @@ jobs:
       # .npmrc written by setup-node (registry.npmjs.org) untouched for the step below.
       - name: Publish npm package to GitHub Packages
         id: npm-github-packages
+        continue-on-error: true
         shell: pwsh
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
@@ -129,13 +130,18 @@ jobs:
 
           Push-Location $stagingDir
           try {
-            $existing = npm view "$packageName@$env:PACKAGE_VERSION" version 2>$null
+            $existing = npm view "$packageName@$env:PACKAGE_VERSION" version 2>&1
             if ($LASTEXITCODE -eq 0 -and $existing) {
               Write-Host "$packageName@$env:PACKAGE_VERSION already exists on GitHub Packages; skipping."
+              "published=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
               exit 0
+            }
+            if ($LASTEXITCODE -ne 0 -and "$existing" -notmatch 'E404') {
+              Write-Warning "npm view failed for reasons other than the version being absent; attempting publish anyway: $existing"
             }
             npm publish --tag $env:DIST_TAG
             if ($LASTEXITCODE -ne 0) { throw "npm publish to GitHub Packages failed." }
+            "published=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
           finally {
             Pop-Location
@@ -150,7 +156,8 @@ jobs:
         working-directory: ./npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance --tag ${{ steps.npm-version.outputs.dist-tag }}
+          DIST_TAG: ${{ steps.npm-version.outputs.dist-tag }}
+        run: npm publish --access public --provenance --tag "$DIST_TAG"
 
       - name: Summarize published packages
         if: always()
