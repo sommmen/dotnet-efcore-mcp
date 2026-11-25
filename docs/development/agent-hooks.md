@@ -66,6 +66,15 @@ Reference documentation: [Claude Code hooks](https://code.claude.com/docs/en/hoo
   approximate version would not resolve. When that metadata is absent (a local build), the command
   is written unpinned with `--prerelease`, which is required while releases are preview-only.
 
+- **`dotnet dnx` on Windows.** There `dnx` is only the `dnx.cmd` batch wrapper in the SDK folder.
+  Copilot CLI spawns `exec` through Node without a shell, where `"dnx"` fails with
+  `spawn dnx ENOENT` and `"dnx.cmd"` with `spawn EINVAL`; Git Bash (Claude/Codex `command`
+  hooks) does not resolve it either. The installer therefore writes `dotnet dnx <package> ...`
+  on Windows (`dotnet.exe` is a real executable, and `dotnet dnx` is what `dnx.cmd` runs), and
+  plain `dnx` elsewhere. Re-running `hooks install` replaces hooks written by earlier builds.
+  No install-time spawn check is done: it would run a package restore, which can hang or fail
+  an install for reasons unrelated to the hook file.
+
 ## Installed events
 
 `install` writes three entries per client, each invoking a `hooks` sub-command:

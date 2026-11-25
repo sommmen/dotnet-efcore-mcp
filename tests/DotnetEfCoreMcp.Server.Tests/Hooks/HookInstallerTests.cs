@@ -49,7 +49,7 @@ public class HookInstallerTests : IDisposable
     [Fact]
     public void Install_UsesExecFormForCopilotSoWindowsPathsNeedNoShellQuoting()
     {
-        var installer = new HookInstaller("1.2.3");
+        var installer = new HookInstaller("1.2.3", isWindows: false);
         installer.Install(HookClient.Copilot, _root);
 
         var root = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root));
@@ -61,6 +61,66 @@ public class HookInstallerTests : IDisposable
         Assert.Equal("dnx", handler["exec"]!.GetValue<string>());
         Assert.NotNull(handler["args"]);
         Assert.Null(handler["command"]);
+    }
+
+    [Fact]
+    public void Install_LaunchesCopilotHooksThroughDotnetOnWindows()
+    {
+        // dnx is a dnx.cmd batch wrapper on Windows; Node spawns exec without a shell, so "dnx"
+        // gives ENOENT and "dnx.cmd" gives EINVAL. dotnet.exe is a real executable.
+        new HookInstaller("1.2.3", isWindows: true).Install(HookClient.Copilot, _root);
+
+        var handler = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))
+            ["hooks"]!["PostToolUse"]!.AsArray()[0]!.AsObject();
+
+        Assert.Equal("dotnet", handler["exec"]!.GetValue<string>());
+        Assert.Equal(
+            ["dnx", "DotnetEfCoreMcp.Server@1.2.3", "--yes", "--", "hooks", "remind", "--client", "copilot", "--scope", "workspace"],
+            handler["args"]!.AsArray().Select(a => a!.GetValue<string>()));
+    }
+
+    [Theory]
+    [InlineData(HookClient.Claude)]
+    [InlineData(HookClient.Codex)]
+    public void Install_LaunchesShellHooksThroughDotnetOnWindows(HookClient client)
+    {
+        // Git Bash does not resolve dnx.cmd either, so the shell command line uses dotnet too.
+        new HookInstaller("1.2.3", isWindows: true).Install(client, _root);
+
+        var json = File.ReadAllText(HookInstaller.GetConfigPath(client, _root));
+
+        Assert.Contains("\"dotnet dnx DotnetEfCoreMcp.Server@1.2.3 --yes -- hooks remind", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Install_KeepsDnxOutsideWindows()
+    {
+        var installer = new HookInstaller("1.2.3", isWindows: false);
+        installer.Install(HookClient.Copilot, _root);
+        installer.Install(HookClient.Claude, _root);
+
+        var copilot = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))
+            ["hooks"]!["PostToolUse"]!.AsArray()[0]!.AsObject();
+        Assert.Equal("dnx", copilot["exec"]!.GetValue<string>());
+        Assert.Equal("DotnetEfCoreMcp.Server@1.2.3", copilot["args"]!.AsArray()[0]!.GetValue<string>());
+
+        Assert.Contains(
+            "\"dnx DotnetEfCoreMcp.Server@1.2.3 --yes -- hooks remind",
+            File.ReadAllText(HookInstaller.GetConfigPath(HookClient.Claude, _root)),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Install_ReplacesPreviousDnxHooksWithTheWindowsLauncher()
+    {
+        new HookInstaller("1.2.3", isWindows: false).Install(HookClient.Copilot, _root);
+        var result = new HookInstaller("1.2.3", isWindows: true).Install(HookClient.Copilot, _root);
+
+        var postToolUse = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))["hooks"]!["PostToolUse"]!.AsArray();
+
+        Assert.True(result.Changed);
+        Assert.Single(postToolUse);
+        Assert.Equal("dotnet", postToolUse[0]!["exec"]!.GetValue<string>());
     }
 
     [Fact]

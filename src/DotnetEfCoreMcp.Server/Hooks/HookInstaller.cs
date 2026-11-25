@@ -48,9 +48,15 @@ public sealed class HookInstaller
     /// </param>
     /// <param name="command">Overrides the executable, for tests or local builds.</param>
     /// <param name="arguments">Overrides the leading arguments, for tests or local builds.</param>
-    public HookInstaller(string? packageVersion = null, string? command = null, string[]? arguments = null)
+    /// <param name="isWindows">Overrides the platform detection, for tests.</param>
+    public HookInstaller(string? packageVersion = null, string? command = null, string[]? arguments = null,
+        bool? isWindows = null)
     {
-        _toolCommand = command ?? "dnx";
+        // On Windows dnx is only a dnx.cmd batch wrapper: Node's spawn (Copilot CLI's exec) cannot
+        // resolve "dnx" (ENOENT) or run "dnx.cmd" without a shell (EINVAL), and Git Bash does not
+        // resolve it either. "dotnet dnx" is the same command through a real executable.
+        var launchThroughDotnet = command is null && (isWindows ?? OperatingSystem.IsWindows());
+        _toolCommand = command ?? (launchThroughDotnet ? "dotnet" : "dnx");
 
         if (arguments is not null)
         {
@@ -60,11 +66,13 @@ public sealed class HookInstaller
         {
             // --yes keeps the hook non-interactive; dnx would otherwise prompt on first resolve and
             // hang until the client's hook timeout fires.
-            _toolArguments = string.IsNullOrWhiteSpace(packageVersion)
+            string[] packageArguments = string.IsNullOrWhiteSpace(packageVersion)
                 // Without a pinned version, dnx resolves the latest *stable* release. Releases are
                 // preview-only today, so an unpinned command needs --prerelease to resolve at all.
                 ? [ManagedPackageId, "--yes", "--prerelease", "--"]
                 : [$"{ManagedPackageId}@{packageVersion}", "--yes", "--"];
+
+            _toolArguments = launchThroughDotnet ? ["dnx", .. packageArguments] : packageArguments;
         }
     }
 
