@@ -20,6 +20,9 @@ The underlying .NET tool is installed from NuGet.org by default. To use a differ
 source, set `DOTNET_EFCORE_MCP_NUGET_SOURCE` to its feed URL or configure it in your
 `NuGet.Config`.
 
+Preview builds are also published to GitHub Packages as `@sommmen/dotnet-efcore-mcp` for testing;
+see [Testing the npm wrapper from GitHub Packages](https://github.com/sommmen/dotnet-efcore-mcp#testing-the-npm-wrapper-from-github-packages).
+
 ## MCP client config
 
 ```json
