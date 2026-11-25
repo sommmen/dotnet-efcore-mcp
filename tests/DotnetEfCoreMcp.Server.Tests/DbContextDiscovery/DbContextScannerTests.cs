@@ -25,7 +25,8 @@ public sealed class DbContextScannerTests
         Assert.Contains("NonGenericOptionsDbContext", names);
         Assert.Contains("ApplicationFactoryDbContext", names);
         Assert.Contains("ThrowOnUnorderedRowLimitDbContext", names);
-        Assert.Equal(7, scan.Descriptors.Count);
+        Assert.Contains("CommandTimeoutDbContext", names);
+        Assert.Equal(8, scan.Descriptors.Count);
         Assert.Empty(scan.TypeLoadWarnings);
     }
 

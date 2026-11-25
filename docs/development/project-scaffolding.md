@@ -141,3 +141,8 @@
     settings page first — equally manual to set up as an `NPM_TOKEN`, so the simpler classic
     token was picked to keep the two dormant publish paths (NuGet.org, npm) consistent. Revisit
     if/when Trusted Publishing is preferred.
+  - For testing before npmjs.org publishing is enabled, the same workflow publishes a renamed
+    copy of the wrapper, `@sommmen/dotnet-efcore-mcp`, to the GitHub Packages npm registry
+    (`npm.pkg.github.com`, which only accepts scoped packages) on every run, authenticated with
+    the workflow `GITHUB_TOKEN` (`packages: write`). Prerelease versions use the `preview`
+    dist-tag; an already-published version is skipped.

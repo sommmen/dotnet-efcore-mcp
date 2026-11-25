@@ -120,6 +120,27 @@ failures caused by invariant globalization mode direct operators to enable ICU/g
 Other provider failures remain sanitized and direct callers to validate model names with `get_schema`,
 validate query syntax, and consult server logs if required.
 
+### Timeouts
+
+Two budgets can expire, and each has its own message and hint:
+
+- **Compilation** (`QueryCompilation:CompileTimeoutSeconds`, default 10 s): `Query compilation timed
+  out after {n}s.` The first compilation after `load_assembly` is slower because Roslyn and the
+  metadata references are still cold, so the hint tells the caller to retry the same query before
+  simplifying it or raising `QueryCompilation:CompileTimeoutSeconds`. (The setting lives under
+  `QueryCompilation`, not `QueryExecution`.)
+- **Execution**: the connection's `CommandTimeoutSeconds` is applied to the provider's own command
+  timeout, so the provider normally gives up before the server's cancellation token
+  (`CommandTimeoutSeconds` plus `QueryExecution:CancellationMargin`) fires. A provider timeout is
+  recognised by [`QueryTimeoutDetector`](../../src/DotnetEfCoreMcp.Server/Querying/QueryTimeoutDetector.cs)
+  without a provider package reference: a `DbException` whose `Number` is `-2` (SQL Server
+  "Execution Timeout Expired"), or one caused by a `TimeoutException` (Npgsql and others), anywhere in
+  the wrapped exception chain. It maps to the same `Query timed out after {n}s.` message as the
+  server's own cancellation, in-process and in the one-shot and pooled query hosts alike (the host
+  flattens the cause into its wire-level error string; the server drops it for this message). The hint
+  says to narrow the filter (for example a date range on an indexed column), reduce the aggregation,
+  or raise the connection's `CommandTimeoutSeconds`.
+
 ## LINQPad-style `run_query`
 
 `run_query` accepts one required `query` string. Its first identifier must exactly match a public `DbSet<T>` property on the selected `DbContext`; `T` must be a mapped entity. For example:
@@ -149,8 +170,9 @@ same context can be referenced by name inside the query. Client-side operators c
 deliberately after `AsEnumerable()` or materialization, but once the result is no longer an
 `IQueryable` it is returned through `QueryResult.Scalar` instead of row-shaped output.
 
-`UserQuerySourceGenerator` emits `using System.Linq;` and `using Microsoft.EntityFrameworkCore;`
-plus a `using` for the target `DbContext`'s own namespace, every `DbSet<T>` entity type's
+`UserQuerySourceGenerator` emits `using System;`, `using System.Linq;` and `using Microsoft.EntityFrameworkCore;`
+(so bare `DateTime`, `Guid`, `TimeSpan` and `DateTimeOffset` compile) plus, inside the generated
+namespace so an entity named like a `System` type still wins over `using System;`, a `using` for the target `DbContext`'s own namespace, every `DbSet<T>` entity type's
 namespace, and the namespace of any enum-typed property declared directly on those entities
 (`CollectQueryNamespaces`). This is what lets `Orders` (an inherited `DbSet` member) and a sibling
 type like an entity's own enum (e.g. `PartnerType.Transport`, if `PartnerType` lives in the same

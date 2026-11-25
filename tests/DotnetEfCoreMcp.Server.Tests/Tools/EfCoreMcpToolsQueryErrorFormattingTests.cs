@@ -64,6 +64,95 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         Assert.Contains("Next step: Fix the reported compile error(s)", message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void FormatQueryError_CompileTimeout_NamesTheBoundSettingAndSaysARetryOftenSucceeds()
+    {
+        var message = EfCoreMcpTools.FormatQueryErrorForTesting(
+            new QueryExecutionException("Query compilation timed out after 10s."));
+
+        Assert.Contains("QueryCompilation:CompileTimeoutSeconds", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("QueryExecution:CompileTimeoutSeconds", message, StringComparison.Ordinal);
+        Assert.Contains("retry often succeeds", message, StringComparison.Ordinal);
+        Assert.Contains("load_assembly", message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Query timed out after 1s.")]
+    [InlineData("Query preview timed out after 1s.")]
+    [InlineData("Query timed out after 1s. Cause: SqlException: Execution Timeout Expired.  The timeout period elapsed.")]
+    public void FormatQueryError_QueryTimeout_GivesAnActionableHintInsteadOfTheGenericOne(string text)
+    {
+        var message = EfCoreMcpTools.FormatQueryErrorForTesting(new QueryExecutionException(text));
+
+        Assert.StartsWith(text.Split(" Cause: ")[0], message, StringComparison.Ordinal);
+        Assert.Contains("CommandTimeoutSeconds", message, StringComparison.Ordinal);
+        Assert.Contains("Narrow the filter", message, StringComparison.Ordinal);
+        Assert.Contains("reduce the aggregation", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cause:", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("get_schema", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("failed unexpectedly", message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(QueryExecutionMode.InProcess)]
+    [InlineData(QueryExecutionMode.Auto)]
+    public async Task RunQuery_ProviderCommandTimeout_ReportsAQueryTimeoutWithAHint(QueryExecutionMode mode)
+    {
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(
+            new QueryExecutionOptions { Mode = mode, OutOfProcessHostPath = FixturePaths.QueryHostDllPath },
+            db,
+            allowContext: "SampleApp.CommandTimeoutDbContext");
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        EnsureSchema(db);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.RunQuery("CommandTimeoutDbContext", "Customers.Select(c => new { c.Id, c.Name })", cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.StartsWith("Query timed out after 30s.", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("raise the connection's CommandTimeoutSeconds", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("unexpectedly", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunQuery_ProviderCommandTimeoutDuringCursorPagination_ReportsAQueryTimeout()
+    {
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(
+            new QueryExecutionOptions { Mode = QueryExecutionMode.InProcess },
+            db,
+            allowContext: "SampleApp.CommandTimeoutDbContext");
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        EnsureSchema(db);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.RunQuery(
+                "CommandTimeoutDbContext",
+                "Customers.OrderBy(c => c.Id)",
+                pagination: new QueryPagination { Mode = "cursor" },
+                cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.StartsWith("Query timed out after 30s.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PreviewQuerySql_ProviderCommandTimeoutWhileEvaluatingTheQuery_ReportsAQueryTimeout()
+    {
+        using var db = new SqliteTestDatabase();
+        var tools = CreateTools(
+            new QueryExecutionOptions { Mode = QueryExecutionMode.InProcess },
+            db,
+            allowContext: "SampleApp.CommandTimeoutDbContext");
+        tools.LoadAssembly(FixturePaths.SampleAppDllPath);
+        EnsureSchema(db);
+
+        var exception = await Assert.ThrowsAsync<McpException>(
+            () => tools.PreviewQuerySql("CommandTimeoutDbContext", "Customers.ToList().AsQueryable()", cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.StartsWith("Query timed out after 30s.", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("CommandTimeoutSeconds", exception.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("Invalid column name 'DiscountCode'.")]
     [InlineData("Invalid object name 'dbo.OrderLines'.")]
@@ -277,7 +366,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
         context.Database.EnsureCreated();
     }
 
-    private static EfCoreMcpTools CreateTools(QueryExecutionOptions queryExecutionOptions, SqliteTestDatabase? db = null)
+    private static EfCoreMcpTools CreateTools(QueryExecutionOptions queryExecutionOptions, SqliteTestDatabase? db = null, string allowContext = "SampleApp.SampleAppDbContext")
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -285,7 +374,7 @@ public sealed class EfCoreMcpToolsQueryErrorFormattingTests
                 ["Connections:Primary:ConnectionString"] = db?.ConnectionString ?? "Data Source=:memory:",
                 ["Connections:Primary:Provider"] = "Sqlite",
                 ["Connections:Primary:Environment"] = "Development",
-                ["Connections:Primary:AccessPolicy:AllowContexts:0"] = "SampleApp.SampleAppDbContext",
+                ["Connections:Primary:AccessPolicy:AllowContexts:0"] = allowContext,
             })
             .Build();
         var rawSqlOptions = new RawSqlExecutionOptions();
