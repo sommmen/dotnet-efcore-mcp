@@ -97,6 +97,21 @@ public sealed class UserQuerySourceGeneratorTests
     }
 
     [Fact]
+    public void Generate_ImportsSystemAtFileScopeAndContextNamespacesInsideGeneratedNamespace()
+    {
+        // Context/entity namespaces must be scoped inside the generated namespace so an entity named
+        // like a System type (e.g. Version) shadows `using System;` rather than being ambiguous.
+        var result = UserQuerySourceGenerator.Generate(SampleAppDbContextType, "Orders.Count()", "abc123");
+
+        var systemUsing = result.Source.IndexOf("using System;", StringComparison.Ordinal);
+        var namespaceDeclaration = result.Source.IndexOf("namespace DotnetEfCoreMcp.Server.CompiledQueries;", StringComparison.Ordinal);
+        var sampleAppUsing = result.Source.IndexOf("using SampleApp;", StringComparison.Ordinal);
+
+        Assert.InRange(systemUsing, 0, namespaceDeclaration - 1);
+        Assert.True(sampleAppUsing > namespaceDeclaration);
+    }
+
+    [Fact]
     public void Generate_NullContextType_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => UserQuerySourceGenerator.Generate(null!, "Orders.Count()", "abc123"));

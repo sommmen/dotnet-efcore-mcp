@@ -50,6 +50,25 @@ public sealed class QueryCompilerTests
         Assert.NotEmpty(compiled.Pe);
     }
 
+    [Theory]
+    [InlineData("SampleAppDbContext", "Orders.Where(o => o.CreatedAtUtc > DateTime.UtcNow.AddDays(-7)).Count()")]
+    [InlineData("SampleAppDbContext", "Orders.Where(o => o.Id != Guid.Empty.GetHashCode()).Count()")]
+    [InlineData("SampleAppDbContext", "Orders.Where(o => o.CreatedAtUtc > new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero).UtcDateTime).Count()")]
+    [InlineData("ApplicationFactoryDbContext", "Customers.Select(c => new { c.Name, Now = DateTime.UtcNow, Id = Guid.Empty, Span = TimeSpan.Zero, Offset = DateTimeOffset.MinValue })")]
+    public async Task CompileAsync_BareSystemTypeNames_CompileInBothGeneratedShapes(string contextName, string query)
+    {
+        var service = new AssemblyLoaderService();
+        var handle = service.Load(FixturePaths.SampleAppDllPath);
+        var contextType = DbContextScanner.FindDbContextTypes(handle.Assembly).Descriptors
+            .Single(d => d.Name == contextName).ClrType;
+        var source = UserQuerySourceGenerator.Generate(contextType, query, "compilesystemtypes1");
+        var compiler = new QueryCompiler(new QueryCompilationOptions());
+
+        var compiled = await compiler.CompileAsync(source, handle, DatabaseProvider.Sqlite, CancellationToken.None);
+
+        Assert.NotEmpty(compiled.Pe);
+    }
+
     [Fact]
     public async Task CompileAsync_SyntaxError_ThrowsQueryExecutionExceptionWithSourceRelativeLineNumber()
     {
