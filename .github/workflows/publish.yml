@@ -82,6 +82,9 @@ jobs:
           }
           $version = $Matches['version']
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          # npm 11+ refuses to publish a prerelease without an explicit dist-tag.
+          $distTag = if ($version -match '-') { 'preview' } else { 'latest' }
+          "dist-tag=$distTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
           $packageJsonPath = './npm/package.json'
           $json = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
@@ -89,28 +92,71 @@ jobs:
           ($json | ConvertTo-Json -Depth 10) | Set-Content -Path $packageJsonPath
           Write-Host "Stamped $packageJsonPath with version $version"
 
-      # npm publishing is not yet enabled for this repo (GitHub Packages/dnx is the only channel
-      # for now - see repository README). This step is a no-op until the NPM_TOKEN secret (an
-      # npm automation token with publish access for the `dotnet-efcore-mcp` package) is
-      # configured, at which point every push to main also publishes a matching preview build
-      # to npm alongside the GitHub Packages push above.
       - name: Setup Node.js
-        if: env.NPM_TOKEN_SET == 'true'
         uses: actions/setup-node@v7
         with:
           node-version: "26.x"
           registry-url: "https://registry.npmjs.org"
 
+      # GitHub Packages' npm registry only accepts scoped packages, so a copy of the wrapper is
+      # renamed to @sommmen/dotnet-efcore-mcp and published there with the workflow token. A
+      # project-level .npmrc routes the scope to npm.pkg.github.com, leaving the user-level
+      # .npmrc written by setup-node (registry.npmjs.org) untouched for the step below.
+      - name: Publish npm package to GitHub Packages
+        id: npm-github-packages
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.npm-version.outputs.version }}
+          DIST_TAG: ${{ steps.npm-version.outputs.dist-tag }}
+        run: |
+          $packageName = '@sommmen/dotnet-efcore-mcp'
+          $registry = 'https://npm.pkg.github.com'
+          $stagingDir = Join-Path $env:RUNNER_TEMP 'npm-github-packages'
+          Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item ./npm $stagingDir -Recurse
+
+          $packageJsonPath = Join-Path $stagingDir 'package.json'
+          $json = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+          $json.name = $packageName
+          $json | Add-Member -NotePropertyName publishConfig -NotePropertyValue ([ordered]@{ registry = $registry }) -Force
+          ($json | ConvertTo-Json -Depth 10) | Set-Content -Path $packageJsonPath
+
+          @(
+            "@sommmen:registry=$registry"
+            '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}'
+          ) | Set-Content -Path (Join-Path $stagingDir '.npmrc')
+
+          Push-Location $stagingDir
+          try {
+            $existing = npm view "$packageName@$env:PACKAGE_VERSION" version 2>$null
+            if ($LASTEXITCODE -eq 0 -and $existing) {
+              Write-Host "$packageName@$env:PACKAGE_VERSION already exists on GitHub Packages; skipping."
+              exit 0
+            }
+            npm publish --tag $env:DIST_TAG
+            if ($LASTEXITCODE -ne 0) { throw "npm publish to GitHub Packages failed." }
+          }
+          finally {
+            Pop-Location
+          }
+
+      # Publishing to the public npm registry is not yet enabled for this repo. This step is a
+      # no-op until the NPM_TOKEN secret (an npm automation token with publish access for the
+      # `dotnet-efcore-mcp` package) is configured, at which point every push to main also
+      # publishes a matching preview build to npmjs.org.
       - name: Publish to npm
         if: env.NPM_TOKEN_SET == 'true'
         working-directory: ./npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --tag ${{ steps.npm-version.outputs.dist-tag }}
 
       - name: Summarize published packages
         if: always()
         shell: pwsh
+        env:
+          NPM_VERSION: ${{ steps.npm-github-packages.outcome == 'success' && steps.npm-version.outputs.version || '' }}
         run: |
           $packages = Get-ChildItem ./artifacts -Recurse -Filter *.nupkg |
             Where-Object { $_.Name -notlike '*.symbols.nupkg' } |
@@ -124,6 +170,9 @@ jobs:
           "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| Package | Version |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "| --- | --- |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if ($env:NPM_VERSION) {
+            $packages = @($packages) + "| @sommmen/dotnet-efcore-mcp (npm) | $env:NPM_VERSION |"
+          }
           if ($packages) {
             $packages | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           }

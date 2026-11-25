@@ -136,7 +136,26 @@ troubleshooting.
 > on every release, but the publish step stays skipped until an `NPM_TOKEN` secret (or npm
 > Trusted Publishing) is configured — see
 > [`.github/workflows/publish.yml`](./.github/workflows/publish.yml). Until then, use the .NET
-> tool or `dnx` install above, or publish the wrapper manually from `npm/` for testing.
+> tool or `dnx` install above, or the GitHub Packages preview below.
+
+#### Testing the npm wrapper from GitHub Packages
+
+Every push to `main` also publishes the wrapper to the
+[GitHub Packages npm registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)
+as `@sommmen/dotnet-efcore-mcp` (GitHub Packages only accepts scoped names), using the `preview`
+dist-tag for prerelease versions. GitHub Packages requires authentication even for public
+packages, so add a personal access token (classic) with `read:packages` to your user `~/.npmrc`:
+
+```ini
+@sommmen:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_TOKEN
+```
+
+Then run it with:
+
+```powershell
+npx -y @sommmen/dotnet-efcore-mcp@preview
+```
 
 Preview builds are published to NuGet.org from every push to `main`; stable releases are
 published from tagged GitHub Releases (see
