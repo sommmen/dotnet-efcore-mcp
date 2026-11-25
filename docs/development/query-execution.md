@@ -149,8 +149,9 @@ same context can be referenced by name inside the query. Client-side operators c
 deliberately after `AsEnumerable()` or materialization, but once the result is no longer an
 `IQueryable` it is returned through `QueryResult.Scalar` instead of row-shaped output.
 
-`UserQuerySourceGenerator` emits `using System.Linq;` and `using Microsoft.EntityFrameworkCore;`
-plus a `using` for the target `DbContext`'s own namespace, every `DbSet<T>` entity type's
+`UserQuerySourceGenerator` emits `using System;`, `using System.Linq;` and `using Microsoft.EntityFrameworkCore;`
+(so bare `DateTime`, `Guid`, `TimeSpan` and `DateTimeOffset` compile) plus, inside the generated
+namespace so an entity named like a `System` type still wins over `using System;`, a `using` for the target `DbContext`'s own namespace, every `DbSet<T>` entity type's
 namespace, and the namespace of any enum-typed property declared directly on those entities
 (`CollectQueryNamespaces`). This is what lets `Orders` (an inherited `DbSet` member) and a sibling
 type like an entity's own enum (e.g. `PartnerType.Transport`, if `PartnerType` lives in the same
