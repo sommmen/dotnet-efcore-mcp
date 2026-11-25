@@ -7,6 +7,9 @@
     <Nullable>enable</Nullable>
     <RootNamespace>DotnetEfCoreMcp.Server</RootNamespace>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Targets are loaded in-process, so the server must run on a runtime at least as new as the
+         target's: a net11.0 target fails with "System.Runtime, Version=11.0.0.0" on the net10 runtime. -->
+    <RollForward>LatestMajor</RollForward>
     <UserSecretsId>dotnet-efcore-mcp-server</UserSecretsId>
   </PropertyGroup>
 

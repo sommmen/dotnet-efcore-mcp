@@ -132,6 +132,39 @@ public sealed class AssemblyDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
+    public void Discover_FindsArtifactsOutputLayoutWithCustomArtifactsFolder()
+    {
+        WriteProjectXml("src/DAL/DAL.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework><AssemblyName>App.DAL</AssemblyName></PropertyGroup></Project>");
+        WriteDll(".a/bin/DAL/debug/App.DAL.dll", new DateTime(2026, 1, 2));
+        WriteDll(".a/bin/DAL/release/App.DAL.dll", new DateTime(2026, 1, 3));
+        WriteDll(".a/bin/Other/debug/App.DAL.dll", new DateTime(2026, 1, 4));
+
+        var candidates = _service.Discover(_workspace);
+
+        Assert.Equal(2, candidates.Count);
+        Assert.EndsWith(Path.Combine(".a", "bin", "DAL", "debug", "App.DAL.dll"), candidates[0].AssemblyPath);
+        Assert.Equal("debug", candidates[0].Configuration);
+        Assert.Equal("net11.0", candidates[0].TargetFramework);
+        Assert.EndsWith(Path.Combine("src", "DAL", "DAL.csproj"), candidates[0].ProjectPath);
+        Assert.Equal("release", candidates[1].Configuration);
+    }
+
+    [Fact]
+    public void Discover_ReadsConfigurationAndTargetFrameworkFromMultiTargetArtifactsPivot()
+    {
+        WriteProjectXml("App/App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFrameworks>net10.0;net11.0</TargetFrameworks></PropertyGroup></Project>");
+        WriteDll("artifacts/bin/App/debug_net10.0/App.dll", new DateTime(2026, 1, 1));
+        WriteDll("artifacts/bin/App/debug_net11.0_win-x64/App.dll", new DateTime(2026, 1, 1));
+
+        var candidates = _service.Discover(_workspace);
+
+        Assert.Equal(["net11.0", "net10.0"], candidates.Select(candidate => candidate.TargetFramework));
+        Assert.All(candidates, candidate => Assert.Equal("debug", candidate.Configuration));
+    }
+
+    [Fact]
     public void Discover_RejectsMissingWorkspace()
     {
         Directory.Delete(_workspace, recursive: true);

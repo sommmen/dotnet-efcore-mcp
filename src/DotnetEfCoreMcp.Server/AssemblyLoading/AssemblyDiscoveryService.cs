@@ -47,7 +47,7 @@ public sealed class AssemblyDiscoveryService
             var cache = new DbContextMetadataCache();
             var ranked = Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
                 .Where(path => !IsUnderExcludedDirectory(Path.GetRelativePath(root, path)))
-                .SelectMany(DiscoverProjectOutputs)
+                .SelectMany(projectPath => DiscoverProjectOutputs(projectPath, root))
                 .Select(candidate => candidate with { LikelyContainsDbContext = ProbablyContainsDbContext(candidate.AssemblyPath, cache) })
                 .ToArray()
                 // Ranking prioritizes assemblies whose metadata describes a concrete DbContext (a fast,
@@ -75,12 +75,71 @@ public sealed class AssemblyDiscoveryService
         }
     }
 
-    private static IEnumerable<AssemblyCandidate> DiscoverProjectOutputs(string projectPath)
+    private static IEnumerable<AssemblyCandidate> DiscoverProjectOutputs(string projectPath, string workspaceRoot)
     {
-        var projectDirectory = Path.GetDirectoryName(projectPath)!;
-        var (declaredAssemblyName, isTestProject) = ReadProject(projectPath);
-        var assemblyName = declaredAssemblyName ?? Path.GetFileNameWithoutExtension(projectPath);
-        var binDirectory = Path.Combine(projectDirectory, "bin");
+        var project = ReadProject(projectPath);
+        var assemblyName = project.AssemblyName ?? Path.GetFileNameWithoutExtension(projectPath);
+        return DiscoverProjectBinOutputs(projectPath, assemblyName, project.IsTestProject)
+            .Concat(DiscoverArtifactsOutputs(projectPath, workspaceRoot, assemblyName, project));
+    }
+
+    /// <summary>Finds output written with the SDK's artifacts layout (<c>UseArtifactsOutput</c>):
+    /// <c>&lt;artifacts&gt;/bin/&lt;ProjectName&gt;/&lt;pivot&gt;/</c>, where the artifacts folder sits in
+    /// any ancestor of the project up to the workspace root and may have a custom name (<c>ArtifactsPath</c>).
+    /// The pivot is <c>&lt;config&gt;[_&lt;tfm&gt;][_&lt;rid&gt;]</c>; the TFM is omitted for single-target projects.</summary>
+    private static IEnumerable<AssemblyCandidate> DiscoverArtifactsOutputs(
+        string projectPath, string workspaceRoot, string assemblyName, ProjectInfo project)
+    {
+        var projectName = Path.GetFileNameWithoutExtension(projectPath);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var directory = new DirectoryInfo(Path.GetDirectoryName(projectPath)!);
+             directory is not null && IsWithin(directory.FullName, workspaceRoot);
+             directory = directory.Parent)
+        {
+            foreach (var artifactsDirectory in directory.EnumerateDirectories())
+            {
+                if (artifactsDirectory.Name is "bin" or "obj" or ".git")
+                {
+                    continue;
+                }
+
+                var projectOutputDirectory = Path.Combine(artifactsDirectory.FullName, "bin", projectName);
+                if (!Directory.Exists(projectOutputDirectory) || !seen.Add(projectOutputDirectory))
+                {
+                    continue;
+                }
+
+                foreach (var pivotDirectory in Directory.EnumerateDirectories(projectOutputDirectory))
+                {
+                    var assemblyPath = Path.Combine(pivotDirectory, $"{assemblyName}.dll");
+                    if (!File.Exists(assemblyPath))
+                    {
+                        continue;
+                    }
+
+                    var pivot = Path.GetFileName(pivotDirectory).Split('_');
+                    yield return new AssemblyCandidate(
+                        Path.GetFullPath(assemblyPath),
+                        Path.GetFullPath(projectPath),
+                        pivot[0],
+                        pivot.Length > 1 ? pivot[1] : project.TargetFramework ?? string.Empty,
+                        File.GetLastWriteTimeUtc(assemblyPath),
+                        false,
+                        IsTestProject: project.IsTestProject);
+                }
+            }
+        }
+    }
+
+    private static bool IsWithin(string path, string root)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        return relative == "." || (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative));
+    }
+
+    private static IEnumerable<AssemblyCandidate> DiscoverProjectBinOutputs(string projectPath, string assemblyName, bool isTestProject)
+    {
+        var binDirectory = Path.Combine(Path.GetDirectoryName(projectPath)!, "bin");
         if (!Directory.Exists(binDirectory))
         {
             yield break;
@@ -113,13 +172,16 @@ public sealed class AssemblyDiscoveryService
 
     private static readonly string[] TestNameSegments = ["Test", "Tests", "UnitTests", "IntegrationTests", "Specs"];
 
-    private static (string? AssemblyName, bool IsTestProject) ReadProject(string projectPath)
+    private sealed record ProjectInfo(string? AssemblyName, string? TargetFramework, bool IsTestProject);
+
+    private static ProjectInfo ReadProject(string projectPath)
     {
         var document = XDocument.Load(projectPath);
         var elements = document.Descendants().ToArray();
-        var assemblyName = elements
-            .FirstOrDefault(element => element.Name.LocalName == "AssemblyName" && !string.IsNullOrWhiteSpace(element.Value))
+        string? ReadProperty(string name) => elements
+            .FirstOrDefault(element => element.Name.LocalName == name && !string.IsNullOrWhiteSpace(element.Value))
             ?.Value.Trim();
+        var assemblyName = ReadProperty("AssemblyName");
 
         var declaredTestProject = elements.Any(element =>
             element.Name.LocalName == "IsTestProject" && element.Value.Trim().Equals("true", StringComparison.OrdinalIgnoreCase));
@@ -131,7 +193,7 @@ public sealed class AssemblyDiscoveryService
             .Split('.')
             .Any(segment => TestNameSegments.Contains(segment, StringComparer.OrdinalIgnoreCase));
 
-        return (assemblyName, declaredTestProject || referencesTestPackage || namedLikeTests);
+        return new ProjectInfo(assemblyName, ReadProperty("TargetFramework"), declaredTestProject || referencesTestPackage || namedLikeTests);
     }
     private static bool IsUnderExcludedDirectory(string relativePath) =>
         relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
