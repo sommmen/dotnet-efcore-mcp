@@ -120,12 +120,12 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
                         "Saving changes from run_query is disabled for this connection.");
                 }
 
-                value = InvokeUserQuery(generatedType, BindingFlags.Static | BindingFlags.Public, null, [context]);
+                value = InvokeUserQuery(generatedType, BindingFlags.Static | BindingFlags.Public, null, [context], entry.CommandTimeoutSeconds);
             }
             else
             {
                 context = (DbContext)CreateContext(generatedType, contextType, shape, entry, provider, allowMutations);
-                value = InvokeUserQuery(generatedType, BindingFlags.Instance | BindingFlags.Public, context, null);
+                value = InvokeUserQuery(generatedType, BindingFlags.Instance | BindingFlags.Public, context, null, entry.CommandTimeoutSeconds);
             }
 
             return new CompiledQueryInvocation(context, loadContext, value);
@@ -138,7 +138,7 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         }
     }
 
-    private static object? InvokeUserQuery(Type generatedType, BindingFlags bindingFlags, object? instance, object?[]? arguments)
+    private static object? InvokeUserQuery(Type generatedType, BindingFlags bindingFlags, object? instance, object?[]? arguments, int commandTimeoutSeconds)
     {
         try
         {
@@ -147,6 +147,10 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
         catch (TargetInvocationException ex) when (ex.InnerException is QueryExecutionException queryException)
         {
             throw queryException;
+        }
+        catch (TargetInvocationException ex) when (QueryTimeoutDetector.IsCommandTimeout(ex))
+        {
+            throw new QueryExecutionException($"Query timed out after {commandTimeoutSeconds}s.", ex.InnerException ?? ex);
         }
         catch (TargetInvocationException ex)
         {
@@ -251,6 +255,10 @@ public sealed class RoslynQueryExecutor(QueryExecutionOptions executionOptions, 
                 : values.Select(rowValue => IncludeQueryProcessor.Project(rowValue!, includePlan)).ToList());
         }
         catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
+        {
+            throw new QueryExecutionException($"Query timed out after {commandTimeoutSeconds}s.", ex);
+        }
+        catch (Exception ex) when (QueryTimeoutDetector.IsCommandTimeout(ex))
         {
             throw new QueryExecutionException($"Query timed out after {commandTimeoutSeconds}s.", ex);
         }

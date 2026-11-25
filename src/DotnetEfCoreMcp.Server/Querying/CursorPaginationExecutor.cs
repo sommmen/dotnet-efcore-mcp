@@ -84,7 +84,8 @@ internal static class CursorPaginationExecutor
         {
             throw;
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException or FormatException or CryptographicException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException or FormatException or CryptographicException
+            && !QueryTimeoutDetector.IsCommandTimeout(ex))
         {
             throw new QueryExecutionException(PaginationFailedMessage, ex);
         }

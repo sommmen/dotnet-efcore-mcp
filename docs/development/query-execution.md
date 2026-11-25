@@ -120,6 +120,27 @@ failures caused by invariant globalization mode direct operators to enable ICU/g
 Other provider failures remain sanitized and direct callers to validate model names with `get_schema`,
 validate query syntax, and consult server logs if required.
 
+### Timeouts
+
+Two budgets can expire, and each has its own message and hint:
+
+- **Compilation** (`QueryCompilation:CompileTimeoutSeconds`, default 10 s): `Query compilation timed
+  out after {n}s.` The first compilation after `load_assembly` is slower because Roslyn and the
+  metadata references are still cold, so the hint tells the caller to retry the same query before
+  simplifying it or raising `QueryCompilation:CompileTimeoutSeconds`. (The setting lives under
+  `QueryCompilation`, not `QueryExecution`.)
+- **Execution**: the connection's `CommandTimeoutSeconds` is applied to the provider's own command
+  timeout, so the provider normally gives up before the server's cancellation token
+  (`CommandTimeoutSeconds` plus `QueryExecution:CancellationMargin`) fires. A provider timeout is
+  recognised by [`QueryTimeoutDetector`](../../src/DotnetEfCoreMcp.Server/Querying/QueryTimeoutDetector.cs)
+  without a provider package reference: a `DbException` whose `Number` is `-2` (SQL Server
+  "Execution Timeout Expired"), or one caused by a `TimeoutException` (Npgsql and others), anywhere in
+  the wrapped exception chain. It maps to the same `Query timed out after {n}s.` message as the
+  server's own cancellation, in-process and in the one-shot and pooled query hosts alike (the host
+  flattens the cause into its wire-level error string; the server drops it for this message). The hint
+  says to narrow the filter (for example a date range on an indexed column), reduce the aggregation,
+  or raise the connection's `CommandTimeoutSeconds`.
+
 ## LINQPad-style `run_query`
 
 `run_query` accepts one required `query` string. Its first identifier must exactly match a public `DbSet<T>` property on the selected `DbContext`; `T` must be a mapped entity. For example:
