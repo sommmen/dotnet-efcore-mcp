@@ -358,6 +358,37 @@ public sealed class OutOfProcessRoslynQueryExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_ProviderCommandTimeout_ReportsAQueryTimeoutFromIsolatedHost()
+    {
+        var timeout = await Assert.ThrowsAsync<QueryExecutionException>(() => CreateOneShotExecutor().ExecuteAsync(
+            _handle, CommandTimeoutContextType(), _db.ToRegistryEntry(commandTimeoutSeconds: 7), DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Select(c => c.Name)" }, CancellationToken.None));
+
+        Assert.StartsWith("Query timed out after 7s.", timeout.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PooledMode_ProviderCommandTimeout_ReportsAQueryTimeoutAndKeepsTheWorkerUsable()
+    {
+        await using var pool = await CreateStartedPoolAsync();
+        var entry = _db.ToRegistryEntry(commandTimeoutSeconds: 7);
+
+        var timeout = await Assert.ThrowsAsync<QueryExecutionException>(() => pool.ExecuteAsync(
+            _handle, CommandTimeoutContextType(), entry, DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Select(c => c.Name)" }, CancellationToken.None));
+
+        Assert.StartsWith("Query timed out after 7s.", timeout.Message, StringComparison.Ordinal);
+
+        var next = await pool.ExecuteAsync(
+            _handle, _contextType, entry, DatabaseProvider.Sqlite,
+            new QueryRequest { Query = "Customers.Where(c => c.Age >= 18).Select(c => c.Name)" }, CancellationToken.None);
+        Assert.Equal("Alice", next.Rows.Single()["Value"]);
+    }
+
+    private Type CommandTimeoutContextType() => DbContextScanner.FindDbContextTypes(_handle.Assembly).Descriptors
+        .Single(d => d.Name == "CommandTimeoutDbContext").ClrType;
+
+    [Fact]
     public async Task PooledMode_RecyclesWorker_AfterConfiguredQueryLimit()
     {
         var options = CreatePooledOptions(poolMaxQueriesPerWorker: 2, poolMaxWorkersPerTarget: 1);

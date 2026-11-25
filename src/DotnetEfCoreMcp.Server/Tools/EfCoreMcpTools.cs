@@ -1642,7 +1642,15 @@ public sealed class EfCoreMcpTools(
 
         if (message.Contains("compilation timed out", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{message} Next step: Simplify the query or increase the server's QueryExecution:CompileTimeoutSeconds setting, then retry.";
+            return $"{message} Next step: Retry the same query first; the first compilation after load_assembly is slower because Roslyn and the metadata references are still cold, so a retry often succeeds. If it keeps timing out, simplify the query or raise the server's QueryCompilation:CompileTimeoutSeconds setting.";
+        }
+
+        if (message.StartsWith("Query timed out after", StringComparison.Ordinal) ||
+            message.StartsWith("Query preview timed out after", StringComparison.Ordinal))
+        {
+            // The isolated host appends the provider's own wording as " Cause: ..."; the timeout is the whole story.
+            var causeIndex = message.IndexOf(" Cause: ", StringComparison.Ordinal);
+            return $"{(causeIndex < 0 ? message : message[..causeIndex])} Next step: {QueryTimeoutHint}";
         }
 
         if (message.Contains("cannot be used with the Roslyn query engine", StringComparison.OrdinalIgnoreCase))
@@ -1789,6 +1797,9 @@ public sealed class EfCoreMcpTools(
         message.StartsWith("Raw `", StringComparison.Ordinal) ||
         message.StartsWith("Query syntax tree", StringComparison.Ordinal) ||
         message.StartsWith("Query contains ", StringComparison.Ordinal);
+
+    private const string QueryTimeoutHint =
+        "The database did not finish within the connection's CommandTimeoutSeconds. Narrow the filter (for example a date range on an indexed column), reduce the aggregation, or raise the connection's CommandTimeoutSeconds, then retry.";
 
     private const string GenericQueryRecoveryHint =
         "verify entity and property names with get_schema, validate LINQ query syntax, and consult server logs if the problem persists.";
