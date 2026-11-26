@@ -390,7 +390,8 @@ The same tools run as a plain command line. `Program.cs` hands off to
 [`EfCoreSurface`](../../src/DotnetEfCoreMcp.Server/Cli/EfCoreSurface.cs), which uses
 `DotNetAgentSurface.Hosting`'s `AgentSurfaceApplication`: `hooks`, `onboard` and `version` are host verbs,
 `cli` selects CLI mode, and no arguments (or only `--Key=Value` configuration) starts the MCP server as
-before. Both modes import the same `[McpServerTool]` methods from `EfCoreMcpTools` into one operation
+before. `--version` and `-v` run the `version` verb; any other unknown verb or flag (`verison`, `--foo`)
+prints the usage to stderr and exits 2 instead of starting the server. Both modes import the same `[McpServerTool]` methods from `EfCoreMcpTools` into one operation
 catalog, so descriptions, parameters, gates and redaction cannot drift between surfaces. The MCP
 `tools/list` output is unchanged and pinned by `McpToolsListSnapshotTests`.
 
