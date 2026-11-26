@@ -10,9 +10,10 @@ namespace DotnetEfCoreMcp.Server.Hooks;
 /// <remarks>
 /// The clients disagree on casing and nesting even though they share an event vocabulary:
 /// Claude Code and Codex send <c>tool_name</c>/<c>tool_input</c>/<c>session_id</c>, while Copilot
-/// CLI sends <c>toolName</c>/<c>toolArgs</c>/<c>sessionId</c> for natively-named (camelCase) events
-/// and the snake_case spelling for the PascalCase "VS Code compatible" events this server installs.
-/// Parsing accepts either spelling for every field so a config installed in one dialect still works
+/// CLI sends <c>toolName</c>/<c>toolArgs</c>/<c>sessionId</c> for natively-named (camelCase) events,
+/// which is what this server installs for Copilot, and the snake_case spelling for PascalCase
+/// "VS Code compatible" events (what earlier builds installed). Parsing
+/// accepts either spelling for every field so a config installed in one dialect still works
 /// if the client later reports the other.
 /// </remarks>
 public sealed record HookToolCall

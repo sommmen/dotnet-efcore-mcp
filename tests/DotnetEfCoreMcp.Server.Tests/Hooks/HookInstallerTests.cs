@@ -26,7 +26,7 @@ public class HookInstallerTests : IDisposable
         Assert.True(File.Exists(result.FilePath));
 
         var json = File.ReadAllText(result.FilePath);
-        Assert.Contains("PostToolUse", json, StringComparison.Ordinal);
+        Assert.Contains(client is HookClient.Copilot ? "postToolUse" : "PostToolUse", json, StringComparison.Ordinal);
         Assert.Contains("hooks", json, StringComparison.Ordinal);
         Assert.Contains("DotnetEfCoreMcp.Server@1.2.3", json, StringComparison.Ordinal);
     }
@@ -57,7 +57,7 @@ public class HookInstallerTests : IDisposable
         // Copilot requires an explicit schema version.
         Assert.Equal(1, root["version"]!.GetValue<int>());
 
-        var handler = root["hooks"]!["PostToolUse"]!.AsArray()[0]!.AsObject();
+        var handler = root["hooks"]!["postToolUse"]!.AsArray()[0]!.AsObject();
         Assert.Equal("dnx", handler["exec"]!.GetValue<string>());
         Assert.NotNull(handler["args"]);
         Assert.Null(handler["command"]);
@@ -71,7 +71,7 @@ public class HookInstallerTests : IDisposable
         new HookInstaller("1.2.3", isWindows: true).Install(HookClient.Copilot, _root);
 
         var handler = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))
-            ["hooks"]!["PostToolUse"]!.AsArray()[0]!.AsObject();
+            ["hooks"]!["postToolUse"]!.AsArray()[0]!.AsObject();
 
         Assert.Equal("dotnet", handler["exec"]!.GetValue<string>());
         Assert.Equal(
@@ -100,7 +100,7 @@ public class HookInstallerTests : IDisposable
         installer.Install(HookClient.Claude, _root);
 
         var copilot = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))
-            ["hooks"]!["PostToolUse"]!.AsArray()[0]!.AsObject();
+            ["hooks"]!["postToolUse"]!.AsArray()[0]!.AsObject();
         Assert.Equal("dnx", copilot["exec"]!.GetValue<string>());
         Assert.Equal("DotnetEfCoreMcp.Server@1.2.3", copilot["args"]!.AsArray()[0]!.GetValue<string>());
 
@@ -116,7 +116,7 @@ public class HookInstallerTests : IDisposable
         new HookInstaller("1.2.3", isWindows: false).Install(HookClient.Copilot, _root);
         var result = new HookInstaller("1.2.3", isWindows: true).Install(HookClient.Copilot, _root);
 
-        var postToolUse = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))["hooks"]!["PostToolUse"]!.AsArray();
+        var postToolUse = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))["hooks"]!["postToolUse"]!.AsArray();
 
         Assert.True(result.Changed);
         Assert.Single(postToolUse);
@@ -183,7 +183,7 @@ public class HookInstallerTests : IDisposable
 
         installer.Install(HookClient.Copilot, _root);
         var copilotHandler = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root))
-            ["hooks"]!["PostToolUse"]!.AsArray()[0]!.AsObject();
+            ["hooks"]!["postToolUse"]!.AsArray()[0]!.AsObject();
         Assert.All(copilotHandler, pair =>
             Assert.Contains(pair.Key, (string[])["type", "exec", "args", "timeoutSec", "matcher"]));
     }
@@ -359,6 +359,112 @@ public class HookInstallerTests : IDisposable
             Assert.Null(exception);
         }
     }
+    [Fact]
+    public void Install_WritesNativeCamelCaseEventsForCopilotOnly()
+    {
+        var installer = new HookInstaller("1.2.3");
+
+        installer.Install(HookClient.Copilot, _root);
+        var copilot = ReadJson(HookInstaller.GetConfigPath(HookClient.Copilot, _root));
+        Assert.Equal(1, copilot["version"]!.GetValue<int>());
+        Assert.Equal(["postToolUse", "sessionEnd", "sessionStart"],
+            copilot["hooks"]!.AsObject().Select(pair => pair.Key).Order(StringComparer.Ordinal));
+
+        foreach (var client in (HookClient[])[HookClient.Claude, HookClient.Codex])
+        {
+            installer.Install(client, _root);
+            var other = ReadJson(HookInstaller.GetConfigPath(client, _root));
+            Assert.Equal(["PostToolUse", "SessionEnd", "SessionStart"],
+                other["hooks"]!.AsObject().Select(pair => pair.Key).Order(StringComparer.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Install_ReplacesPascalCaseCopilotEntriesWrittenByEarlierBuilds()
+    {
+        var path = HookInstaller.GetConfigPath(HookClient.Copilot, _root);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, PascalCaseCopilotFile);
+
+        var result = new HookInstaller("1.2.3").Install(HookClient.Copilot, _root);
+
+        var hooks = ReadJson(path)["hooks"]!.AsObject();
+        Assert.True(result.Changed);
+        Assert.Equal(["postToolUse", "sessionEnd", "sessionStart"],
+            hooks.Select(pair => pair.Key).Order(StringComparer.Ordinal));
+        Assert.All(hooks, pair => Assert.Single(pair.Value!.AsArray()));
+        Assert.DoesNotContain("1.0.0", File.ReadAllText(path), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Install_KeepsUserHooksUnderPascalCaseKeysWhenMigratingCopilotEntries()
+    {
+        var path = HookInstaller.GetConfigPath(HookClient.Copilot, _root);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """
+            {
+              "version": 1,
+              "hooks": {
+                "PostToolUse": [
+                  { "type": "command", "command": "my-formatter" },
+                  { "type": "command", "exec": "dnx", "args": ["DotnetEfCoreMcp.Server@1.0.0", "--", "hooks", "remind"] }
+                ]
+              }
+            }
+            """);
+
+        new HookInstaller("1.2.3").Install(HookClient.Copilot, _root);
+
+        var hooks = ReadJson(path)["hooks"]!.AsObject();
+        var user = Assert.Single(hooks["PostToolUse"]!.AsArray());
+        Assert.Equal("my-formatter", user!["command"]!.GetValue<string>());
+        Assert.Single(hooks["postToolUse"]!.AsArray());
+    }
+
+    [Fact]
+    public void Install_IsIdempotentForCopilot()
+    {
+        var installer = new HookInstaller("1.2.3");
+        installer.Install(HookClient.Copilot, _root);
+
+        var second = installer.Install(HookClient.Copilot, _root);
+
+        Assert.False(second.Changed);
+    }
+
+    [Fact]
+    public void Status_RecognizesPascalCaseCopilotEntries()
+    {
+        var path = HookInstaller.GetConfigPath(HookClient.Copilot, _root);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, PascalCaseCopilotFile);
+
+        Assert.Equal("installed", new HookInstaller("1.2.3").Status(HookClient.Copilot, _root).Message);
+    }
+
+    [Fact]
+    public void Uninstall_RemovesPascalCaseCopilotEntriesWrittenByEarlierBuilds()
+    {
+        var path = HookInstaller.GetConfigPath(HookClient.Copilot, _root);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, PascalCaseCopilotFile);
+
+        var result = new HookInstaller("1.2.3").Uninstall(HookClient.Copilot, _root);
+
+        Assert.True(result.Changed);
+        Assert.False(File.Exists(path));
+    }
+
+    private const string PascalCaseCopilotFile = """
+        {
+          "version": 1,
+          "hooks": {
+            "SessionStart": [ { "type": "command", "exec": "dnx", "args": ["DotnetEfCoreMcp.Server@1.0.0", "--yes", "--", "hooks", "activate", "--client", "copilot", "--scope", "workspace"], "timeoutSec": 20 } ],
+            "PostToolUse": [ { "type": "command", "exec": "dnx", "args": ["DotnetEfCoreMcp.Server@1.0.0", "--yes", "--", "hooks", "remind", "--client", "copilot", "--scope", "workspace"], "timeoutSec": 20, "matcher": "Write|Edit" } ],
+            "SessionEnd": [ { "type": "command", "exec": "dnx", "args": ["DotnetEfCoreMcp.Server@1.0.0", "--yes", "--", "hooks", "cleanup", "--client", "copilot", "--scope", "workspace"], "timeoutSec": 20 } ]
+          }
+        }
+        """;
 
     private static JsonObject ReadJson(string path) =>
         JsonNode.Parse(File.ReadAllText(path))!.AsObject();

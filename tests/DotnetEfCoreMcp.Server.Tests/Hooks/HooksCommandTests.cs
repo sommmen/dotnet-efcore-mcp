@@ -168,6 +168,48 @@ public class HooksCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_HandlesCopilotNativeCamelCasePayloadsForEveryInstalledVerb()
+    {
+        var workspace = Path.Combine(_root, "app");
+        Directory.CreateDirectory(workspace);
+
+        var startPayload = JsonSerializer.Serialize(new
+        {
+            sessionId = "cp-1", timestamp = 1700000000000, cwd = workspace, source = "new",
+        });
+        Assert.Equal(0, Run(["hooks", "activate", "--client", "copilot", "--scope", "workspace"], out var started, startPayload));
+        using (var start = JsonDocument.Parse(started))
+        {
+            Assert.True(start.RootElement.TryGetProperty("additionalContext", out var context));
+            Assert.False(string.IsNullOrWhiteSpace(context.GetString()));
+        }
+
+        var toolPayload = JsonSerializer.Serialize(new
+        {
+            sessionId = "cp-1",
+            timestamp = 1700000000000,
+            cwd = workspace,
+            toolName = "edit",
+            toolArgs = new { path = "/repo/src/Orders.cs", new_str = "await _context.Orders.Where(o => o.Id > 1).ToListAsync();" },
+            toolResult = new { resultType = "success", textResultForLlm = "ok" },
+        });
+        Assert.Equal(0, Run(["hooks", "remind", "--client", "copilot", "--scope", "workspace"], out var reminded, toolPayload));
+        using (var remind = JsonDocument.Parse(reminded))
+        {
+            Assert.Contains("LINQ validation reminder",
+                remind.RootElement.GetProperty("additionalContext").GetString(), StringComparison.Ordinal);
+        }
+
+        var endPayload = JsonSerializer.Serialize(new
+        {
+            sessionId = "cp-1", timestamp = 1700000000000, cwd = workspace, reason = "complete",
+        });
+        Assert.Equal(0, Run(["hooks", "cleanup", "--client", "copilot", "--scope", "workspace"], out var ended, endPayload));
+        Assert.Equal("{}", ended);
+        Assert.False(Directory.Exists(Path.Combine(_root, "state", "cp-1")));
+    }
+
+    [Fact]
     public void Run_ActivateNeverFailsTheSession()
     {
         // A session-start hook that throws would break the session it is supposed to help.

@@ -16,10 +16,12 @@ public sealed record HookInstallResult(string FilePath, bool Changed, string Mes
 /// Writes repo-local hook configuration for the supported agent CLIs.
 /// </summary>
 /// <remarks>
-/// All three clients are configured with the PascalCase <c>PostToolUse</c> event: Claude Code and
-/// Codex use it natively, and Copilot CLI explicitly supports PascalCase event names with Claude
-/// matcher semantics. Using one dialect everywhere keeps a single matcher vocabulary and a single
-/// payload parser.
+/// Claude Code and Codex are configured with the PascalCase <c>PostToolUse</c> event family they use
+/// natively. Copilot is configured with its native camelCase events (<c>postToolUse</c>), which
+/// select its camelCase payload and plain regex matcher rather than the Claude-compatibility layer.
+/// Hooks written by earlier builds under Copilot's PascalCase spelling are still recognized as
+/// ours, because ownership is read from the command text rather than the event key, so reinstalling
+/// or uninstalling replaces them instead of leaving duplicates.
 /// <para>
 /// <c>PostToolUse</c> is deliberate rather than <c>PreToolUse</c>: Copilot CLI's <c>preToolUse</c>
 /// command hooks are fail-closed, so a crashing or slow reminder would deny the agent's file write.
@@ -255,21 +257,27 @@ public sealed class HookInstaller
         // agent that already started down the wrong path, whereas this tells it up front that the
         // server exists and what it is for. This is why Serena's equivalent hook set includes an
         // "activate" hook rather than relying on reminders alone.
-        AddEntry(hooks, client, "SessionStart", "activate", matcher: null, scope);
-        AddEntry(hooks, client, "PostToolUse", "remind", matcher: PostToolUseMatcher, scope);
-        AddEntry(hooks, client, "SessionEnd", "cleanup", matcher: null, scope);
+        AddEntry(hooks, client, EventName(client, "SessionStart"), "activate", matcher: null, scope);
+        AddEntry(hooks, client, EventName(client, "PostToolUse"), "remind", matcher: PostToolUseMatcher, scope);
+        AddEntry(hooks, client, EventName(client, "SessionEnd"), "cleanup", matcher: null, scope);
 
         return root;
     }
+
+    /// <summary>
+    /// Copilot's native camelCase event names select its camelCase payload and matcher rules;
+    /// Claude Code and Codex only know the PascalCase spelling.
+    /// </summary>
+    private static string EventName(HookClient client, string pascalCaseName) =>
+        client is HookClient.Copilot ? char.ToLowerInvariant(pascalCaseName[0]) + pascalCaseName[1..] : pascalCaseName;
 
     /// <summary>
     /// The tools whose results should be inspected for LINQ.
     /// </summary>
     /// <remarks>
     /// Both casings are listed because the clients disagree on which name reaches the matcher:
-    /// Claude Code matches its own PascalCase tool names, Copilot CLI compiles the pattern as a
-    /// regex against runtime names that are lowercase (reporting Claude names only for some
-    /// PascalCase-configured events), and Codex matches <c>apply_patch</c> under any of three
+    /// Claude Code matches its own PascalCase tool names, Copilot's camelCase events anchor the
+    /// pattern as a regex against runtime names that are lowercase, and Codex matches <c>apply_patch</c> under any of three
     /// aliases. Listing every spelling keeps one matcher correct everywhere; a name that a given
     /// client never emits simply never matches.
     /// </remarks>
