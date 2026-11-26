@@ -9,22 +9,22 @@
   <ItemGroup>
     <!-- EF Core family - keep these versions aligned with each other and with the globally
          installed `dotnet-ef` tool used for migrations. -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="11.0.0" />
     <!-- Major version tracks EF Core: it reflects over EF Core's internal DesignTimeServicesBuilder. -->
     <PackageVersion Include="EfCore.SchemaCompare" Version="10.0.0" />
     <!-- Npgsql follows its own release cadence, independent of the EF Core patch number above. -->
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
 
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.13" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.13" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="11.0.0" />
     <PackageVersion Include="ModelContextProtocol" Version="2.4.0" />    <!-- dotnet-agent-surface is 0.1-preview: pin exact versions and bump them deliberately. -->
     <PackageVersion Include="DotNetAgentSurface.Core" Version="[0.1.97-preview]" />
     <PackageVersion Include="DotNetAgentSurface.Mcp" Version="[0.1.97-preview]" />
@@ -39,7 +39,7 @@
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.21.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
     <PackageVersion Include="System.Linq.Dynamic.Core" Version="1.7.4" />
-    <PackageVersion Include="System.Reflection.MetadataLoadContext" Version="10.0.12" />
+    <PackageVersion Include="System.Reflection.MetadataLoadContext" Version="11.0.0" />
     <PackageVersion Include="Toon.DotNet" Version="4.1.1" />
 
     <!-- Transitive pins. Microsoft.EntityFrameworkCore.Design pulls Microsoft.CodeAnalysis.CSharp.Workspaces
@@ -51,7 +51,7 @@
     <!-- Pulled in via Microsoft.EntityFrameworkCore.SqlServer > Microsoft.Data.SqlClient at 9.0.11, which
          is affected by GHSA-2fmv-rv2c-59x7 (moderate) and GHSA-846f-f764-76mx (high); 10.0.13 is the
          first patched 10.x release. Drop once SqlClient ships a patched dependency. -->
-    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
 
     <!-- Packable src/ projects only (see src/Directory.Build.props) -->
     <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94" />
