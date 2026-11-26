@@ -2,7 +2,8 @@ namespace DotnetEfCoreMcp.Server.Hooks;
 
 /// <summary>
 /// The agent CLI a hook invocation belongs to. Each client has its own config file location and
-/// output envelope, but they all share the PascalCase event/matcher dialect this server installs.
+/// output envelope. Claude Code and Codex use PascalCase event names; Copilot is installed with its
+/// native camelCase ones.
 /// </summary>
 public enum HookClient
 {

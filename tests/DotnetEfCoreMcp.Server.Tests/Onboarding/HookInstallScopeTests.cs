@@ -75,7 +75,7 @@ public class HookInstallScopeTests : IDisposable
         var result = new HookInstaller("1.2.3").Install(client, _repository);
 
         var json = File.ReadAllText(result.FilePath);
-        Assert.Contains("SessionStart", json, StringComparison.Ordinal);
+        Assert.Contains(client is HookClient.Copilot ? "sessionStart" : "SessionStart", json, StringComparison.Ordinal);
         Assert.Contains("activate", json, StringComparison.Ordinal);
     }
 
@@ -98,7 +98,7 @@ public class HookInstallScopeTests : IDisposable
         var result = new HookInstaller("1.2.3").Install(HookClient.Copilot, _repository, InstallScope.User);
 
         var root = JsonNode.Parse(File.ReadAllText(result.FilePath))!.AsObject();
-        var args = root["hooks"]!["SessionStart"]!.AsArray()[0]!["args"]!.AsArray()
+        var args = root["hooks"]!["sessionStart"]!.AsArray()[0]!["args"]!.AsArray()
             .Select(node => node!.GetValue<string>())
             .ToList();
 

@@ -29,11 +29,12 @@ agent writes a LINQ query — instead of once at session start. This mirrors the
 ## Client support
 
 All three supported clients expose lifecycle hooks with a near-identical schema, so one
-implementation serves all of them.
+implementation serves all of them; only the Copilot event spelling differs (see below).
 
 | | Claude Code | Copilot CLI | Codex CLI |
 |---|---|---|---|
 | Repo-local file | `.claude/settings.json` | `.github/hooks/dotnet-efcore-mcp.json` | `.codex/hooks.json` |
+| Event names | PascalCase | camelCase (native) | PascalCase |
 | Handler shape | matcher group wrapping handlers | flat handler list | matcher group wrapping handlers |
 | Invocation | `command` (shell) | `exec` + `args` (no shell) | `command` (shell) |
 | Context field | `hookSpecificOutput.additionalContext` | `additionalContext` | `hookSpecificOutput.additionalContext` |
@@ -50,9 +51,18 @@ Reference documentation: [Claude Code hooks](https://code.claude.com/docs/en/hoo
   Decisively, Copilot CLI's `preToolUse` command hooks are **fail-closed** — a crash, a non-zero
   exit, or any error denies the tool call. A reminder must never be able to block a user's file
   edit, and `PostToolUse` is fail-open on every client.
-- **One PascalCase dialect everywhere.** Claude Code and Codex use PascalCase event names natively,
-  and Copilot CLI explicitly supports them with Claude matcher semantics. Installing one dialect
-  keeps a single matcher vocabulary and a single payload parser.
+- **Native event names per client.** Claude Code and Codex are written with PascalCase events
+  (`SessionStart`, `PostToolUse`, `SessionEnd`). Copilot is written with its native camelCase events
+  (`sessionStart`, `postToolUse`, `sessionEnd`) and `"version": 1`. Copilot selects the payload
+  format from the event spelling: camelCase gives `sessionId`/`toolName`/`toolArgs` and a plain
+  regex `matcher` against runtime tool names, whereas PascalCase is a compatibility layer
+  (snake_case payloads, Claude matcher semantics, Claude tool names) that VS Code's Copilot
+  harness and the CLI do not guarantee to treat identically. The runtime parses both spellings, so
+  a hook installed in either dialect keeps working.
+- **Upgrades migrate PascalCase Copilot files.** Earlier builds wrote PascalCase events for
+  Copilot. Ownership is detected from the command text (the package id), not the event key, so
+  `hooks install` removes those entries and writes the camelCase ones without duplicating, and
+  `hooks uninstall`/`status` still recognize them. A user's own hooks under any key are untouched.
 - **Both output envelopes are always emitted.** The response carries the reminder in a top-level
   `additionalContext` (Copilot) *and* in `hookSpecificOutput.additionalContext` (Claude, Codex).
   Each client ignores fields it does not recognize, so one response shape is correct everywhere.
@@ -77,13 +87,13 @@ Reference documentation: [Claude Code hooks](https://code.claude.com/docs/en/hoo
 
 ## Installed events
 
-`install` writes three entries per client, each invoking a `hooks` sub-command:
+`install` writes three entries per client, each invoking a `hooks` sub-command. The first spelling in each row is Claude Code/Codex, the second is Copilot:
 
 | Event | Verb | Purpose |
 |---|---|---|
-| `SessionStart` | `activate` | Announce the server and its tools before the agent has a reason to look for them. See [Agent onboarding](./agent-onboarding.md). |
-| `PostToolUse` | `remind` | Re-deliver the LINQ-validation guidance right after the agent writes a query. |
-| `SessionEnd` | `cleanup` | Drop the on-disk reminder state for the session. |
+| `SessionStart` / `sessionStart` | `activate` | Announce the server and its tools before the agent has a reason to look for them. See [Agent onboarding](./agent-onboarding.md). |
+| `PostToolUse` / `postToolUse` | `remind` | Re-deliver the LINQ-validation guidance right after the agent writes a query. |
+| `SessionEnd` / `sessionEnd` | `cleanup` | Drop the on-disk reminder state for the session. |
 
 `SessionStart` is the discoverability half and `PostToolUse` the correction half: a reminder can
 only redirect an agent that already started writing LINQ by hand, by which point it has usually
