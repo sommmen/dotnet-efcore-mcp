@@ -74,6 +74,11 @@ Tests: [`tests/DotnetEfCoreMcp.Server.Tests/AssemblyLoading`](../../tests/Dotnet
   - Non-fatal problems (e.g. a required shared framework that is not installed) are collected as
     `LoadedAssemblyHandle.DependencyDiagnostics` and surfaced ahead of type-load warnings in the
     `load_assembly` result, so the cause is reported above its symptoms.
+  - The runtime rewraps anything thrown from `AssemblyLoadContext.Load` (such as the
+    `AssemblyLoadFailedException` for an EF Core major-version gap) in a `FileLoadException` whose
+    own text is generic. `DbContextScanner` appends the inner exception to each `Type load error:`
+    warning, and `run_query`'s "No DbContexts were found" error carries the recorded
+    `AssemblyLoadFailedException` message as its `Cause:` (#183).
 - [x] Handle assembly load failures gracefully (missing file, wrong TFM/runtime mismatch, missing dependencies) with clear error messages surfaced to the MCP client
 - [x] Detect and handle stale/locked DLLs (e.g. project was rebuilt while the server was running)
   - `AssemblyLoaderService` exposes a staleness check based on the DLL's last-write time

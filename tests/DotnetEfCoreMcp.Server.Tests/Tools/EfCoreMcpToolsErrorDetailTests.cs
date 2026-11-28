@@ -202,6 +202,58 @@ public sealed class EfCoreMcpToolsErrorDetailTests
     }
 
     [Fact]
+    public void CreateContext_ConstructorThrows_SurfacesTheInnerExceptionTypeAndMessage()
+    {
+        // Issue #186: list_migrations and every other CreateContext caller reported only
+        // "Constructing '...' threw an exception.", hiding the actual cause.
+        using var db = new SqliteTestDatabase();
+
+        var exception = Assert.Throws<McpException>(
+            () => EfCoreMcpTools.CreateContext(typeof(ThrowingConstructorDbContext), AllowedEntry(db, typeof(ThrowingConstructorDbContext))));
+
+        Assert.Contains("threw an exception", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("InvalidOperationException: boom: missing config X", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreateContext_ConstructorThrowsWithCredential_RedactsTheCause()
+    {
+        using var db = new SqliteTestDatabase();
+
+        var exception = Assert.Throws<McpException>(
+            () => EfCoreMcpTools.CreateContext(typeof(CredentialLeakingConstructorDbContext), AllowedEntry(db, typeof(CredentialLeakingConstructorDbContext))));
+
+        Assert.Contains("Login failed", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static ConnectionRegistryEntry AllowedEntry(SqliteTestDatabase db, Type contextType) =>
+        db.ToRegistryEntry(accessPolicy: new ConnectionAccessPolicy
+        {
+            AllowContexts = [contextType.FullName!],
+            DenyContexts = [],
+            AllowEntities = [],
+            DenyEntities = [],
+        });
+
+    public sealed class ThrowingConstructorDbContext : Microsoft.EntityFrameworkCore.DbContext
+    {
+        public ThrowingConstructorDbContext(Microsoft.EntityFrameworkCore.DbContextOptions<ThrowingConstructorDbContext> options)
+            : base(options)
+        {
+            throw new InvalidOperationException("boom: missing config X");
+        }
+    }
+
+    public sealed class CredentialLeakingConstructorDbContext : Microsoft.EntityFrameworkCore.DbContext
+    {
+        public CredentialLeakingConstructorDbContext(Microsoft.EntityFrameworkCore.DbContextOptions<CredentialLeakingConstructorDbContext> options)
+            : base(options)
+        {
+            throw new InvalidOperationException("Login failed for Server=tcp:db.example.com;User ID=sa;Password=hunter2");
+        }
+    }
+    [Fact]
     public void FormatSubsystemError_AppendsTheFlattenedCauseWhenTheWrapperOmitsIt()
     {
         // Migration and assembly-loading failures reach the client through their own exception

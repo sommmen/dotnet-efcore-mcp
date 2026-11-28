@@ -1,4 +1,6 @@
 using System.Reflection;
+using DotnetEfCoreMcp.Server.AssemblyLoading;
+using DotnetEfCoreMcp.Server.Querying;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
@@ -11,6 +13,7 @@ public static class DbContextScanner
     {
         Type[] types;
         IReadOnlyList<string> typeLoadWarnings;
+        IReadOnlyList<string> assemblyLoadFailureReasons = [];
         try
         {
             types = assembly.GetTypes();
@@ -28,6 +31,7 @@ public static class DbContextScanner
             // has none, or because discovery was actually broken.
             types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
             typeLoadWarnings = SummarizeLoaderExceptions(ex, types.Length);
+            assemblyLoadFailureReasons = FindAssemblyLoadFailureReasons(ex);
         }
 
         var results = new List<DbContextDescriptor>();
@@ -50,7 +54,10 @@ public static class DbContextScanner
             });
         }
 
-        return new DbContextScanResult(results, typeLoadWarnings);
+        return new DbContextScanResult(results, typeLoadWarnings)
+        {
+            AssemblyLoadFailureReasons = assemblyLoadFailureReasons,
+        };
     }
 
     private static IReadOnlyList<string> SummarizeLoaderExceptions(ReflectionTypeLoadException ex, int loadedTypeCount)
@@ -63,7 +70,7 @@ public static class DbContextScanner
         // the warning readable instead of repeating the same line dozens of times.
         var distinctMessages = ex.LoaderExceptions
             .Where(e => e is not null)
-            .Select(e => e!.Message)
+            .Select(e => DescribeLoaderException(e!))
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
@@ -76,6 +83,41 @@ public static class DbContextScanner
         var warnings = new List<string> { summary };
         warnings.AddRange(distinctMessages.Select(message => $"Type load error: {message}"));
         return warnings;
+    }
+
+    // The runtime rewraps anything thrown from AssemblyLoadContext.Load in a FileLoadException whose
+    // own text says nothing useful, so the real explanation is only on the inner exception.
+    private static string DescribeLoaderException(Exception exception)
+    {
+        var cause = FindAssemblyLoadFailure(exception) ?? QueryExceptionDetail.Unwrap(exception.InnerException);
+        var detail = cause?.Message.Trim();
+        if (string.IsNullOrEmpty(detail) || exception.Message.Contains(detail, StringComparison.Ordinal))
+        {
+            return exception.Message;
+        }
+
+        return $"{exception.Message} Cause: {cause!.GetType().Name}: {detail}";
+    }
+
+    private static IReadOnlyList<string> FindAssemblyLoadFailureReasons(ReflectionTypeLoadException ex) =>
+        ex.LoaderExceptions
+            .Where(e => e is not null)
+            .Select(e => FindAssemblyLoadFailure(e!)?.Message)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    private static AssemblyLoadFailedException? FindAssemblyLoadFailure(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is AssemblyLoadFailedException failure)
+            {
+                return failure;
+            }
+        }
+
+        return null;
     }
 
     internal static DbContextConstructionKind ClassifyConstructionKind(Type contextType)
