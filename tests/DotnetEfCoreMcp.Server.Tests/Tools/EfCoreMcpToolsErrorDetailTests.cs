@@ -227,8 +227,8 @@ public sealed class EfCoreMcpToolsErrorDetailTests
         Assert.DoesNotContain("hunter2", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static Server.Connections.ConnectionRegistryEntry AllowedEntry(SqliteTestDatabase db, Type contextType) =>
-        db.ToRegistryEntry(accessPolicy: new Server.Connections.ConnectionAccessPolicy
+    private static ConnectionRegistryEntry AllowedEntry(SqliteTestDatabase db, Type contextType) =>
+        db.ToRegistryEntry(accessPolicy: new ConnectionAccessPolicy
         {
             AllowContexts = [contextType.FullName!],
             DenyContexts = [],

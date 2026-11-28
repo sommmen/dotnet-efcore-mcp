@@ -109,16 +109,11 @@ public static class DbContextScanner
 
     private static AssemblyLoadFailedException? FindAssemblyLoadFailure(Exception exception)
     {
-        for (var current = exception; current is not null; current = current.InnerException!)
+        for (Exception? current = exception; current is not null; current = current.InnerException)
         {
             if (current is AssemblyLoadFailedException failure)
             {
                 return failure;
-            }
-
-            if (current.InnerException is null)
-            {
-                break;
             }
         }
 
