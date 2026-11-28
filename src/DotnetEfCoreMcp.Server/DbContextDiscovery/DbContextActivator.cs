@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using DotnetEfCoreMcp.Server.Connections;
+using DotnetEfCoreMcp.Server.Querying;
 
 namespace DotnetEfCoreMcp.Server.DbContextDiscovery;
 
@@ -127,7 +128,7 @@ public static class DbContextActivator
             }
             catch (Exception ex) when (ex is not DbContextActivationException)
             {
-                throw new DbContextActivationException($"Design-time factory '{factoryType.FullName}' for '{contextType.FullName}' threw during construction.", ex);
+                throw new DbContextActivationException($"Design-time factory '{factoryType.FullName}' for '{contextType.FullName}' threw during construction.{DescribeCause(ex)}", ex);
             }
 
             var createMethod = factoryInterfaceType.GetMethod("CreateDbContext")!;
@@ -138,7 +139,7 @@ public static class DbContextActivator
             }
             catch (TargetInvocationException ex) when (ex.InnerException is not null)
             {
-                throw new DbContextActivationException($"Design-time factory for '{contextType.FullName}' threw while creating the context.", ex.InnerException);
+                throw new DbContextActivationException($"Design-time factory for '{contextType.FullName}' threw while creating the context.{DescribeCause(ex.InnerException)}", ex.InnerException);
             }
 
             if (trustFactoryConnectionString)
@@ -165,6 +166,9 @@ public static class DbContextActivator
             $"DbContext type '{contextType.FullName}' has no supported construction path. Add a public constructor accepting DbContextOptions<{contextType.Name}> (recommended), implement IDesignTimeDbContextFactory<{contextType.Name}>, or add a parameterless constructor that configures itself via OnConfiguring.");
     }
 
+    private static string DescribeCause(Exception? cause) =>
+        QueryExceptionDetail.Describe(cause) is { } detail ? $" Cause: {detail}" : string.Empty;
+
     private static DbContext Invoke(ConstructorInfo constructor, Type contextType, object?[]? args)
     {
         try
@@ -173,7 +177,7 @@ public static class DbContextActivator
         }
         catch (TargetInvocationException ex) when (ex.InnerException is not null)
         {
-            throw new DbContextActivationException($"Constructing '{contextType.FullName}' threw an exception.", ex.InnerException);
+            throw new DbContextActivationException($"Constructing '{contextType.FullName}' threw an exception.{DescribeCause(ex.InnerException)}", ex.InnerException);
         }
     }
 

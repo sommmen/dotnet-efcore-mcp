@@ -1567,7 +1567,7 @@ public sealed class EfCoreMcpTools(
             throw new McpException(BuildContextSelectionError(
                 visibleContexts,
                 contexts.Count == 0
-                    ? "No DbContexts were found in the currently loaded assembly."
+                    ? "No DbContexts were found in the currently loaded assembly." + scan.DescribeLoadFailures()
                     : "`contextName` is required because the loaded assembly contains multiple DbContexts."));
         }
 
@@ -1882,7 +1882,9 @@ public sealed class EfCoreMcpTools(
         {
             var scan = DbContextScanner.FindDbContextTypes(handle.Assembly);
             if (scan.Descriptors.Count == 0)
-                throw new McpException("No DbContexts were found in the loaded target assembly. Check load_assembly and list_contexts for type loading warnings.");
+                throw new McpException(
+                    "No DbContexts were found in the loaded target assembly. Check load_assembly and list_contexts for type loading warnings." +
+                    scan.DescribeLoadFailures());
 
             entry.AccessPolicy.EnsureResolvable(entry.Name, scan.Descriptors);
         }
@@ -1916,7 +1918,7 @@ public sealed class EfCoreMcpTools(
         }
     }
 
-    private static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry, System.Reflection.Assembly? migrationsAssembly = null)
+    internal static Microsoft.EntityFrameworkCore.DbContext CreateContext(Type contextType, ConnectionRegistryEntry entry, System.Reflection.Assembly? migrationsAssembly = null)
     {
         if (entry.Source == ConnectionSource.ApplicationFactory)
         {
@@ -1934,7 +1936,7 @@ public sealed class EfCoreMcpTools(
         }
         catch (DbContextActivationException ex)
         {
-            throw new McpException(ex.Message);
+            throw new McpException(FormatSubsystemError(ex));
         }
     }
 

@@ -1,4 +1,6 @@
 using System.IO;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using DotnetEfCoreMcp.Server.AssemblyLoading;
@@ -158,4 +160,31 @@ public sealed class DbContextScannerTests
 
         Assert.DoesNotContain(descriptors, d => d.Name == "FactoryOnlyDbContextFactory");
     }
-}
+
+    [Fact]
+    public void FindDbContextTypes_DeliberateLoadFailure_SurfacesItsMessageInsteadOfTheGenericRuntimeWrapper()
+    {
+        const string reason = "The target was compiled against 'Microsoft.EntityFrameworkCore' 11.0.0.0, but this MCP server ships 10.0.12.0 - a different major version.";
+        var loadContext = new ThrowingLoadContext("BrokenDependencyApp.Dependency", new AssemblyLoadFailedException(reason));
+        var assembly = loadContext.LoadFromAssemblyPath(FixturePaths.BrokenDependencyAppDllPath);
+
+        var scan = DbContextScanner.FindDbContextTypes(assembly);
+
+        Assert.Contains(scan.TypeLoadWarnings, warning => warning.StartsWith("Type load error:", StringComparison.Ordinal) && warning.Contains(reason, StringComparison.Ordinal));
+        Assert.Equal([reason], scan.AssemblyLoadFailureReasons);
+        Assert.Contains(reason, scan.DescribeLoadFailures(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DescribeLoadFailures_NoRecordedFailure_IsEmpty()
+    {
+        var scan = new DbContextScanResult([], []);
+
+        Assert.Equal(string.Empty, scan.DescribeLoadFailures());
+    }
+
+    private sealed class ThrowingLoadContext(string failingAssemblySimpleName, Exception failure) : AssemblyLoadContext(isCollectible: false)
+    {
+        protected override Assembly? Load(AssemblyName assemblyName) =>
+            string.Equals(assemblyName.Name, failingAssemblySimpleName, StringComparison.Ordinal) ? throw failure : null;
+    }}
