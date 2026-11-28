@@ -19,7 +19,7 @@
     <!-- Major version tracks EF Core: it reflects over EF Core's internal DesignTimeServicesBuilder. -->
     <PackageVersion Include="EfCore.SchemaCompare" Version="10.0.0" />
     <!-- Npgsql follows its own release cadence, independent of the EF Core patch number above. -->
-    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.4" />
 
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.13" />
